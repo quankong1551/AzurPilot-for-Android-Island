@@ -134,6 +134,10 @@ class RemoteServiceImpl : RemoteService.Stub() {
         VirtualDisplayManager.setResolution(width, height, dpi)
     }
 
+    override fun setVirtualDisplayRefreshRate(rate: Float) {
+        VirtualDisplayManager.setRefreshRate(rate)
+    }
+
     override fun startVirtualDisplay(): Int = when (virtualDisplayMode.get()) {
         DisplayMode.PRIMARY -> PrimaryDisplayManager.start()
         DisplayMode.BACKGROUND -> VirtualDisplayManager.start().also { displayId ->

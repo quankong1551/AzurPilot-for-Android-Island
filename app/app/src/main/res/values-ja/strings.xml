@@ -886,4 +886,11 @@
     <string name="ap_config_directory">セクション一覧</string>
     <string name="ap_bar_search">設定を検索</string>
     <string name="ap_field_notset">未設定</string>
+    <string name="settings_virtual_display_rate">仮想画面のフレームレート</string>
+    <string name="settings_virtual_display_rate_requested">要求フレームレート</string>
+    <string name="settings_virtual_display_rate_value">%.1f FPS</string>
+    <string name="settings_virtual_display_rate_maximum">物理画面の現在のフレームレート（上限）</string>
+    <string name="settings_virtual_display_rate_hint">仮想画面の次回起動時に適用されます。最大設定は物理画面に追従します。実際のリフレッシュレートはシステムにより調整される場合があります。</string>
+    <string name="settings_virtual_display_rate_unsupported">仮想画面のフレームレート設定には Android 14 以降が必要です。</string>
+    <string name="settings_virtual_display_rate_unavailable">物理画面のリフレッシュレートを取得できないため、調整できません。</string>
 </resources>

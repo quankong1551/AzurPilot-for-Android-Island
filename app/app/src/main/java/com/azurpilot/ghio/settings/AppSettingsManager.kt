@@ -41,6 +41,9 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
 
     private val defaults = AppSettings()
 
+    private val _virtualDisplayRefreshRate = MutableStateFlow(0f)
+    val virtualDisplayRefreshRate: StateFlow<Float> = _virtualDisplayRefreshRate.asStateFlow()
+
     private val _loaded = MutableStateFlow(false)
 
     /**
@@ -84,6 +87,8 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
         // 那样 loaded 置位与各字段拿到首值是两件并发的事，早读的人仍可能读到默认值
         scope.launch {
             settings.collect { s ->
+                _virtualDisplayRefreshRate.value = s.virtualDisplayRefreshRate.toFloatOrNull()
+                    ?.takeIf { it.isFinite() && it >= 0f } ?: 0f
                 _startupBackend.value = parseBackend(s.startupBackend)
                 _skipShizukuCheck.value = s.skipShizukuCheck.toBoolean()
                 _shizukuLaunchPackage.value = s.shizukuLaunchPackage
@@ -120,6 +125,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
 
     suspend fun setStartupBackend(backend: RemoteBackend) = with(AppSettingsSchema) {
         context.dataStore.edit { it[startupBackend] = backend.name }
+    }
+
+    suspend fun setVirtualDisplayRefreshRate(rate: Float): Unit = with(AppSettingsSchema) {
+        require(rate.isFinite() && rate >= 0f)
+        context.dataStore.edit { it[virtualDisplayRefreshRate] = rate.toString() }
     }
 
     suspend fun setSkipShizukuCheck(skip: Boolean) = with(AppSettingsSchema) {

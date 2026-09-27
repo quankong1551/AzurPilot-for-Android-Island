@@ -891,4 +891,11 @@
     <string name="ap_config_directory">Sections</string>
     <string name="ap_bar_search">Search settings</string>
     <string name="ap_field_notset">Not set</string>
+    <string name="settings_virtual_display_rate">Virtual display frame rate</string>
+    <string name="settings_virtual_display_rate_requested">Requested frame rate</string>
+    <string name="settings_virtual_display_rate_value">%.1f FPS</string>
+    <string name="settings_virtual_display_rate_maximum">Current physical display rate (maximum)</string>
+    <string name="settings_virtual_display_rate_hint">Applies the next time the virtual display starts. The highest setting follows the physical display; Android may adjust the actual refresh rate.</string>
+    <string name="settings_virtual_display_rate_unsupported">Custom virtual display frame rates require Android 14 or later.</string>
+    <string name="settings_virtual_display_rate_unavailable">The physical display refresh rate is unavailable. Adjustment is disabled.</string>
 </resources>

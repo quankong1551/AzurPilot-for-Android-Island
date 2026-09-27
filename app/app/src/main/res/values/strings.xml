@@ -886,4 +886,11 @@
     <string name="ap_config_directory">分组目录</string>
     <string name="ap_bar_search">搜索配置项</string>
     <string name="ap_field_notset">未设置</string>
+    <string name="settings_virtual_display_rate">虚拟屏帧率</string>
+    <string name="settings_virtual_display_rate_requested">请求帧率</string>
+    <string name="settings_virtual_display_rate_value">%.1f FPS</string>
+    <string name="settings_virtual_display_rate_maximum">物理屏当前帧率（上限）</string>
+    <string name="settings_virtual_display_rate_hint">下次启动虚拟屏时生效。最大档跟随物理屏；系统可能调整实际刷新率。</string>
+    <string name="settings_virtual_display_rate_unsupported">自定义虚拟屏帧率需要 Android 14 或更高版本。</string>
+    <string name="settings_virtual_display_rate_unavailable">无法读取物理屏刷新率，暂时无法调节。</string>
 </resources>

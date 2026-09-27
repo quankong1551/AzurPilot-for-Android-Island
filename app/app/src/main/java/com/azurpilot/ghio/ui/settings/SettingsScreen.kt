@@ -1,5 +1,14 @@
 package com.azurpilot.ghio.ui.settings
 
+import android.hardware.display.DisplayManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.Display
+import androidx.compose.material3.Slider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import kotlin.math.round
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -92,10 +101,82 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
         ) {
             DisplayCard(state, onIntent)
+            VirtualDisplayFrameRateCard()
             LogCard(state, onIntent, onOpenAppLog, onOpenRunnerLog, onExportRunnerLogs, onExportLauncherLogs)
             OtherCard(state, onIntent)
             RuntimeCard()
             AboutCard()
+        }
+    }
+}
+
+@Composable
+private fun VirtualDisplayFrameRateCard(settings: AppSettingsManager = koinInject()) {
+    val context = LocalContext.current
+    val displays = remember(context) { context.getSystemService(DisplayManager::class.java) }
+    var maximum by remember(displays) {
+        mutableStateOf(displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f)
+    }
+    DisposableEffect(displays) {
+        fun updateMaximum() {
+            maximum = displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f
+        }
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = updateMaximum()
+            override fun onDisplayRemoved(displayId: Int) = updateMaximum()
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId == Display.DEFAULT_DISPLAY) updateMaximum()
+            }
+        }
+        displays.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        updateMaximum()
+        onDispose { displays.unregisterDisplayListener(listener) }
+    }
+    val savedRate by settings.virtualDisplayRefreshRate.collectAsStateWithLifecycle()
+    val loaded by settings.loaded.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    val available = maximum.isFinite() && maximum > 1f
+    val upper = if (available) maximum else 60f
+    var selected by remember(savedRate, upper) {
+        mutableStateOf(if (savedRate == 0f) upper else savedRate.coerceIn(1f, upper))
+    }
+    AppCard(title = stringResource(R.string.settings_virtual_display_rate), collapsible = true) {
+        if (supported) {
+            AppInfoRow(
+                stringResource(R.string.settings_virtual_display_rate_requested),
+                stringResource(R.string.settings_virtual_display_rate_value, selected),
+            )
+            Slider(
+                value = selected,
+                onValueChange = { selected = round(it).coerceIn(1f, upper) },
+                onValueChangeFinished = {
+                    // 最大档保存为 0，后续启动可继续跟随主屏当前刷新率。
+                    val requested = if (selected == upper) 0f else selected
+                    scope.launch { settings.setVirtualDisplayRefreshRate(requested) }
+                },
+                valueRange = 1f..upper,
+                enabled = loaded && available,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (available) {
+                AppInfoRow(
+                    stringResource(R.string.settings_virtual_display_rate_maximum),
+                    stringResource(R.string.settings_virtual_display_rate_value, maximum),
+                )
+            }
+            Text(
+                stringResource(if (available) R.string.settings_virtual_display_rate_hint
+                    else R.string.settings_virtual_display_rate_unavailable),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                stringResource(R.string.settings_virtual_display_rate_unsupported),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

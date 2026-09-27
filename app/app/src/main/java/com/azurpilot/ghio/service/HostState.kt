@@ -1,10 +1,12 @@
 package com.azurpilot.ghio.service
 
 import android.content.Context
+import android.os.Build
 import android.view.Surface
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
+import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.privileged.PrivilegedServicePort
 import com.azurpilot.ghio.privileged.PrivilegedServiceState
 import com.azurpilot.ghio.privileged.PermissionGateway
@@ -44,6 +46,7 @@ class HostState(
     private val servicePort: PrivilegedServicePort,
     private val permissionGateway: PermissionGateway,
     private val scope: CoroutineScope,
+    private val appSettings: AppSettingsManager,
 ) {
 
     private val _snapshot = MutableStateFlow(HostSnapshot())
@@ -114,7 +117,13 @@ class HostState(
             }
             runCatching { service.setup(null, null, BuildConfig.DEBUG) }
                 .onFailure { Timber.w(it, "setup failed") }
-            val displayId = runCatching { service.startVirtualDisplay() }
+            appSettings.loaded.first { it }
+            val displayId = runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    service.setVirtualDisplayRefreshRate(appSettings.virtualDisplayRefreshRate.value)
+                }
+                service.startVirtualDisplay()
+            }
                 .getOrElse {
                     Timber.e(it, "startVirtualDisplay failed")
                     return@withLock

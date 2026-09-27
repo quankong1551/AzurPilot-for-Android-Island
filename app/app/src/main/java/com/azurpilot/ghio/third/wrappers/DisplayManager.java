@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.hardware.display.VirtualDisplay;
+import android.hardware.display.VirtualDisplayConfig;
+import android.os.Build;
 import android.os.Handler;
 import android.view.Display;
 import android.view.Surface;
@@ -167,11 +169,23 @@ public final class DisplayManager {
         return (VirtualDisplay) method.invoke(null, name, width, height, displayIdToMirror, surface);
     }
 
-    public VirtualDisplay createNewVirtualDisplay(String name, int width, int height, int dpi, Surface surface, int flags) throws Exception {
+    public VirtualDisplay createNewVirtualDisplay(String name, int width, int height, int dpi, Surface surface, int flags, float refreshRate) throws Exception {
         Constructor<android.hardware.display.DisplayManager> ctor = android.hardware.display.DisplayManager.class.getDeclaredConstructor(
                 Context.class);
         ctor.setAccessible(true);
         android.hardware.display.DisplayManager dm = ctor.newInstance(FakeContext.get());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Display physical = dm.getDisplay(Display.DEFAULT_DISPLAY);
+            float maximum = physical != null ? physical.getRefreshRate() : 0f;
+            // 无法读取物理屏时交给系统；始终在创建时重新检查上限。
+            float requested = maximum > 0f ? Math.min(refreshRate, maximum) : 0f;
+            VirtualDisplayConfig config = new VirtualDisplayConfig.Builder(name, width, height, dpi)
+                    .setSurface(surface)
+                    .setFlags(flags)
+                    .setRequestedRefreshRate(requested)
+                    .build();
+            return dm.createVirtualDisplay(config);
+        }
         return dm.createVirtualDisplay(name, width, height, dpi, surface, flags);
     }
 

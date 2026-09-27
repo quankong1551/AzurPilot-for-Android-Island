@@ -133,4 +133,7 @@ interface RemoteService {
      * 走文件不回传字节：一张 720p PNG 几百 KB，binder 事务缓冲总共才 1MB
      */
     boolean saveCachedImage(String path) = 75;
+
+    /** 下次创建虚拟屏时使用的请求刷新率；0 跟随系统，仅 Android 14+ 生效 */
+    void setVirtualDisplayRefreshRate(float rate) = 76;
 }

@@ -17,6 +17,10 @@ private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
  */
 @PrefSchema
 data class AppSettings(
+    /** 虚拟屏请求刷新率；0 跟随物理屏，仅 Android 14+ 生效 */
+    @PrefKey(default = "0")
+    val virtualDisplayRefreshRate: String = "0",
+
     /** [com.azurpilot.ghio.domain.RemoteBackend] 的 name */
     @PrefKey(default = "SHIZUKU")
     val startupBackend: String = "SHIZUKU",
