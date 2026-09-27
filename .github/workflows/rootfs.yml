@@ -466,7 +466,7 @@ jobs:
           gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft \
               --title 'AzurPilot Android 自动构建' \
-              --notes '每小时检查 AzurPilot dev 更新；更新后按架构构建 rootfs 与两种签名 APK。'
+              --notes '每 30 分钟检查 AzurPilot dev 更新；更新后按架构构建 rootfs 与两种签名 APK。'
           assets=(latest.json rootfs-arm64-v8a.tar.xz rootfs-x86_64.tar.xz)
           if [[ "$SIGNING_READY" == true && "$APK_BUILT" == true ]]; then
             assets+=("$asset" "AzurPilot-Android-${VERSION_NAME}-arm64-v8a-full.apk" "AzurPilot-Android-${VERSION_NAME}-x86_64-full.apk")

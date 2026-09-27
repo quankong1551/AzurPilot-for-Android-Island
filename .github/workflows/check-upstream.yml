@@ -2,7 +2,8 @@ name: Check AzurPilot upstream
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Avoid the top-of-hour peak, when GitHub may delay or drop scheduled runs.
+    - cron: '17,47 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -16,15 +17,22 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        id: checkout
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
       - name: Compare upstream dev with published release
+        id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           ref="$(git ls-remote https://github.com/wess09/AzurPilot.git refs/heads/dev | awk '{print $1}')"
           [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid AzurPilot dev ref: $ref" >&2; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
           published=''
           mkdir -p .tmp/previous-release
           if gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -37,7 +45,7 @@ jobs:
               echo '### AzurPilot upstream check'
               echo "- Upstream dev: \`$ref\`"
               echo "- Published commit: \`$published\`"
-              echo '- Build dispatched: **false**'
+              echo '- Build required: **false**'
             } >> "$GITHUB_STEP_SUMMARY"
             echo "AzurPilot dev is unchanged ($ref); skipping build."
             exit 0
@@ -46,26 +54,52 @@ jobs:
             echo '### AzurPilot upstream check'
             echo "- Upstream dev: \`$ref\`"
             echo "- Published commit: \`${published:-none}\`"
-            echo '- Build dispatched: **true**'
+            echo '- Build required: **true**'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "AzurPilot dev changed: ${published:-<no release>} -> $ref"
-          gh workflow run rootfs.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f azurpilot_ref="$ref" -f publish_update=true
+          echo 'should_build=true' >> "$GITHUB_OUTPUT"
       - name: Keep scheduled workflows active
+        # Even a failed upstream/release lookup must not suppress repository activity.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          UPSTREAM_REF: ${{ steps.upstream.outputs.ref }}
         run: |
           set -euo pipefail
           marker=.github/schedule-heartbeat.txt
-          now="$(date -u +%s)"
-          if [[ -f "$marker" ]] && last="$(date -u -d "$(cat "$marker")" +%s 2>/dev/null)"; then
-            if (( now - last < 30 * 24 * 60 * 60 )); then
-              echo "Last activity marker is less than 30 days old; skipping commit."
-              exit 0
-            fi
-          fi
+          upstream_marker=.github/azurpilot-upstream.txt
           date -u +'%Y-%m-%dT%H:%M:%SZ' > "$marker"
+          git add -- "$marker"
+          if [[ -n "$UPSTREAM_REF" ]]; then
+            printf '%s\n' "$UPSTREAM_REF" > "$upstream_marker"
+            git add -- "$upstream_marker"
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- "$marker"
-          git commit -m 'chore: refresh scheduled workflow activity [skip ci]'
-          git push origin HEAD:main
-          echo "Committed scheduled workflow activity at $(cat "$marker")."
+          git commit --allow-empty -m "chore: check AzurPilot upstream ${UPSTREAM_REF:-unavailable} [skip ci]"
+          # A maintainer may push while the upstream API is being queried.
+          for attempt in 1 2 3; do
+            git fetch origin "$DEFAULT_BRANCH"
+            git rebase "origin/$DEFAULT_BRANCH"
+            if git push origin "HEAD:$DEFAULT_BRANCH"; then
+              echo "Committed scheduled workflow activity at $(cat "$marker")."
+              echo "- Activity commit: \`$(git rev-parse HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep "$((attempt * 2))"
+          done
+          echo 'Failed to push scheduled workflow activity after 3 attempts.' >&2
+          exit 1
+      - name: Dispatch Android update build
+        # GITHUB_TOKEN pushes do not trigger push workflows; explicitly dispatch instead.
+        # A heartbeat push failure must not prevent an otherwise valid update.
+        if: ${{ !cancelled() && steps.upstream.outcome == 'success' && steps.upstream.outputs.should_build == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          UPSTREAM_REF: ${{ steps.upstream.outputs.ref }}
+        run: |
+          set -euo pipefail
+          gh workflow run rootfs.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" \
+            -f azurpilot_ref="$UPSTREAM_REF" -f publish_update=true
+          echo '- Build dispatched: **true**' >> "$GITHUB_STEP_SUMMARY"
