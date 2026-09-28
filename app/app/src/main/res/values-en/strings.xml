@@ -101,6 +101,11 @@
     <string name="settings_follow_system">System default</string>
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
+    <string name="settings_ui_style">Style</string>
+    <string name="settings_ui_style_auto">Auto</string>
+    <string name="settings_ui_style_md3">MD3</string>
+    <string name="settings_ui_style_miuix">Miuix</string>
+    <string name="settings_ui_style_hint">Auto picks by device: Xiaomi, Redmi and POCO prefer the Miuix style, others use MD3.</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_hint">Switching language reloads the project; unavailable while running</string>
     <string name="settings_run_mode">Run mode</string>

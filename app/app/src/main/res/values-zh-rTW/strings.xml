@@ -97,6 +97,11 @@
     <string name="settings_follow_system">跟隨系統</string>
     <string name="settings_theme_light">淺色</string>
     <string name="settings_theme_dark">深色</string>
+    <string name="settings_ui_style">介面風格</string>
+    <string name="settings_ui_style_auto">自動</string>
+    <string name="settings_ui_style_md3">MD3</string>
+    <string name="settings_ui_style_miuix">Miuix</string>
+    <string name="settings_ui_style_hint">自動會依裝置選擇：小米、紅米、POCO 優先 Miuix 風格，其他裝置用 MD3。</string>
     <string name="settings_language">語言</string>
     <string name="settings_language_hint">切換語言會重新載入專案，執行期間無法切換</string>
     <string name="settings_run_mode">執行模式</string>

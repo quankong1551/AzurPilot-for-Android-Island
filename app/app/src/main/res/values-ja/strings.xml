@@ -97,6 +97,11 @@
     <string name="settings_follow_system">システムに従う</string>
     <string name="settings_theme_light">ライト</string>
     <string name="settings_theme_dark">ダーク</string>
+    <string name="settings_ui_style">スタイル</string>
+    <string name="settings_ui_style_auto">自動</string>
+    <string name="settings_ui_style_md3">MD3</string>
+    <string name="settings_ui_style_miuix">Miuix</string>
+    <string name="settings_ui_style_hint">自動は端末で切り替え：Xiaomi・Redmi・POCO は Miuix スタイル、その他は MD3 を使用します。</string>
     <string name="settings_language">言語</string>
     <string name="settings_language_hint">言語を切り替えるとプロジェクトが再読み込みされます。実行中は切り替えられません</string>
     <string name="settings_run_mode">実行モード</string>
