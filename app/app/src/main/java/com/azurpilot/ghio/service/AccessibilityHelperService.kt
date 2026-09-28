@@ -1,9 +1,12 @@
 package com.azurpilot.ghio.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.azurpilot.ghio.BuildConfig
+import com.azurpilot.ghio.keepalive.KeepAliveManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,9 +35,12 @@ class AccessibilityHelperService : AccessibilityService() {
         super.onServiceConnected()
         _isConnected.value = true
         Timber.d("Accessibility service connected")
+        KeepAliveManager.getInstance()?.onAccessibilityConnected()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        KeepAliveManager.getInstance()?.onAccessibilityEvent()
+    }
 
     override fun onInterrupt() = Unit
 
@@ -86,6 +92,7 @@ class AccessibilityHelperService : AccessibilityService() {
         super.onDestroy()
         _isConnected.value = false
         Timber.d("Accessibility service disconnected")
+        KeepAliveManager.getInstance()?.onAccessibilityDisconnected()
     }
 
     companion object {
@@ -97,6 +104,16 @@ class AccessibilityHelperService : AccessibilityService() {
          */
         val SERVICE_ID: String =
             BuildConfig.APPLICATION_ID + "/" + AccessibilityHelperService::class.java.name
+
+        /** 检查系统设置中无障碍服务是否已开启 */
+        fun isServiceEnabled(context: Context): Boolean {
+            val contentResolver = context.contentResolver
+            val enabledServices = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ) ?: return false
+            return enabledServices.contains(SERVICE_ID)
+        }
 
         /** 由 OverlayController 装卸；null 表示当前不需要拦截 */
         val onVolumeUpDownPressed = AtomicReference<(() -> Unit)?>()

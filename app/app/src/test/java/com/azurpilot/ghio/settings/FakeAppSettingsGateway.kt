@@ -49,6 +49,12 @@ class FakeAppSettingsGateway : AppSettingsGateway {
         autoCleanLogs.value = enabled
     }
 
+    override val keepAliveEnabled = MutableStateFlow(false)
+
+    override suspend fun setKeepAliveEnabled(enabled: Boolean) {
+        keepAliveEnabled.value = enabled
+    }
+
 
     override val wakeUnlockEnabled = MutableStateFlow(false)
 

@@ -14,6 +14,7 @@ data class SettingsUiState(
     val remoteAccess: RemoteAccessState = RemoteAccessState(),
     val themeMode: ThemeMode = ThemeMode.System,
     val autoCleanLogs: Boolean = true,
+    val keepAliveEnabled: Boolean = false,
 )
 
 sealed interface SettingsIntent {
@@ -26,4 +27,7 @@ sealed interface SettingsIntent {
     data class SetLanguage(val tag: String?) : SettingsIntent
 
     data class SetAutoCleanLogs(val enabled: Boolean) : SettingsIntent
+
+    /** 切换激进后台保活系统 / Toggle persistent keep-alive */
+    data class SetKeepAlive(val enabled: Boolean) : SettingsIntent
 }

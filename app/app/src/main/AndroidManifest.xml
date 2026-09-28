@@ -36,6 +36,15 @@
         android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- 伴侣设备保活：豁免后台运行与数据网络限制 -->
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND" />
+
+    <!-- 保活增强：CPU 防休眠唤醒锁、开机自启广播与精准闹钟唤醒 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:name=".AzurPilotApp"
         android:allowBackup="true"
@@ -103,6 +112,58 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_helper_service_config" />
         </service>
+
+        <!--
+          伴侣设备保活服务：Android 12+ (API 31+) 注册 CompanionDeviceService 以获取系统级后台与免杀豁免
+        -->
+        <service
+            android:name=".keepalive.KeepAliveCompanionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService" />
+            </intent-filter>
+        </service>
+
+        <!-- 粘性守护服务：START_STICKY 自愈 -->
+        <service
+            android:name=".keepalive.KeepAliveStickyService"
+            android:exported="false" />
+
+        <!-- 系统作业保活服务：JobScheduler 周期性拉活 -->
+        <service
+            android:name=".keepalive.KeepAliveJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
+
+        <!-- 定时精准闹钟接收器：AllowWhileIdle 唤醒 -->
+        <receiver
+            android:name=".keepalive.KeepAliveAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 系统事件多广播接收器：开机自启、解锁与电源监听 -->
+        <receiver
+            android:name=".keepalive.KeepAliveBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.REBOOT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 双进程互相守护：主进程端服务 -->
+        <service
+            android:name=".keepalive.KeepAliveLocalService"
+            android:exported="false" />
+
+        <!-- 双进程互相守护：独立守护子进程端服务 -->
+        <service
+            android:name=".keepalive.KeepAliveDaemonService"
+            android:process=":daemon"
+            android:exported="false" />
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

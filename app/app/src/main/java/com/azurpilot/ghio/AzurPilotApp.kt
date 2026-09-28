@@ -1,6 +1,7 @@
 package com.azurpilot.ghio
 
 import android.app.Application
+import android.os.Build
 import com.azurpilot.ghio.constant.AppPaths
 import com.azurpilot.ghio.di.AppCoroutineScope
 import com.azurpilot.ghio.di.coreModule
@@ -11,6 +12,7 @@ import com.azurpilot.ghio.di.privilegedModule
 import com.azurpilot.ghio.di.prootModule
 import com.azurpilot.ghio.di.provisionModule
 import com.azurpilot.ghio.di.viewModelModule
+import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.log.AppLogWriter
 import com.azurpilot.ghio.log.CrashHandler
 import com.azurpilot.ghio.log.LogCleaner
@@ -47,6 +49,13 @@ class AzurPilotApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (!isMainProcess()) {
+            if (BuildConfig.DEBUG) {
+                Timber.plant(Timber.DebugTree())
+            }
+            Timber.d("AzurPilotApp: Secondary daemon process initialized (PID=${android.os.Process.myPid()})")
+            return
+        }
         AppPaths.init(this)
         CrashHandler().install()
         val app = this
@@ -102,5 +111,17 @@ class AzurPilotApp : Application() {
         }
         koin.get<OverlayController>().setup()
         koin.get<ScreenSaverOverlayManager>().setup()
+        koin.get<KeepAliveManager>().start()
+    }
+
+    private fun isMainProcess(): Boolean {
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            val pid = android.os.Process.myPid()
+            val am = getSystemService(ACTIVITY_SERVICE) as? android.app.ActivityManager
+            am?.runningAppProcesses?.find { it.pid == pid }?.processName ?: packageName
+        }
+        return processName == packageName
     }
 }

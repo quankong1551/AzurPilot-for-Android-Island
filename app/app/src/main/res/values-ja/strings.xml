@@ -893,4 +893,27 @@
     <string name="settings_virtual_display_rate_hint">仮想画面の次回起動時に適用されます。最大設定は物理画面に追従します。実際のリフレッシュレートはシステムにより調整される場合があります。</string>
     <string name="settings_virtual_display_rate_unsupported">仮想画面のフレームレート設定には Android 14 以降が必要です。</string>
     <string name="settings_virtual_display_rate_unavailable">物理画面のリフレッシュレートを取得できないため、調整できません。</string>
+
+    <!-- バックグラウンド維持 -->
+    <string name="settings_section_keepalive">バックグラウンド維持</string>
+    <string name="settings_keepalive_title">持続的バックグラウンド維持</string>
+    <string name="settings_keepalive_desc">無音オーディオ、1px極小オーバーレイ、コンパニオンサービス、アクセシビリティ、CPU WakeLock、正確なアラーム、JobScheduler、二重プロセス相互監視などを統合し、バックグラウンド終了を徹底的に防止します。</string>
+    <string name="settings_keepalive_audio">24時間無音オーディオ再生</string>
+    <string name="settings_keepalive_audio_desc">音量ゼロの無音データをループ再生し、アプリをアクティブなメディア再生プロセスとして認識させます</string>
+    <string name="settings_keepalive_pixel">前台1px極小オーバーレイ</string>
+    <string name="settings_keepalive_pixel_desc">1x1の透明オーバーレイを表示し、プロセスを可視ウィンドウ優先度に引き上げます（要オーバーレイ権限）</string>
+    <string name="settings_keepalive_wakelock">CPU スリープ防止 WakeLock</string>
+    <string name="settings_keepalive_wakelock_desc">Partial WakeLock を保持して CPU を常時稼働させ、画面消灯時のディープスリープを防止します</string>
+    <string name="settings_keepalive_alarm_job">システム定期ジョブと正確なアラーム</string>
+    <string name="settings_keepalive_alarm_job_desc">JobScheduler と AlarmManager を組み合わせて Doze モード下でも周期的にプロセスを起動します</string>
+    <string name="settings_keepalive_daemon_broadcast">二重プロセス相互監視とシステムブロードキャスト</string>
+    <string name="settings_keepalive_daemon_broadcast_desc">独立した監視プロセスと主プロセスが Binder 死亡を相互監視して復元し、起動時や電源イベントも検知します</string>
+    <string name="settings_keepalive_companion">コンパニオンデバイスサービス</string>
+    <string name="settings_keepalive_companion_desc">コンパニオンデバイスコンポーネントを登録し、システムレベルの実行とネットワーク免除を獲得します</string>
+    <string name="settings_keepalive_accessibility">アクセシビリティ監視連携</string>
+    <string name="settings_keepalive_accessibility_desc">システムのアクセシビリティ機能を利用し、異常終了時にシステムによって自動再起動します</string>
+    <string name="settings_keepalive_status_active">稼働中</string>
+    <string name="settings_keepalive_status_inactive">停止中</string>
+    <string name="settings_keepalive_status_need_permission">オーバーレイ権限未付与</string>
+    <string name="settings_keepalive_status_need_accessibility">アクセシビリティ未有効化</string>
 </resources>

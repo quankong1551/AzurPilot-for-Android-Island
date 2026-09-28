@@ -4,6 +4,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.Display
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.DisposableEffect
@@ -45,6 +46,8 @@ import com.azurpilot.ghio.R
 import com.azurpilot.ghio.domain.RemoteBackend
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.i18n.AppLocales
+import com.azurpilot.ghio.keepalive.KeepAliveManager
+import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
 import com.azurpilot.ghio.theme.AppTokens
@@ -103,6 +106,7 @@ fun SettingsScreen(
             DisplayCard(state, onIntent)
             VirtualDisplayFrameRateCard()
             LogCard(state, onIntent, onOpenAppLog, onOpenRunnerLog, onExportRunnerLogs, onExportLauncherLogs)
+            KeepAliveCard(state, onIntent)
             OtherCard(state, onIntent)
             RuntimeCard()
             AboutCard()
@@ -322,6 +326,158 @@ private fun LogCard(
                     Text(stringResource(R.string.dialog_cancel))
                 }
             },
+        )
+    }
+}
+
+/** 激进后台保活系统卡片 */
+@Composable
+private fun KeepAliveCard(
+    state: SettingsUiState,
+    onIntent: (SettingsIntent) -> Unit,
+    keepAliveManager: KeepAliveManager = koinInject(),
+) {
+    val context = LocalContext.current
+    val isAudioPlaying by keepAliveManager.isAudioPlaying.collectAsStateWithLifecycle()
+    val isOverlayAttached by keepAliveManager.isPixelOverlayAttached.collectAsStateWithLifecycle()
+    val isWakeLockHeld by keepAliveManager.isWakeLockHeld.collectAsStateWithLifecycle()
+    val isAccessibilityConnected by keepAliveManager.isAccessibilityConnected.collectAsStateWithLifecycle()
+    val hasOverlayPermission = remember(state.keepAliveEnabled) {
+        Settings.canDrawOverlays(context)
+    }
+    val hasAccessibility = remember(state.keepAliveEnabled, isAccessibilityConnected) {
+        AccessibilityHelperService.isServiceEnabled(context) || isAccessibilityConnected
+    }
+
+    AppCard(title = stringResource(R.string.settings_section_keepalive), collapsible = true) {
+        AppLabeledControlRow(
+            label = stringResource(R.string.settings_keepalive_title),
+            trailing = {
+                Switch(
+                    checked = state.keepAliveEnabled,
+                    onCheckedChange = { enabled ->
+                        onIntent(SettingsIntent.SetKeepAlive(enabled))
+                    },
+                )
+            },
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        AppFieldLabel(stringResource(R.string.permission_section))
+
+        // 1. 24小时后台无音量音频
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_audio),
+            value = stringResource(
+                if (state.keepAliveEnabled && isAudioPlaying) {
+                    R.string.settings_keepalive_status_active
+                } else {
+                    R.string.settings_keepalive_status_inactive
+                }
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_audio_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 2. 前台 1px 微型浮窗像素
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_pixel),
+            value = stringResource(
+                when {
+                    !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
+                    isOverlayAttached -> R.string.settings_keepalive_status_active
+                    !hasOverlayPermission -> R.string.settings_keepalive_status_need_permission
+                    else -> R.string.settings_keepalive_status_inactive
+                }
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_pixel_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 3. CPU 防休眠唤醒锁 (WakeLock)
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_wakelock),
+            value = stringResource(
+                if (state.keepAliveEnabled && isWakeLockHeld) {
+                    R.string.settings_keepalive_status_active
+                } else {
+                    R.string.settings_keepalive_status_inactive
+                }
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_wakelock_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 4. 系统定时作业与精准闹钟 (JobScheduler & AlarmManager)
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_alarm_job),
+            value = stringResource(
+                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                else R.string.settings_keepalive_status_inactive
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_alarm_job_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 5. 双进程互保与系统广播监听
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_daemon_broadcast),
+            value = stringResource(
+                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                else R.string.settings_keepalive_status_inactive
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_daemon_broadcast_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 6. 伴侣设备服务
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_companion),
+            value = stringResource(
+                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                else R.string.settings_keepalive_status_inactive
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_companion_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // 4. 无障碍守护联动
+        AppInfoRow(
+            label = stringResource(R.string.settings_keepalive_accessibility),
+            value = stringResource(
+                when {
+                    !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
+                    isAccessibilityConnected || hasAccessibility -> R.string.settings_keepalive_status_active
+                    else -> R.string.settings_keepalive_status_need_accessibility
+                }
+            ),
+        )
+        Text(
+            text = stringResource(R.string.settings_keepalive_accessibility_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

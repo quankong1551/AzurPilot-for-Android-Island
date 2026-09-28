@@ -57,4 +57,11 @@ data class AppSettings(
     @PrefKey(default = "")
     val githubMirrorCustom: String = "",
 
+    /**
+     * 激进后台保活系统 / Persistent aggressive keep-alive system
+     * 包含后台无音量音频 + 前台 1px 浮窗像素 + 伴侣设备服务 + 无障碍守护
+     * Silent audio + 1px overlay pixel + CompanionDeviceService + Accessibility daemon
+     */
+    @PrefKey(default = "false")
+    val keepAliveEnabled: String = "false",
 )

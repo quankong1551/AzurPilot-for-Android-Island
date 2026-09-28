@@ -26,11 +26,13 @@ class SettingsViewModel(
         permissionGateway.state,
         userConfigurationStore.data,
         appSettings.autoCleanLogs,
-    ) { remoteAccess, userConfig, autoCleanLogs ->
+        appSettings.keepAliveEnabled,
+    ) { remoteAccess, userConfig, autoCleanLogs, keepAliveEnabled ->
         SettingsUiState(
             remoteAccess = remoteAccess,
             themeMode = userConfig.themeMode,
             autoCleanLogs = autoCleanLogs,
+            keepAliveEnabled = keepAliveEnabled,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -52,6 +54,10 @@ class SettingsViewModel(
 
             is SettingsIntent.SetAutoCleanLogs -> viewModelScope.launch {
                 appSettings.setAutoCleanLogs(intent.enabled)
+            }
+
+            is SettingsIntent.SetKeepAlive -> viewModelScope.launch {
+                appSettings.setKeepAliveEnabled(intent.enabled)
             }
         }
     }

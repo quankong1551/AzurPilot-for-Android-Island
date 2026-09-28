@@ -893,4 +893,27 @@
     <string name="settings_virtual_display_rate_hint">下次启动虚拟屏时生效。最大档跟随物理屏；系统可能调整实际刷新率。</string>
     <string name="settings_virtual_display_rate_unsupported">自定义虚拟屏帧率需要 Android 14 或更高版本。</string>
     <string name="settings_virtual_display_rate_unavailable">无法读取物理屏刷新率，暂时无法调节。</string>
+
+    <!-- 后台保活系统 -->
+    <string name="settings_section_keepalive">后台保活</string>
+    <string name="settings_keepalive_title">激进保活系统</string>
+    <string name="settings_keepalive_desc">整合后台无音量音频、1px 前台微型浮窗、伴侣设备服务、无障碍守护、CPU 防休眠唤醒锁、精准闹钟、系统定时作业与双进程守护等十重机制，全方位防止应用在后台被系统杀死。</string>
+    <string name="settings_keepalive_audio">24 小时后台无音量音频</string>
+    <string name="settings_keepalive_audio_desc">在底层循环播放零音量静音数据，将应用标记为活跃媒体播放实体</string>
+    <string name="settings_keepalive_pixel">前台 1px 微型浮窗像素</string>
+    <string name="settings_keepalive_pixel_desc">挂载 1x1 像素透明悬浮窗，提升进程为可见窗口优先级（需悬浮窗权限）</string>
+    <string name="settings_keepalive_wakelock">CPU 防休眠唤醒锁 (WakeLock)</string>
+    <string name="settings_keepalive_wakelock_desc">持有系统 Partial WakeLock 保证 CPU 持续运行，防止在息屏时进入深度休眠</string>
+    <string name="settings_keepalive_alarm_job">系统定时作业与精准闹钟</string>
+    <string name="settings_keepalive_alarm_job_desc">结合 JobScheduler 系统作业与 AlarmManager 闹钟在 Doze 模式下周期性唤醒进程</string>
+    <string name="settings_keepalive_daemon_broadcast">双进程互保与系统广播监听</string>
+    <string name="settings_keepalive_daemon_broadcast_desc">独立守护子进程与主进程互相监听 Binder 死亡并拉活，同时监听开机、解锁与电源事件</string>
+    <string name="settings_keepalive_companion">伴侣设备服务 (CompanionDeviceService)</string>
+    <string name="settings_keepalive_companion_desc">注册系统伴侣设备组件，享有系统级免杀与后台网络唤醒豁免</string>
+    <string name="settings_keepalive_accessibility">无障碍守护联动</string>
+    <string name="settings_keepalive_accessibility_desc">利用系统无障碍机制，在异常退出时由系统自动重拉应用进程</string>
+    <string name="settings_keepalive_status_active">运行中</string>
+    <string name="settings_keepalive_status_inactive">未启用</string>
+    <string name="settings_keepalive_status_need_permission">未授权悬浮窗</string>
+    <string name="settings_keepalive_status_need_accessibility">无障碍未开启</string>
 </resources>

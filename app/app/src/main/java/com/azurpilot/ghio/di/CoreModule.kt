@@ -11,6 +11,7 @@ import com.azurpilot.ghio.config.UserConfigurationStore
 import com.azurpilot.ghio.constant.DataStoreFile
 import com.azurpilot.ghio.domain.UserConfiguration
 import com.azurpilot.ghio.i18n.LocalizedTextRenderer
+import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.settings.AppSettingsGateway
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.update.AppUpdateManager
@@ -49,4 +50,5 @@ val coreModule = module {
 
     single { LocalizedTextRenderer(androidContext()) }
     single { AppUpdateManager(androidContext(), get(named<AppCoroutineScope>()), get<AppSettingsManager>()) }
+    single { KeepAliveManager(androidContext(), get(), get(named<AppCoroutineScope>())) }
 }

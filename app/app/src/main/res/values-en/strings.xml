@@ -898,4 +898,27 @@
     <string name="settings_virtual_display_rate_hint">Applies the next time the virtual display starts. The highest setting follows the physical display; Android may adjust the actual refresh rate.</string>
     <string name="settings_virtual_display_rate_unsupported">Custom virtual display frame rates require Android 14 or later.</string>
     <string name="settings_virtual_display_rate_unavailable">The physical display refresh rate is unavailable. Adjustment is disabled.</string>
+
+    <!-- Persistent keep-alive system -->
+    <string name="settings_section_keepalive">Keep-Alive</string>
+    <string name="settings_keepalive_title">Aggressive Keep-Alive System</string>
+    <string name="settings_keepalive_desc">Combines silent audio, 1px overlay pixel, CompanionDeviceService, Accessibility daemon, CPU WakeLock, exact alarms, JobScheduler, and dual-process mutual resurrection to prevent background termination.</string>
+    <string name="settings_keepalive_audio">24/7 Silent Audio Playback</string>
+    <string name="settings_keepalive_audio_desc">Loops zero-volume silent audio in AudioFlinger to mark the process as an active media entity</string>
+    <string name="settings_keepalive_pixel">1px Foreground Overlay Pixel</string>
+    <string name="settings_keepalive_pixel_desc">Mounts a 1x1 transparent overlay to elevate process priority to visible window (requires overlay permission)</string>
+    <string name="settings_keepalive_wakelock">CPU Partial WakeLock</string>
+    <string name="settings_keepalive_wakelock_desc">Holds a system Partial WakeLock to keep the CPU running and prevent deep sleep while screen is off</string>
+    <string name="settings_keepalive_alarm_job">JobScheduler &amp; Exact Alarm</string>
+    <string name="settings_keepalive_alarm_job_desc">Combines system JobScheduler and AlarmManager to periodically wake up the process in Doze mode</string>
+    <string name="settings_keepalive_daemon_broadcast">Dual-Process Watchdog &amp; Broadcasts</string>
+    <string name="settings_keepalive_daemon_broadcast_desc">Independent daemon process mutually monitors Binder death to resurrect each other, listening to boot and power events</string>
+    <string name="settings_keepalive_companion">Companion Device Service</string>
+    <string name="settings_keepalive_companion_desc">Registers system companion device component for background execution and network exemptions</string>
+    <string name="settings_keepalive_accessibility">Accessibility Daemon Integration</string>
+    <string name="settings_keepalive_accessibility_desc">Leverages system accessibility service to automatically restart the process if terminated</string>
+    <string name="settings_keepalive_status_active">Active</string>
+    <string name="settings_keepalive_status_inactive">Inactive</string>
+    <string name="settings_keepalive_status_need_permission">Overlay Permission Required</string>
+    <string name="settings_keepalive_status_need_accessibility">Accessibility Not Enabled</string>
 </resources>
