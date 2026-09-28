@@ -924,7 +924,7 @@
 
     <!-- ホーム画面ウィジェット -->
     <string name="widget_control_name">AzurPilot コントロールパネル</string>
-    <string name="widget_control_description">ホーム画面で ALAS の稼働状況と現在のタスクを確認し、素早く操作</string>
+    <string name="widget_control_description">ホーム画面で稼働状況と現在のタスクを確認し、素早く操作</string>
     <string name="widget_quick_name">AzurPilot クイックスイッチ</string>
     <string name="widget_quick_description">ワンタップで自動化タスクを開始・停止できるコンパクトなスイッチ</string>
     <string name="widget_action_start">開始</string>

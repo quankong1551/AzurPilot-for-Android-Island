@@ -929,7 +929,7 @@
 
     <!-- Home screen widgets -->
     <string name="widget_control_name">AzurPilot Control Panel</string>
-    <string name="widget_control_description">View ALAS runner status, current task and toggle quickly from home screen</string>
+    <string name="widget_control_description">View runner status, current task and toggle quickly from home screen</string>
     <string name="widget_quick_name">AzurPilot Quick Switch</string>
     <string name="widget_quick_description">Compact switch on home screen to start or stop runner with one tap</string>
     <string name="widget_action_start">Start</string>

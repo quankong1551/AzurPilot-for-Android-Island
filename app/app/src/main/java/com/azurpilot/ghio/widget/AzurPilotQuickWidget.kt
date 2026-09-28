@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -14,7 +15,6 @@ import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionSendBroadcast
-import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -53,21 +53,25 @@ class AzurPilotQuickWidget : GlanceAppWidget() {
                 val toggleAction = actionSendBroadcast(toggleIntent)
 
                 val buttonBackground = when {
-                    state.busy -> GlanceTheme.colors.surfaceVariant
-                    state.runnerAlive -> GlanceTheme.colors.errorContainer
-                    else -> GlanceTheme.colors.primary
+                    state.busy -> R.drawable.widget_btn_muted
+                    state.runnerAlive -> R.drawable.widget_btn_error
+                    else -> R.drawable.widget_btn_primary
                 }
                 val buttonIcon = when {
                     state.busy -> R.drawable.ic_widget_hourglass
                     state.runnerAlive -> R.drawable.ic_widget_stop
                     else -> R.drawable.ic_widget_play
                 }
+                val buttonIconTint = when {
+                    state.busy -> GlanceTheme.colors.onSurfaceVariant
+                    state.runnerAlive -> GlanceTheme.colors.onErrorContainer
+                    else -> GlanceTheme.colors.onPrimary
+                }
 
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .background(GlanceTheme.colors.widgetBackground)
-                        .cornerRadius(20.dp)
+                        .background(ImageProvider(R.drawable.widget_card_bg))
                         .clickable(openAppAction)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
@@ -115,19 +119,19 @@ class AzurPilotQuickWidget : GlanceAppWidget() {
 
                         Spacer(modifier = GlanceModifier.width(8.dp))
 
-                        // 右侧：圆形快捷启停按钮
+                        // 右侧：圆形快捷启停按钮（19dp 胶囊在 36dp 尺寸下自动收为圆形）
                         Box(
                             modifier = GlanceModifier
                                 .size(36.dp)
-                                .background(buttonBackground)
-                                .cornerRadius(18.dp)
+                                .background(ImageProvider(buttonBackground))
                                 .then(if (state.busy) GlanceModifier else GlanceModifier.clickable(toggleAction)),
                             contentAlignment = Alignment.Center
                         ) {
                             Image(
                                 provider = ImageProvider(buttonIcon),
                                 contentDescription = null,
-                                modifier = GlanceModifier.size(18.dp)
+                                modifier = GlanceModifier.size(18.dp),
+                                colorFilter = ColorFilter.tint(buttonIconTint)
                             )
                         }
                     }

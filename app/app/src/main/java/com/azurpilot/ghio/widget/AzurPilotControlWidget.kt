@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
@@ -14,7 +15,6 @@ import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionSendBroadcast
-import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -31,6 +31,7 @@ import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
 import com.azurpilot.ghio.MainActivity
 import com.azurpilot.ghio.R
 
@@ -59,12 +60,12 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                 }
                 val refreshAction = actionSendBroadcast(refreshIntent)
 
-                // 外部卡片容器：圆角 24dp (MD3 Extra Large Shape)
+                // 外部卡片容器：24dp 圆角由 shape drawable 提供（cornerRadius 修饰符在
+                // API 31 以下不生效，本机 MIUI 12.5 = API 30，只能靠 drawable 圆角）
                 Box(
                     modifier = GlanceModifier
                         .fillMaxSize()
-                        .background(GlanceTheme.colors.widgetBackground)
-                        .cornerRadius(24.dp)
+                        .background(ImageProvider(R.drawable.widget_card_bg))
                         .clickable(openAppAction)
                         .padding(14.dp)
                 ) {
@@ -95,8 +96,7 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                             // MD3 AssistChip 样式的配置胶囊
                             Box(
                                 modifier = GlanceModifier
-                                    .background(GlanceTheme.colors.surfaceVariant)
-                                    .cornerRadius(8.dp)
+                                    .background(ImageProvider(R.drawable.widget_pill_bg))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
@@ -113,8 +113,7 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                             Box(
                                 modifier = GlanceModifier
                                     .size(28.dp)
-                                    .background(GlanceTheme.colors.surfaceVariant)
-                                    .cornerRadius(14.dp)
+                                    .background(ImageProvider(R.drawable.widget_inner_bg))
                                     .clickable(refreshAction)
                                     .padding(6.dp),
                                 contentAlignment = Alignment.Center
@@ -122,20 +121,20 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                                 Image(
                                     provider = ImageProvider(R.drawable.ic_widget_refresh),
                                     contentDescription = context.getString(R.string.widget_refresh),
-                                    modifier = GlanceModifier.fillMaxSize()
+                                    modifier = GlanceModifier.fillMaxSize(),
+                                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant)
                                 )
                             }
                         }
 
                         Spacer(modifier = GlanceModifier.height(8.dp))
 
-                        // 2. 状态与任务卡片：MD3 surfaceVariant 微容器
+                        // 2. 状态与任务卡片：MD3 内侧微容器（14dp 圆角 shape）
                         Box(
                             modifier = GlanceModifier
                                 .fillMaxWidth()
                                 .defaultWeight()
-                                .background(GlanceTheme.colors.surfaceVariant)
-                                .cornerRadius(14.dp)
+                                .background(ImageProvider(R.drawable.widget_inner_bg))
                                 .padding(horizontal = 10.dp, vertical = 8.dp)
                         ) {
                             Column(
@@ -173,7 +172,8 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                                     Image(
                                         provider = ImageProvider(R.drawable.ic_widget_task),
                                         contentDescription = null,
-                                        modifier = GlanceModifier.size(14.dp)
+                                        modifier = GlanceModifier.size(14.dp),
+                                        colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant)
                                     )
                                     Spacer(modifier = GlanceModifier.width(6.dp))
                                     Text(
@@ -192,9 +192,9 @@ class AzurPilotControlWidget : GlanceAppWidget() {
 
                         // 3. 底部大号控制按钮：启动/停止/处理中
                         val buttonBackground = when {
-                            state.busy -> GlanceTheme.colors.surfaceVariant
-                            state.runnerAlive -> GlanceTheme.colors.errorContainer
-                            else -> GlanceTheme.colors.primary
+                            state.busy -> R.drawable.widget_btn_muted
+                            state.runnerAlive -> R.drawable.widget_btn_error
+                            else -> R.drawable.widget_btn_primary
                         }
                         val buttonTextColor = when {
                             state.busy -> GlanceTheme.colors.onSurfaceVariant
@@ -206,6 +206,11 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                             state.runnerAlive -> R.drawable.ic_widget_stop
                             else -> R.drawable.ic_widget_play
                         }
+                        val buttonIconTint = when {
+                            state.busy -> GlanceTheme.colors.onSurfaceVariant
+                            state.runnerAlive -> GlanceTheme.colors.onErrorContainer
+                            else -> GlanceTheme.colors.onPrimary
+                        }
                         val buttonText = when {
                             state.busy -> context.getString(R.string.widget_action_busy)
                             state.runnerAlive -> context.getString(R.string.widget_action_stop)
@@ -216,8 +221,7 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                             modifier = GlanceModifier
                                 .fillMaxWidth()
                                 .height(38.dp)
-                                .background(buttonBackground)
-                                .cornerRadius(19.dp)
+                                .background(ImageProvider(buttonBackground))
                                 .then(if (state.busy) GlanceModifier else GlanceModifier.clickable(toggleAction)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -227,7 +231,8 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                                 Image(
                                     provider = ImageProvider(buttonIcon),
                                     contentDescription = null,
-                                    modifier = GlanceModifier.size(18.dp)
+                                    modifier = GlanceModifier.size(18.dp),
+                                    colorFilter = ColorFilter.tint(buttonIconTint)
                                 )
                                 Spacer(modifier = GlanceModifier.width(6.dp))
                                 Text(

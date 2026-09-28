@@ -924,7 +924,7 @@
 
     <!-- 桌面小组件 -->
     <string name="widget_control_name">AzurPilot 控制面板</string>
-    <string name="widget_control_description">在桌面查看 ALAS 运行状态、当前任务并快速启停</string>
+    <string name="widget_control_description">在桌面查看运行状态、当前任务并快速启停</string>
     <string name="widget_quick_name">AzurPilot 快捷开关</string>
     <string name="widget_quick_description">紧凑桌面开关，随时一键启动或停止自动化任务</string>
     <string name="widget_action_start">启动</string>
