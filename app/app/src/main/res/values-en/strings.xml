@@ -921,4 +921,40 @@
     <string name="settings_keepalive_status_inactive">Inactive</string>
     <string name="settings_keepalive_status_need_permission">Overlay Permission Required</string>
     <string name="settings_keepalive_status_need_accessibility">Accessibility Not Enabled</string>
+
+    <!-- Home screen widgets -->
+    <string name="widget_control_name">AzurPilot Control Panel</string>
+    <string name="widget_control_description">View ALAS runner status, current task and toggle quickly from home screen</string>
+    <string name="widget_quick_name">AzurPilot Quick Switch</string>
+    <string name="widget_quick_description">Compact switch on home screen to start or stop runner with one tap</string>
+    <string name="widget_action_start">Start</string>
+    <string name="widget_action_stop">Stop</string>
+    <string name="widget_action_busy">Processing…</string>
+    <string name="widget_status_idle">Stopped</string>
+    <string name="widget_status_running">Running (PID %1$d)</string>
+    <string name="widget_status_running_no_pid">Running</string>
+    <string name="widget_status_preparing">Preparing</string>
+    <string name="widget_status_error">Error</string>
+    <string name="widget_task_idle">No active task</string>
+    <string name="widget_refresh">Refresh</string>
+    <string name="widget_open_app">Open App</string>
+    <string name="widget_config_label">Config: %1$s</string>
+    <string name="widget_pin_to_home">Add Home Screen Widget</string>
+    <string name="widget_pin_to_home_description">Pin control panel or quick switch to home screen for quick glance and control</string>
+    <string name="widget_pin_control">Add Control Panel (4x2)</string>
+    <string name="widget_pin_quick">Add Quick Switch (2x1)</string>
+    <string name="widget_pin_success">Requested system to add widget to home screen</string>
+    <string name="widget_pin_unsupported">Current launcher does not support pinning widgets; please add manually from home screen</string>
+
+    <!-- Sensitive Operation Lock Protection -->
+    <string name="settings_sensitive_auth_title">Lock Screen Protection</string>
+    <string name="settings_sensitive_auth_desc">Require system lock (PIN/fingerprint/face) when accessing Settings and Virtual Display; bypassed if no screen lock is set.</string>
+    <string name="settings_sensitive_auth_no_lock_hint">(No screen lock set on device, authentication bypassed)</string>
+    <string name="auth_prompt_title_settings">Authenticate to access Settings</string>
+    <string name="auth_prompt_title_screen">Authenticate to access Virtual Display</string>
+    <string name="auth_prompt_title_disable">Disable Sensitive Operation Protection</string>
+    <string name="auth_prompt_subtitle">Confirm your screen lock or biometrics to continue</string>
+    <string name="auth_gate_locked_title">Page Locked</string>
+    <string name="auth_gate_locked_desc">This page is protected by system lock. Please authenticate to continue.</string>
+    <string name="auth_gate_unlock_button">Authenticate to Unlock</string>
 </resources>

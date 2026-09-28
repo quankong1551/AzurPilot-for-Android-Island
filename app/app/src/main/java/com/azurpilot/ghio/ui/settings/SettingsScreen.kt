@@ -1,11 +1,16 @@
 package com.azurpilot.ghio.ui.settings
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Display
+import android.widget.Toast
+import com.azurpilot.ghio.widget.AzurPilotControlWidgetReceiver
+import com.azurpilot.ghio.widget.AzurPilotQuickWidgetReceiver
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +46,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.koinInject
+import androidx.fragment.app.FragmentActivity
+import com.azurpilot.ghio.auth.SensitiveAuthManager
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.domain.RemoteBackend
@@ -108,6 +115,7 @@ fun SettingsScreen(
             LogCard(state, onIntent, onOpenAppLog, onOpenRunnerLog, onExportRunnerLogs, onExportLauncherLogs)
             KeepAliveCard(state, onIntent)
             OtherCard(state, onIntent)
+            WidgetCard()
             RuntimeCard()
             AboutCard()
         }
@@ -482,9 +490,17 @@ private fun KeepAliveCard(
     }
 }
 
-/** 启动模式（特权后端）：「跑起来之前得先定」的环境选项 */
+/** 启动模式与安全锁保护 */
 @Composable
-private fun OtherCard(state: SettingsUiState, onIntent: (SettingsIntent) -> Unit) {
+private fun OtherCard(
+    state: SettingsUiState,
+    onIntent: (SettingsIntent) -> Unit,
+    sensitiveAuthManager: SensitiveAuthManager = koinInject(),
+) {
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
+    val isDeviceSecure = remember(context) { sensitiveAuthManager.isDeviceSecure(context) }
+
     AppCard(title = stringResource(R.string.settings_section_other), collapsible = true) {
         AppFieldLabel(stringResource(R.string.permission_backend))
         AppSingleChoiceFlow(
@@ -492,6 +508,82 @@ private fun OtherCard(state: SettingsUiState, onIntent: (SettingsIntent) -> Unit
             options = RemoteBackend.entries.map { it to it.display },
             selected = state.remoteAccess.configuredBackend,
             onSelect = { onIntent(SettingsIntent.SetBackend(it)) },
+        )
+
+        AppFieldLabel(stringResource(R.string.settings_sensitive_auth_title))
+        AppLabeledControlRow(
+            label = stringResource(R.string.settings_sensitive_auth_title),
+            trailing = {
+                Switch(
+                    checked = state.sensitiveAuthEnabled,
+                    onCheckedChange = { targetEnabled ->
+                        if (!targetEnabled && isDeviceSecure) {
+                            // 关闭保护前需要进行系统锁身份确认
+                            activity?.let { act ->
+                                sensitiveAuthManager.authenticate(
+                                    activity = act,
+                                    title = context.getString(R.string.auth_prompt_title_disable),
+                                    subtitle = context.getString(R.string.auth_prompt_subtitle),
+                                    onSuccess = {
+                                        onIntent(SettingsIntent.SetSensitiveAuth(false))
+                                    },
+                                )
+                            }
+                        } else {
+                            onIntent(SettingsIntent.SetSensitiveAuth(targetEnabled))
+                        }
+                    },
+                )
+            },
+        )
+        Text(
+            text = stringResource(R.string.settings_sensitive_auth_desc) +
+                if (!isDeviceSecure) " " + stringResource(R.string.settings_sensitive_auth_no_lock_hint) else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 桌面小组件固定添加卡片 / Home screen widget pin card */
+@Composable
+private fun WidgetCard() {
+    val context = LocalContext.current
+    val appWidgetManager = remember(context) { AppWidgetManager.getInstance(context) }
+    val supported = remember(appWidgetManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            appWidgetManager.isRequestPinAppWidgetSupported
+        } else {
+            false
+        }
+    }
+
+    fun pinWidget(providerClass: Class<*>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && supported) {
+            val provider = ComponentName(context, providerClass)
+            val success = appWidgetManager.requestPinAppWidget(provider, null, null)
+            val msgRes = if (success) R.string.widget_pin_success else R.string.widget_pin_unsupported
+            Toast.makeText(context, msgRes, Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, R.string.widget_pin_unsupported, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    AppCard(title = stringResource(R.string.widget_pin_to_home), collapsible = true) {
+        Text(
+            text = stringResource(R.string.widget_pin_to_home_description),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        AppNavigationRow(
+            label = stringResource(R.string.widget_pin_control),
+            description = stringResource(R.string.widget_control_description),
+            onClick = { pinWidget(AzurPilotControlWidgetReceiver::class.java) },
+        )
+        AppNavigationRow(
+            label = stringResource(R.string.widget_pin_quick),
+            description = stringResource(R.string.widget_quick_description),
+            onClick = { pinWidget(AzurPilotQuickWidgetReceiver::class.java) },
         )
     }
 }

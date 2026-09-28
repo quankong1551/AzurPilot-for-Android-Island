@@ -916,4 +916,40 @@
     <string name="settings_keepalive_status_inactive">未启用</string>
     <string name="settings_keepalive_status_need_permission">未授权悬浮窗</string>
     <string name="settings_keepalive_status_need_accessibility">无障碍未开启</string>
+
+    <!-- 桌面小组件 -->
+    <string name="widget_control_name">AzurPilot 控制面板</string>
+    <string name="widget_control_description">在桌面查看 ALAS 运行状态、当前任务并快速启停</string>
+    <string name="widget_quick_name">AzurPilot 快捷开关</string>
+    <string name="widget_quick_description">紧凑桌面开关，随时一键启动或停止自动化任务</string>
+    <string name="widget_action_start">启动</string>
+    <string name="widget_action_stop">停止</string>
+    <string name="widget_action_busy">处理中…</string>
+    <string name="widget_status_idle">已停止</string>
+    <string name="widget_status_running">运行中 (PID %1$d)</string>
+    <string name="widget_status_running_no_pid">运行中</string>
+    <string name="widget_status_preparing">准备中</string>
+    <string name="widget_status_error">启动异常</string>
+    <string name="widget_task_idle">无正在执行的任务</string>
+    <string name="widget_refresh">刷新</string>
+    <string name="widget_open_app">打开应用</string>
+    <string name="widget_config_label">配置: %1$s</string>
+    <string name="widget_pin_to_home">添加桌面小组件</string>
+    <string name="widget_pin_to_home_description">将控制面板或快捷开关添加至手机桌面，随时查看状态并操作</string>
+    <string name="widget_pin_control">添加控制面板 (4x2)</string>
+    <string name="widget_pin_quick">添加快捷开关 (2x1)</string>
+    <string name="widget_pin_success">已请求系统添加小组件到桌面</string>
+    <string name="widget_pin_unsupported">当前桌面启动器不支持自动添加，请长按桌面手动添加</string>
+
+    <!-- 敏感操作锁屏保护 -->
+    <string name="settings_sensitive_auth_title">敏感操作锁屏保护</string>
+    <string name="settings_sensitive_auth_desc">进入设置与虚拟屏时需验证系统锁（PIN 码/指纹/面部）；未设置锁屏时免密。</string>
+    <string name="settings_sensitive_auth_no_lock_hint">（系统未设置锁屏密码，当前免密）</string>
+    <string name="auth_prompt_title_settings">验证以访问设置</string>
+    <string name="auth_prompt_title_screen">验证以访问虚拟屏</string>
+    <string name="auth_prompt_title_disable">关闭敏感操作保护</string>
+    <string name="auth_prompt_subtitle">请使用锁屏密码或生物识别验证身份</string>
+    <string name="auth_gate_locked_title">页面已锁定</string>
+    <string name="auth_gate_locked_desc">此页面受系统锁保护，请验证身份后继续操作。</string>
+    <string name="auth_gate_unlock_button">验证身份并解锁</string>
 </resources>

@@ -24,4 +24,7 @@ interface AppSettingsGateway {
 
     val keepAliveEnabled: StateFlow<Boolean>
     suspend fun setKeepAliveEnabled(enabled: Boolean)
+
+    val sensitiveAuthEnabled: StateFlow<Boolean>
+    suspend fun setSensitiveAuthEnabled(enabled: Boolean)
 }

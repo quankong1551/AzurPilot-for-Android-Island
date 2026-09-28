@@ -16,6 +16,7 @@
 | [release-channel.md](release-channel.md) | 发布通道：`latest.json` 字段、镜像源、版本规则 / Release channel: `latest.json` fields, mirrors, version rules |
 | [multi-arch.md](multi-arch.md) | 多架构支持：arm64 与 x86_64、CI 矩阵、限制 / Multi-architecture support: arm64 and x86_64, CI matrix, limitations |
 | [adb-e2e-testing.md](adb-e2e-testing.md) | ADB 全流程测试手册 / ADB end-to-end testing guide |
+| [xiaomi-workstation.md](xiaomi-workstation.md) | 小米澎湃OS「工作台」无极窗口 2.0 适配 / Xiaomi HyperOS Workstation (resizable windows 2.0) adaptation |
 
 ## 阅读约定 / Conventions
 

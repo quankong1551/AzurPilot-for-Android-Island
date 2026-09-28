@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.dataStoreFile
 import com.azurpilot.ghio.AppDispatchers
+import com.azurpilot.ghio.auth.SensitiveAuthManager
 import com.azurpilot.ghio.config.DataStoreUserConfigurationStore
 import com.azurpilot.ghio.config.UserConfigurationSerializer
 import com.azurpilot.ghio.config.UserConfigurationStore
@@ -51,4 +52,5 @@ val coreModule = module {
     single { LocalizedTextRenderer(androidContext()) }
     single { AppUpdateManager(androidContext(), get(named<AppCoroutineScope>()), get<AppSettingsManager>()) }
     single { KeepAliveManager(androidContext(), get(), get(named<AppCoroutineScope>())) }
+    single { SensitiveAuthManager(get()) }
 }

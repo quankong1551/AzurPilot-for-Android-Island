@@ -91,15 +91,27 @@ dependencies {
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.core)
     implementation(libs.androidx.material.icons.extended)
+
+    // HyperOS 风格主题（Miuix）：色板灌进 M3 角色槽，组件树仍是 M3
+    implementation(libs.miuix.ui)
+    implementation(libs.miuix.squircle)
+    implementation(libs.miuix.icons)
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.nav)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.window)
     implementation(libs.androidx.browser)
+
+    implementation(libs.androidx.glance)
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
 
     // AzurPilot /api/v1/ws 网关：WebSocket 富接口（实例/总览/自启/热更新）
     implementation(libs.okhttp)

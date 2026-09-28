@@ -916,4 +916,40 @@
     <string name="settings_keepalive_status_inactive">未啟用</string>
     <string name="settings_keepalive_status_need_permission">未授權懸浮窗</string>
     <string name="settings_keepalive_status_need_accessibility">無障礙未開啟</string>
+
+    <!-- 桌面小組件 -->
+    <string name="widget_control_name">AzurPilot 控制面板</string>
+    <string name="widget_control_description">在桌面查看 ALAS 運行狀態、當前任務並快速啟停</string>
+    <string name="widget_quick_name">AzurPilot 快捷開關</string>
+    <string name="widget_quick_description">緊湊桌面開關，隨時一鍵啟動或停止自動化任務</string>
+    <string name="widget_action_start">啟動</string>
+    <string name="widget_action_stop">停止</string>
+    <string name="widget_action_busy">處理中…</string>
+    <string name="widget_status_idle">已停止</string>
+    <string name="widget_status_running">運行中 (PID %1$d)</string>
+    <string name="widget_status_running_no_pid">運行中</string>
+    <string name="widget_status_preparing">準備中</string>
+    <string name="widget_status_error">啟動異常</string>
+    <string name="widget_task_idle">無正在執行的任務</string>
+    <string name="widget_refresh">重新整理</string>
+    <string name="widget_open_app">開啟應用</string>
+    <string name="widget_config_label">配置: %1$s</string>
+    <string name="widget_pin_to_home">添加桌面小組件</string>
+    <string name="widget_pin_to_home_description">將控制面板或快捷開關添加至手機桌面，隨時查看狀態並操作</string>
+    <string name="widget_pin_control">添加控制面板 (4x2)</string>
+    <string name="widget_pin_quick">添加快捷開關 (2x1)</string>
+    <string name="widget_pin_success">已請求系統添加小組件到桌面</string>
+    <string name="widget_pin_unsupported">當前桌面啟動器不支援自動添加，請長按桌面手動添加</string>
+
+    <!-- 敏感操作鎖定保護 -->
+    <string name="settings_sensitive_auth_title">敏感操作鎖定保護</string>
+    <string name="settings_sensitive_auth_desc">進入設定與虛擬屏時需驗證系統鎖（PIN 碼/指紋/臉部）；未設定螢幕鎖定時免密。</string>
+    <string name="settings_sensitive_auth_no_lock_hint">（系統未設定螢幕鎖定密碼，目前免密）</string>
+    <string name="auth_prompt_title_settings">驗證以造訪設定</string>
+    <string name="auth_prompt_title_screen">驗證以造訪虛擬屏</string>
+    <string name="auth_prompt_title_disable">關閉敏感操作保護</string>
+    <string name="auth_prompt_subtitle">請使用鎖定密碼或生物識別驗證身分</string>
+    <string name="auth_gate_locked_title">頁面已鎖定</string>
+    <string name="auth_gate_locked_desc">此頁面受系統鎖保護，請驗證身分後繼續操作。</string>
+    <string name="auth_gate_unlock_button">驗證身分並解鎖</string>
 </resources>

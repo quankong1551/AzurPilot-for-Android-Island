@@ -1,0 +1,255 @@
+package com.azurpilot.ghio.widget
+
+import android.content.Context
+import android.content.Intent
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.glance.GlanceId
+import androidx.glance.GlanceModifier
+import androidx.glance.GlanceTheme
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.action.actionStartActivity
+import androidx.glance.action.clickable
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.action.actionSendBroadcast
+import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.provideContent
+import androidx.glance.background
+import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
+import androidx.glance.layout.Column
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
+import androidx.glance.layout.height
+import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
+import androidx.glance.text.FontWeight
+import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
+import com.azurpilot.ghio.MainActivity
+import com.azurpilot.ghio.R
+
+/**
+ * 4x2 全功能桌面控制面板小组件 / 4x2 Full-featured AppWidget control panel (MD3)
+ *
+ * 遵循 Material Design 3 规范与系统壁纸动态取色 (Material You)。
+ * 展示应用实例状态、当前运行任务、支持一键启停和刷新。
+ */
+class AzurPilotControlWidget : GlanceAppWidget() {
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        provideContent {
+            GlanceTheme {
+                val state = AzurPilotWidgetUpdater.currentState(context)
+
+                val openAppAction = actionStartActivity<MainActivity>()
+
+                val toggleIntent = Intent(context, AzurPilotWidgetActionReceiver::class.java).apply {
+                    action = AzurPilotWidgetActionReceiver.ACTION_TOGGLE_RUNNER
+                }
+                val toggleAction = actionSendBroadcast(toggleIntent)
+
+                val refreshIntent = Intent(context, AzurPilotWidgetActionReceiver::class.java).apply {
+                    action = AzurPilotWidgetActionReceiver.ACTION_REFRESH
+                }
+                val refreshAction = actionSendBroadcast(refreshIntent)
+
+                // 外部卡片容器：圆角 24dp (MD3 Extra Large Shape)
+                Box(
+                    modifier = GlanceModifier
+                        .fillMaxSize()
+                        .background(GlanceTheme.colors.widgetBackground)
+                        .cornerRadius(24.dp)
+                        .clickable(openAppAction)
+                        .padding(14.dp)
+                ) {
+                    Column(
+                        modifier = GlanceModifier.fillMaxSize(),
+                        verticalAlignment = Alignment.Vertical.CenterVertically
+                    ) {
+                        // 1. 顶栏：应用图标 + 标题 + 配置 Pill 标签 + 刷新按钮
+                        Row(
+                            modifier = GlanceModifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Vertical.CenterVertically
+                        ) {
+                            Image(
+                                provider = ImageProvider(R.mipmap.ic_launcher),
+                                contentDescription = null,
+                                modifier = GlanceModifier.size(24.dp)
+                            )
+                            Spacer(modifier = GlanceModifier.width(8.dp))
+                            Text(
+                                text = "AzurPilot",
+                                style = TextStyle(
+                                    color = GlanceTheme.colors.onSurface,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                            )
+                            Spacer(modifier = GlanceModifier.width(8.dp))
+                            // MD3 AssistChip 样式的配置胶囊
+                            Box(
+                                modifier = GlanceModifier
+                                    .background(GlanceTheme.colors.surfaceVariant)
+                                    .cornerRadius(8.dp)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = state.config,
+                                    style = TextStyle(
+                                        color = GlanceTheme.colors.onSurfaceVariant,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                )
+                            }
+                            Spacer(modifier = GlanceModifier.defaultWeight())
+                            // 刷新按钮 (IconButton)
+                            Box(
+                                modifier = GlanceModifier
+                                    .size(28.dp)
+                                    .background(GlanceTheme.colors.surfaceVariant)
+                                    .cornerRadius(14.dp)
+                                    .clickable(refreshAction)
+                                    .padding(6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    provider = ImageProvider(R.drawable.ic_widget_refresh),
+                                    contentDescription = context.getString(R.string.widget_refresh),
+                                    modifier = GlanceModifier.fillMaxSize()
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = GlanceModifier.height(8.dp))
+
+                        // 2. 状态与任务卡片：MD3 surfaceVariant 微容器
+                        Box(
+                            modifier = GlanceModifier
+                                .fillMaxWidth()
+                                .defaultWeight()
+                                .background(GlanceTheme.colors.surfaceVariant)
+                                .cornerRadius(14.dp)
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Column(
+                                modifier = GlanceModifier.fillMaxSize(),
+                                verticalAlignment = Alignment.Vertical.CenterVertically
+                            ) {
+                                // 状态行：动态圆点 + 状态描述
+                                Row(
+                                    modifier = GlanceModifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Vertical.CenterVertically
+                                ) {
+                                    Image(
+                                        provider = ImageProvider(state.statusLevel.dotDrawableRes),
+                                        contentDescription = null,
+                                        modifier = GlanceModifier.size(10.dp)
+                                    )
+                                    Spacer(modifier = GlanceModifier.width(6.dp))
+                                    Text(
+                                        text = state.statusText,
+                                        style = TextStyle(
+                                            color = GlanceTheme.colors.onSurface,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = GlanceModifier.height(4.dp))
+
+                                // 任务行：任务图标 + 当前任务文本
+                                Row(
+                                    modifier = GlanceModifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Vertical.CenterVertically
+                                ) {
+                                    Image(
+                                        provider = ImageProvider(R.drawable.ic_widget_task),
+                                        contentDescription = null,
+                                        modifier = GlanceModifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = GlanceModifier.width(6.dp))
+                                    Text(
+                                        text = state.currentTask ?: context.getString(R.string.widget_task_idle),
+                                        maxLines = 1,
+                                        style = TextStyle(
+                                            color = GlanceTheme.colors.onSurfaceVariant,
+                                            fontSize = 12.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = GlanceModifier.height(8.dp))
+
+                        // 3. 底部大号控制按钮：启动/停止/处理中
+                        val buttonBackground = when {
+                            state.busy -> GlanceTheme.colors.surfaceVariant
+                            state.runnerAlive -> GlanceTheme.colors.errorContainer
+                            else -> GlanceTheme.colors.primary
+                        }
+                        val buttonTextColor = when {
+                            state.busy -> GlanceTheme.colors.onSurfaceVariant
+                            state.runnerAlive -> GlanceTheme.colors.onErrorContainer
+                            else -> GlanceTheme.colors.onPrimary
+                        }
+                        val buttonIcon = when {
+                            state.busy -> R.drawable.ic_widget_hourglass
+                            state.runnerAlive -> R.drawable.ic_widget_stop
+                            else -> R.drawable.ic_widget_play
+                        }
+                        val buttonText = when {
+                            state.busy -> context.getString(R.string.widget_action_busy)
+                            state.runnerAlive -> context.getString(R.string.widget_action_stop)
+                            else -> context.getString(R.string.widget_action_start)
+                        }
+
+                        Box(
+                            modifier = GlanceModifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .background(buttonBackground)
+                                .cornerRadius(19.dp)
+                                .then(if (state.busy) GlanceModifier else GlanceModifier.clickable(toggleAction)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.Vertical.CenterVertically
+                            ) {
+                                Image(
+                                    provider = ImageProvider(buttonIcon),
+                                    contentDescription = null,
+                                    modifier = GlanceModifier.size(18.dp)
+                                )
+                                Spacer(modifier = GlanceModifier.width(6.dp))
+                                Text(
+                                    text = buttonText,
+                                    style = TextStyle(
+                                        color = buttonTextColor,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 接收器，连接系统 AppWidget 框架与 Glance 视图
+ */
+class AzurPilotControlWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = AzurPilotControlWidget()
+}

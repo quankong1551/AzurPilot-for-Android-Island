@@ -64,4 +64,12 @@ data class AppSettings(
      */
     @PrefKey(default = "false")
     val keepAliveEnabled: String = "false",
+
+    /**
+     * 敏感操作密码保护 / Screen lock authentication for sensitive operations (Settings, Virtual Display)
+     * 依赖系统锁（PIN/指纹/面部）；未设置系统锁时不要求验证
+     * Dependent on device screen lock (PIN/biometrics); bypasses if no lock set.
+     */
+    @PrefKey(default = "true")
+    val sensitiveAuthEnabled: String = "true",
 )

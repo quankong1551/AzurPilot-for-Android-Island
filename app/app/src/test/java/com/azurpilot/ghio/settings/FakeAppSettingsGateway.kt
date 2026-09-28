@@ -55,6 +55,12 @@ class FakeAppSettingsGateway : AppSettingsGateway {
         keepAliveEnabled.value = enabled
     }
 
+    override val sensitiveAuthEnabled = MutableStateFlow(true)
+
+    override suspend fun setSensitiveAuthEnabled(enabled: Boolean) {
+        sensitiveAuthEnabled.value = enabled
+    }
+
 
     override val wakeUnlockEnabled = MutableStateFlow(false)
 

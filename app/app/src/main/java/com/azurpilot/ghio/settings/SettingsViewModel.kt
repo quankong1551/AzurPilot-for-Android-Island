@@ -27,12 +27,14 @@ class SettingsViewModel(
         userConfigurationStore.data,
         appSettings.autoCleanLogs,
         appSettings.keepAliveEnabled,
-    ) { remoteAccess, userConfig, autoCleanLogs, keepAliveEnabled ->
+        appSettings.sensitiveAuthEnabled,
+    ) { remoteAccess, userConfig, autoCleanLogs, keepAliveEnabled, sensitiveAuthEnabled ->
         SettingsUiState(
             remoteAccess = remoteAccess,
             themeMode = userConfig.themeMode,
             autoCleanLogs = autoCleanLogs,
             keepAliveEnabled = keepAliveEnabled,
+            sensitiveAuthEnabled = sensitiveAuthEnabled,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -58,6 +60,10 @@ class SettingsViewModel(
 
             is SettingsIntent.SetKeepAlive -> viewModelScope.launch {
                 appSettings.setKeepAliveEnabled(intent.enabled)
+            }
+
+            is SettingsIntent.SetSensitiveAuth -> viewModelScope.launch {
+                appSettings.setSensitiveAuthEnabled(intent.enabled)
             }
         }
     }

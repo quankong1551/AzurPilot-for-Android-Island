@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- miuix-blur 构件声明 minSdk 33（RuntimeShader），主工程 28：放行合并，代码不触其 API 即无运行时风险 -->
+    <uses-sdk tools:overrideLibrary="top.yukonga.miuix.kmp.blur" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -58,6 +61,18 @@
         android:theme="@style/Theme.AzurPilotApp"
         android:localeConfig="@xml/locales_config"
         tools:targetApi="33">
+
+        <!--
+          小米澎湃OS 平板「工作台」无极窗口 2.0（窗口在范围内任意缩放，见 doc/xiaomi-workstation.md）
+          走 property 而非 meta-data；ENABLED 只能挂在 application，MODE=1 全无极（2 竖无极 / 3 横无极），
+          若某 activity 另配 MODE 则以该 activity 为准。全 UI 仅 MainActivity，其已按可任意缩放窗口设计
+        -->
+        <property
+            android:name="miui.window.CVW_ENABLED"
+            android:value="true" />
+        <property
+            android:name="miui.window.CVW_MODE"
+            android:value="1" />
 
         <!-- 只有启动 Activity 挂启动主题；application 那层保持 Theme.AzurPilotApp，
              否则别的窗口也会顶着首屏底色起来 -->
@@ -164,6 +179,42 @@
             android:name=".keepalive.KeepAliveDaemonService"
             android:process=":daemon"
             android:exported="false" />
+
+        <!-- 桌面小组件：全功能控制面板 (4x2) -->
+        <receiver
+            android:name=".widget.AzurPilotControlWidgetReceiver"
+            android:label="@string/widget_control_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_control_info" />
+        </receiver>
+
+        <!-- 桌面小组件：极简快捷开关 (2x1) -->
+        <receiver
+            android:name=".widget.AzurPilotQuickWidgetReceiver"
+            android:label="@string/widget_quick_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_quick_info" />
+        </receiver>
+
+        <!-- 桌面小组件用户点击操作接收器 -->
+        <receiver
+            android:name=".widget.AzurPilotWidgetActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.azurpilot.ghio.action.WIDGET_TOGGLE_RUNNER" />
+                <action android:name="com.azurpilot.ghio.action.WIDGET_REFRESH" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

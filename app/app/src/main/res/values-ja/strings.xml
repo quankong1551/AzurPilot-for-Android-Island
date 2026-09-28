@@ -916,4 +916,40 @@
     <string name="settings_keepalive_status_inactive">停止中</string>
     <string name="settings_keepalive_status_need_permission">オーバーレイ権限未付与</string>
     <string name="settings_keepalive_status_need_accessibility">アクセシビリティ未有効化</string>
+
+    <!-- ホーム画面ウィジェット -->
+    <string name="widget_control_name">AzurPilot コントロールパネル</string>
+    <string name="widget_control_description">ホーム画面で ALAS の稼働状況と現在のタスクを確認し、素早く操作</string>
+    <string name="widget_quick_name">AzurPilot クイックスイッチ</string>
+    <string name="widget_quick_description">ワンタップで自動化タスクを開始・停止できるコンパクトなスイッチ</string>
+    <string name="widget_action_start">開始</string>
+    <string name="widget_action_stop">停止</string>
+    <string name="widget_action_busy">処理中…</string>
+    <string name="widget_status_idle">停止中</string>
+    <string name="widget_status_running">実行中 (PID %1$d)</string>
+    <string name="widget_status_running_no_pid">実行中</string>
+    <string name="widget_status_preparing">準備中</string>
+    <string name="widget_status_error">異常</string>
+    <string name="widget_task_idle">実行中のタスクなし</string>
+    <string name="widget_refresh">更新</string>
+    <string name="widget_open_app">アプリを開く</string>
+    <string name="widget_config_label">設定: %1$s</string>
+    <string name="widget_pin_to_home">ホーム画面にウィジェットを追加</string>
+    <string name="widget_pin_to_home_description">コントロールパネルやスイッチをホーム画面に追加して手軽に操作</string>
+    <string name="widget_pin_control">コントロールパネルを追加 (4x2)</string>
+    <string name="widget_pin_quick">クイックスイッチを追加 (2x1)</string>
+    <string name="widget_pin_success">ウィジェットの追加をリクエストしました</string>
+    <string name="widget_pin_unsupported">現在のランチャーはウィジェット自動追加に対応していません。手動で追加してください</string>
+
+    <!-- 機密操作の画面ロック保護 -->
+    <string name="settings_sensitive_auth_title">機密操作の画面ロック保護</string>
+    <string name="settings_sensitive_auth_desc">設定や仮想画面にアクセスする際、システムロック（PIN/指紋/顔）の認証を要求します。未設定の場合はスキップされます。</string>
+    <string name="settings_sensitive_auth_no_lock_hint">（画面ロックが未設定のため、認証はスキップされます）</string>
+    <string name="auth_prompt_title_settings">認証して設定を開く</string>
+    <string name="auth_prompt_title_screen">認証して仮想画面を開く</string>
+    <string name="auth_prompt_title_disable">保護を無効化</string>
+    <string name="auth_prompt_subtitle">画面ロックまたは生体認証で本人確認を行ってください</string>
+    <string name="auth_gate_locked_title">ページがロックされています</string>
+    <string name="auth_gate_locked_desc">このページはシステムロックで保護されています。本人確認を行ってください。</string>
+    <string name="auth_gate_unlock_button">ロック解除</string>
 </resources>

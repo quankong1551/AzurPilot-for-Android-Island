@@ -54,7 +54,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.annotation.StringRes
+import androidx.compose.runtime.DisposableEffect
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.azurpilot.ghio.auth.SensitiveAuthManager
+import com.azurpilot.ghio.auth.SensitiveTarget
+import com.azurpilot.ghio.ui.components.SensitiveAuthGate
 import androidx.navigation.NavType
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -137,6 +145,7 @@ fun AppRoot(
     provisioner: RootfsProvisioner = koinInject(),
     appUpdateManager: AppUpdateManager = koinInject(),
     appSettings: AppSettingsManager = koinInject(),
+    sensitiveAuthManager: SensitiveAuthManager = koinInject(),
 ) {
     val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val readiness by permissionManager.readiness.collectAsStateWithLifecycle()
@@ -250,9 +259,36 @@ fun AppRoot(
         // AppCompat 切换语言会重建 Activity；显式保存目标页，避免恢复到中途页。
         var selectedPage by rememberSaveable { mutableStateOf(TopDestination.Hangar.ordinal) }
         val pagerState = rememberPagerState(initialPage = selectedPage, pageCount = { TopDestination.entries.size })
+        val context = LocalContext.current
+        val activity = context as? FragmentActivity
+
+        // 应用进入后台/熄屏时重置所有敏感操作的解锁状态
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) {
+                    sensitiveAuthManager.lockAll()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
+        val unlockedTarget by sensitiveAuthManager.unlockedTarget.collectAsStateWithLifecycle()
+
         LaunchedEffect(pagerState) {
             pagerState.scrollToPage(selectedPage)
-            snapshotFlow { pagerState.settledPage }.collect { selectedPage = it }
+            snapshotFlow { pagerState.settledPage }.collect { page ->
+                selectedPage = page
+                val currentDest = TopDestination.entries.getOrNull(page)
+                if (currentDest != TopDestination.Settings) {
+                    sensitiveAuthManager.onLeaveTarget(SensitiveTarget.SETTINGS)
+                }
+                if (currentDest != TopDestination.Screen) {
+                    sensitiveAuthManager.onLeaveTarget(SensitiveTarget.SCREEN)
+                }
+            }
         }
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
@@ -261,8 +297,6 @@ fun AppRoot(
         val hostState: HostState = koinInject()
         // 主页是否可见：HangarScreen 靠它决定要不要自动补一次环境拉起
         val hangarActive = pagerState.currentPage == TopDestination.Hangar.ordinal
-
-        val context = LocalContext.current
 
         /**
          * 切到第 [index] 页
@@ -281,6 +315,35 @@ fun AppRoot(
                 } else {
                     pagerState.animateScrollToPage(index)
                 }
+            }
+        }
+
+        fun onTabSelected(index: Int) {
+            val destination = TopDestination.entries.getOrNull(index) ?: return
+            val target = when (destination) {
+                TopDestination.Settings -> SensitiveTarget.SETTINGS
+                TopDestination.Screen -> SensitiveTarget.SCREEN
+                else -> null
+            }
+            if (target != null && !sensitiveAuthManager.isUnlocked(context, target)) {
+                activity?.let { act ->
+                    val title = context.getString(
+                        if (target == SensitiveTarget.SETTINGS) R.string.auth_prompt_title_settings
+                        else R.string.auth_prompt_title_screen
+                    )
+                    val subtitle = context.getString(R.string.auth_prompt_subtitle)
+                    sensitiveAuthManager.authenticate(
+                        activity = act,
+                        title = title,
+                        subtitle = subtitle,
+                        onSuccess = {
+                            sensitiveAuthManager.markUnlocked(target)
+                            goToPage(index)
+                        },
+                    )
+                } ?: goToPage(index)
+            } else {
+                goToPage(index)
             }
         }
 
@@ -340,7 +403,7 @@ fun AppRoot(
                             val selected = pagerState.currentPage == index
                             NavigationBarItem(
                                 selected = selected,
-                                onClick = { goToPage(index) },
+                                onClick = { onTabSelected(index) },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) destination.filledIcon else destination.outlinedIcon,
@@ -368,7 +431,7 @@ fun AppRoot(
                             val selected = pagerState.currentPage == index
                             NavigationRailItem(
                                 selected = selected,
-                                onClick = { goToPage(index) },
+                                onClick = { onTabSelected(index) },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) destination.filledIcon else destination.outlinedIcon,
@@ -382,9 +445,13 @@ fun AppRoot(
                 }
                 HorizontalPager(
                     state = pagerState,
-                    // AzurPilot 页会拉起浏览器，页内自己的横滑（网页手势）不该和 pager 切页抢事件；
-                    // 在 AzurPilot 页禁用用户横滑（切页走导航栏），其他页保持原样
-                    userScrollEnabled = TopDestination.entries[pagerState.currentPage] != TopDestination.AzurPilot,
+                    // AzurPilot 页内网页手势不与切页冲突；敏感页面受保护时禁用横滑直接滑入，需点击导航项进行系统锁鉴权
+                    userScrollEnabled = when (TopDestination.entries[pagerState.currentPage]) {
+                        TopDestination.AzurPilot -> false
+                        TopDestination.Settings -> !sensitiveAuthManager.isAuthRequired(context)
+                        TopDestination.Screen -> false
+                        TopDestination.Hangar -> true
+                    },
                     beyondViewportPageCount = 1,
                     modifier = Modifier.weight(1f),
                 ) { page ->
@@ -394,10 +461,30 @@ fun AppRoot(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        TopDestination.Screen -> ScreenPage(
-                            active = pagerState.currentPage == TopDestination.Screen.ordinal,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        TopDestination.Screen -> {
+                            val isScreenUnlocked = sensitiveAuthManager.isUnlocked(context, SensitiveTarget.SCREEN)
+                            SensitiveAuthGate(
+                                isUnlocked = isScreenUnlocked,
+                                onUnlockRequest = {
+                                    activity?.let { act ->
+                                        sensitiveAuthManager.authenticate(
+                                            activity = act,
+                                            title = context.getString(R.string.auth_prompt_title_screen),
+                                            subtitle = context.getString(R.string.auth_prompt_subtitle),
+                                            onSuccess = {
+                                                sensitiveAuthManager.markUnlocked(SensitiveTarget.SCREEN)
+                                            },
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                ScreenPage(
+                                    active = pagerState.currentPage == TopDestination.Screen.ordinal && isScreenUnlocked,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
 
                         TopDestination.AzurPilot -> AzurPilotPage(
                             // 从主页直接动画切到设置时，currentPage 会短暂经过中间的 AzurPilot 页；
@@ -406,15 +493,35 @@ fun AppRoot(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        TopDestination.Settings -> SettingsScreen(
-                            state = settingsState,
-                            onIntent = settingsViewModel::onIntent,
-                            onOpenAppLog = { navController.navigate(Routes.APP_LOG) },
-                            onOpenRunnerLog = { navController.navigate(Routes.AZURPILOT_LOG) },
-                            onExportRunnerLogs = { exportKind = LogExportKind.AZURPILOT },
-                            onExportLauncherLogs = { exportKind = LogExportKind.LAUNCHER },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        TopDestination.Settings -> {
+                            val isSettingsUnlocked = sensitiveAuthManager.isUnlocked(context, SensitiveTarget.SETTINGS)
+                            SensitiveAuthGate(
+                                isUnlocked = isSettingsUnlocked,
+                                onUnlockRequest = {
+                                    activity?.let { act ->
+                                        sensitiveAuthManager.authenticate(
+                                            activity = act,
+                                            title = context.getString(R.string.auth_prompt_title_settings),
+                                            subtitle = context.getString(R.string.auth_prompt_subtitle),
+                                            onSuccess = {
+                                                sensitiveAuthManager.markUnlocked(SensitiveTarget.SETTINGS)
+                                            },
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                SettingsScreen(
+                                    state = settingsState,
+                                    onIntent = settingsViewModel::onIntent,
+                                    onOpenAppLog = { navController.navigate(Routes.APP_LOG) },
+                                    onOpenRunnerLog = { navController.navigate(Routes.AZURPILOT_LOG) },
+                                    onExportRunnerLogs = { exportKind = LogExportKind.AZURPILOT },
+                                    onExportLauncherLogs = { exportKind = LogExportKind.LAUNCHER },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
                     }
                 }
             }

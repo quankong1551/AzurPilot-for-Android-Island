@@ -15,6 +15,7 @@ data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.System,
     val autoCleanLogs: Boolean = true,
     val keepAliveEnabled: Boolean = false,
+    val sensitiveAuthEnabled: Boolean = true,
 )
 
 sealed interface SettingsIntent {
@@ -30,4 +31,7 @@ sealed interface SettingsIntent {
 
     /** 切换激进后台保活系统 / Toggle persistent keep-alive */
     data class SetKeepAlive(val enabled: Boolean) : SettingsIntent
+
+    /** 切换敏感操作原生锁保护 / Toggle screen lock protection for sensitive operations */
+    data class SetSensitiveAuth(val enabled: Boolean) : SettingsIntent
 }

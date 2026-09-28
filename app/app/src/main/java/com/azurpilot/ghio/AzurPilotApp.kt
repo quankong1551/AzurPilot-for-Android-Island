@@ -12,6 +12,7 @@ import com.azurpilot.ghio.di.privilegedModule
 import com.azurpilot.ghio.di.prootModule
 import com.azurpilot.ghio.di.provisionModule
 import com.azurpilot.ghio.di.viewModelModule
+import com.azurpilot.ghio.keepalive.FairMemoryAdaptation
 import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.log.AppLogWriter
 import com.azurpilot.ghio.log.CrashHandler
@@ -21,13 +22,18 @@ import com.azurpilot.ghio.overlay.OverlayController
 import com.azurpilot.ghio.overlay.screensaver.ScreenSaverOverlayManager
 import com.azurpilot.ghio.privileged.PermissionManager
 import com.azurpilot.ghio.privileged.RemoteServiceManager
-import com.azurpilot.ghio.proot.AzurPilotRepository
 import com.azurpilot.ghio.proot.AzurPilotGateway
+import com.azurpilot.ghio.proot.AzurPilotRepository
 import com.azurpilot.ghio.proot.AzurPilotRunController
+import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.settings.AppSettingsManager
+import com.azurpilot.ghio.widget.AzurPilotWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -87,11 +93,13 @@ class AzurPilotApp : Application() {
         }
     }
 
+    @OptIn(FlowPreview::class)
     fun postCreate(koin: Koin) {
         koin.get<PermissionManager>()
         val provider = koin.get<AppSettingsManager>().startupBackend::value
         RemoteServiceManager.initialize(this, provider)
-        koin.get<HostState>().start()
+        val hostState = koin.get<HostState>()
+        hostState.start()
         val runController = koin.get<AzurPilotRunController>()
         runController.start()
         // 富接口：与 /android/* 薄接口并存。实例选择归 repository 自己管，
@@ -99,6 +107,7 @@ class AzurPilotApp : Application() {
         koin.get<AzurPilotGateway>().start()
         val repository = koin.get<AzurPilotRepository>()
         repository.start()
+        val prootHost = koin.get<ProotHost>()
         koin.get<CoroutineScope>(named<AppCoroutineScope>()).launch {
             runController.state
                 .map { it.selectedConfig }
@@ -109,9 +118,26 @@ class AzurPilotApp : Application() {
                     }
                 }
         }
+        koin.get<CoroutineScope>(named<AppCoroutineScope>()).launch {
+            combine(
+                runController.state,
+                prootHost.state,
+                hostState.snapshot,
+                repository.overview,
+            ) { _, _, _, _ -> Unit }
+                .debounce(300)
+                .collect {
+                    AzurPilotWidgetUpdater.updateAll(this@AzurPilotApp)
+                }
+        }
         koin.get<OverlayController>().setup()
         koin.get<ScreenSaverOverlayManager>().setup()
         koin.get<KeepAliveManager>().start()
+        // 首次初始化更新桌面小组件
+        AzurPilotWidgetUpdater.updateAll(this)
+        // 金标联盟「公平运行内存」适配：HyperOS 等系统内存超限预警/查杀的协议应答，
+        // 无权限无副作用，非该机制系统上收不到广播，常开（见 FairMemoryAdaptation）
+        FairMemoryAdaptation(this).start()
     }
 
     private fun isMainProcess(): Boolean {

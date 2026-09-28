@@ -78,6 +78,9 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     private val _keepAliveEnabled = MutableStateFlow(defaults.keepAliveEnabled.toBoolean())
     override val keepAliveEnabled: StateFlow<Boolean> = _keepAliveEnabled.asStateFlow()
 
+    private val _sensitiveAuthEnabled = MutableStateFlow(defaults.sensitiveAuthEnabled.toBoolean())
+    override val sensitiveAuthEnabled: StateFlow<Boolean> = _sensitiveAuthEnabled.asStateFlow()
+
     private val _githubMirror = MutableStateFlow(defaults.githubMirror)
     val githubMirror: StateFlow<String> = _githubMirror.asStateFlow()
 
@@ -100,6 +103,7 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
                 _screenSaverEnabled.value = s.screenSaverEnabled.toBoolean()
                 _autoCleanLogs.value = s.autoCleanLogs.toBoolean()
                 _keepAliveEnabled.value = s.keepAliveEnabled.toBoolean()
+                _sensitiveAuthEnabled.value = s.sensitiveAuthEnabled.toBoolean()
                 _githubMirror.value = s.githubMirror
                 _githubMirrorCustom.value = s.githubMirrorCustom
                 // 必须是最后一行：置位即宣告上面全部就位
@@ -162,6 +166,10 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
 
     override suspend fun setKeepAliveEnabled(enabled: Boolean): Unit = with(AppSettingsSchema) {
         context.dataStore.edit { it[keepAliveEnabled] = enabled.toString() }
+    }
+
+    override suspend fun setSensitiveAuthEnabled(enabled: Boolean): Unit = with(AppSettingsSchema) {
+        context.dataStore.edit { it[sensitiveAuthEnabled] = enabled.toString() }
     }
 
     suspend fun setGithubMirror(mirror: String): Unit = with(AppSettingsSchema) {
