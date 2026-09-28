@@ -16,18 +16,28 @@ import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 
-/** 编辑器的整体状态；界面按路径查 [saving]/[failed] 决定那一行的状态标记 */
+/**
+ * 编辑器的整体状态；界面按路径查 [saving]/[failed] 决定那一行的状态标记
+ *
+ * The editor's overall state; the UI looks paths up in [saving]/[failed] to
+ * decide each row's status marker.
+ */
 data class AzurPilotEditorState(
+    /** 当前编辑的实例名；null 表示尚未加载 / the instance being edited; null before anything is loaded. */
     val instance: String? = null,
+    /** 服务端给的乐观锁版本，`config.patch` 原样回传 / server-provided optimistic-lock revision, echoed by `config.patch`. */
     val revision: String = "",
+    /** 界面该显示的值：服务端快照与本地在途编辑合并后的树 / what the UI shows: the server snapshot merged with local in-flight edits. */
     val values: ApConfigValues = emptyMap(),
+    /** 整份配置拉取中 / a full config load is in flight. */
     val loading: Boolean = false,
+    /** 拉取失败的文案；Offline 不算错，保持 null / load failure text; Offline is not an error and leaves this null. */
     val error: String? = null,
-    /** 正在保存或已排队保存的路径 */
+    /** 正在保存或已排队保存的路径 / paths being saved or queued to save. */
     val saving: Set<String> = emptySet(),
-    /** 刚刚保存成功的路径；给一个短暂的「已保存」确认，随后自动消失 */
+    /** 刚刚保存成功的路径；给一个短暂的「已保存」确认，随后自动消失 / paths just saved; a short-lived "saved" confirmation that fades on its own. */
     val saved: Set<String> = emptySet(),
-    /** 保存失败且未被覆盖的路径 → 网关给的文案 */
+    /** 保存失败且未被覆盖的路径 → 网关给的文案 / failed paths not yet re-edited → the gateway's message. */
     val failed: Map<String, String> = emptyMap(),
 )
 
@@ -41,6 +51,21 @@ data class AzurPilotEditorState(
  *
  * 本地值是在途编辑的**唯一事实**：网关上别人改了什么不覆盖用户手上正在改的值，
  * 但服务端回的快照仍会整体吸收（例如改 `XValue` 时服务端顺手刷新的 `XRecord` 时间戳）。
+ *
+ * A local copy of the config plus an autosave queue.
+ *
+ * The WebUI editing experience has two hard requirements, honored here:
+ * 1. **Commit immediately on change**, neither on blur nor after a debounce —
+ *    "edited but not applied" is far worse than "one extra request";
+ * 2. **Several rapid edits of the same argument send only the last one**, and
+ *    the changes of one save merge into a single transaction, so intermediate
+ *    states cannot trigger cross-field validation such as the shop's
+ *    high-level strategy checks.
+ *
+ * Local values are the **sole source of truth** for in-flight edits: whatever
+ * others change on the gateway never overwrites a value the user is editing,
+ * while server-sent snapshots are still absorbed wholesale (e.g. the `XRecord`
+ * timestamp the server refreshes alongside an edited `XValue`).
  */
 class AzurPilotConfigEditor(
     private val scope: CoroutineScope,
@@ -48,18 +73,20 @@ class AzurPilotConfigEditor(
 ) {
 
     private val _state = MutableStateFlow(AzurPilotEditorState())
+
+    /** 对外只读的状态流 / The externally read-only state flow. */
     val state: StateFlow<AzurPilotEditorState> = _state.asStateFlow()
 
     private val mutex = Mutex()
     private val signal = Channel<Unit>(Channel.CONFLATED)
 
-    /** 待发送的变更：路径 → 值；同路径后写覆盖先写 */
+    /** 待发送的变更：路径 → 值；同路径后写覆盖先写 / Pending changes: path → value; a later write wins on the same path. */
     private val queue = LinkedHashMap<String, ApValue>()
 
-    /** 本地在途值：优先级高于服务端快照 */
+    /** 本地在途值：优先级高于服务端快照 / Local in-flight values; take precedence over the server snapshot. */
     private val overrides = HashMap<String, ApValue>()
 
-    /** 服务端最后一次快照 */
+    /** 服务端最后一次快照 / The server's last snapshot. */
     private var serverValues: ApConfigValues = emptyMap()
 
     private var worker: Job? = null
@@ -69,6 +96,13 @@ class AzurPilotConfigEditor(
      *
      * 状态先同步清空：worker 的下一拍看到 `instance == null` 就会直接返回，不会把上一个实例的
      * 结果写回新实例的界面。队列与快照交给 worker 持有的锁慢慢清。
+     *
+     * Discards the whole local copy (used when switching instances).
+     *
+     * The state is cleared synchronously first: on its next tick the worker
+     * sees `instance == null` and returns at once, so results from the previous
+     * instance never land in the new instance's UI. The queue and snapshot are
+     * cleared later under the worker-held lock.
      */
     fun reset() {
         _state.value = AzurPilotEditorState()
@@ -81,7 +115,12 @@ class AzurPilotConfigEditor(
         }
     }
 
-    /** 拉取整个实例的配置；重复调用同一实例会被忽略（除非 [force]） */
+    /**
+     * 拉取整个实例的配置；重复调用同一实例会被忽略（除非 [force]）
+     *
+     * Loads an instance's whole config; repeat calls for the same instance are
+     * ignored (unless [force]). IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun load(instance: String, force: Boolean = false) {
         if (!force && _state.value.instance == instance && serverValues.isNotEmpty()) return
         _state.value = _state.value.copy(instance = instance, loading = true, error = null)
@@ -114,6 +153,11 @@ class AzurPilotConfigEditor(
      * 改一个参数：本地立刻生效，同时排进保存队列
      *
      * [task]/[group]/[arg] 拼成网关要求的 `Task.Group.Argument`。
+     *
+     * Changes one argument: it takes effect locally at once and is queued for
+     * saving.
+     *
+     * [task]/[group]/[arg] concatenate into the gateway's `Task.Group.Argument` path.
      */
     fun update(task: String, group: String, arg: String, value: ApValue) {
         val path = "$task.$group.$arg"
@@ -128,7 +172,12 @@ class AzurPilotConfigEditor(
         }
     }
 
-    /** 失败后重试：把用户改过的值再发一遍（改动本身没错，错的是那一次网络或时序） */
+    /**
+     * 失败后重试：把用户改过的值再发一遍（改动本身没错，错的是那一次网络或时序）
+     *
+     * Retries after a failure: re-sends the user's value (the edit itself was
+     * fine; that particular request hit a network or timing issue).
+     */
     fun retry(path: String) {
         scope.launch(AppDispatchers.IO) {
             val value = mutex.withLock { overrides[path] ?: serverValueAt(path) }
@@ -152,6 +201,15 @@ class AzurPilotConfigEditor(
      *
      * 启动任务前要调它：调度器读的是磁盘上的配置，手上还有没落盘的改动就直接起，
      * 跑的是上一版参数。
+     *
+     * Waits until the queue drains (or times out).
+     *
+     * Call it before starting a task: the scheduler reads the on-disk config,
+     * so starting with unsaved changes still in hand runs the previous
+     * parameter set.
+     *
+     * @param timeoutMs 最长等待毫秒数 / the maximum wait, in milliseconds
+     * @return 是否在时限内清空 / whether the queue drained within the limit
      */
     suspend fun settle(timeoutMs: Long = 30_000): Boolean {
         val settled = withTimeoutOrNull(timeoutMs) {
@@ -224,7 +282,12 @@ class AzurPilotConfigEditor(
         }
     }
 
-    /** 服务端快照 + 本地在途覆盖 = 界面看到的值；实例已切走则丢弃这一份 */
+    /**
+     * 服务端快照 + 本地在途覆盖 = 界面看到的值；实例已切走则丢弃这一份
+     *
+     * Publishes server snapshot + local in-flight overrides = the values the
+     * UI sees; discarded when the instance has already switched away.
+     */
     private fun publish(instance: String?, revision: String) {
         if (instance != null && _state.value.instance != instance) return
         val merged = mergeValues(serverValues, HashMap(overrides))
@@ -242,6 +305,13 @@ class AzurPilotConfigEditor(
      *
      * 「改完到底存上了没有」是配置页最常被问的问题，一个会自己消失的对勾比一行永远挂着的
      * 「已保存」更有信息量——它能让人分辨「这次刚存上」和「一直是这样」。
+     *
+     * Marks paths as "just saved", then unmarks them a moment later.
+     *
+     * "Did my edit actually save?" is the config page's most-asked question, and
+     * a checkmark that fades by itself carries more information than a
+     * permanently pinned "saved" — it tells "just saved this time" apart from
+     * "always been like that".
      */
     private fun markSaved(instance: String?, paths: Collection<String>) {
         if (paths.isEmpty()) return
@@ -271,12 +341,20 @@ class AzurPilotConfigEditor(
         return out
     }
 
-    /** 读取某参数当前该显示的值：本地在途优先，其次配置，最后才是 schema 默认值 */
+    /**
+     * 读取某参数当前该显示的值：本地在途优先，其次配置，最后才是 schema 默认值
+     *
+     * Reads the value an argument should currently show: the local in-flight
+     * value first, then the config, then the schema default.
+     */
     fun valueOf(task: String, group: String, arg: String, fallback: ApValue): ApValue =
         _state.value.values[task]?.get(group)?.get(arg) ?: fallback
 
     private companion object {
+        /** 批量去抖窗口：合并同一拍的连续按键，又不至于让人感到延迟 / Debounce window that coalesces consecutive keystrokes without feeling laggy. */
         const val BATCH_DEBOUNCE_MS = 220L
+
+        /** 「已保存」对勾停留时长 / How long the "saved" checkmark lingers. */
         const val SAVED_LINGER_MS = 2_000L
     }
 }

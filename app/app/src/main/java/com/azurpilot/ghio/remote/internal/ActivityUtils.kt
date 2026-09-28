@@ -13,6 +13,29 @@ import com.azurpilot.ghio.third.FakeContext
 import com.azurpilot.ghio.third.Ln
 import com.azurpilot.ghio.third.wrappers.ServiceManager
 
+/**
+ * Activity / Task 层工具：以 shell 身份跨屏启动与搬运应用任务
+ *
+ * 全程隐藏 API + 反射，任一依赖不可用即走对应兜底，绝不向上抛。
+ * 跑在特权进程内，被 RemoteServiceImpl（binder 线程）与 [AppWatchdog]（IO 协程）调用；
+ * 拉回与校验路径内部会 sleep 轮询，调用方需容忍阻塞。
+ *
+ * 反射依赖三项：ActivityOptions.setLaunchWindowingMode、IActivityTaskManager 的
+ * moveRootTaskToDisplay / moveStackToDisplay、RunningTaskInfo.displayId 字段。
+ *
+ * Activity and task utilities: launches and moves app tasks across displays with shell
+ * identity.
+ *
+ * Everything rides on hidden APIs and reflection; when any dependency is unavailable the
+ * matching fallback kicks in — nothing is ever thrown upward. Runs inside the privileged
+ * process, called from RemoteServiceImpl (binder threads) and [AppWatchdog] (an IO coroutine);
+ * the repin and verification paths sleep and poll internally, so callers must tolerate
+ * blocking.
+ *
+ * Three reflective dependencies: ActivityOptions.setLaunchWindowingMode, the
+ * moveRootTaskToDisplay / moveStackToDisplay methods of IActivityTaskManager, and the
+ * RunningTaskInfo.displayId field.
+ */
 @SuppressLint("BlockedPrivateApi")
 object ActivityUtils {
 
@@ -29,6 +52,12 @@ object ActivityUtils {
     // 拉回操作后等系统完成 reparent 的时间
     private const val REPIN_SETTLE_MS = 1_000L
 
+    /**
+     * 虚拟屏启动是否强制 FULLSCREEN 窗口模式（app 侧经 RemoteServiceImpl 下发）
+     *
+     * Whether launches onto the virtual display force FULLSCREEN windowing (pushed by the app
+     * via RemoteServiceImpl).
+     */
     @Volatile
     var forceFullscreenOnVirtualDisplay: Boolean = false
 
@@ -43,6 +72,19 @@ object ActivityUtils {
     /**
      * 以 shell 身份启动指定 Intent 的 Activity，绕过 BAL 限制。
      * [forceFullscreen] 为 true 时无视用户设置强制 FULLSCREEN 窗口模式（用于漂移拉回重试）。
+     *
+     * Starts the activity for the given intent as shell, bypassing background-activity-launch
+     * restrictions. With [forceFullscreen] set, FULLSCREEN windowing mode is forced regardless
+     * of user settings (used by drift-repin retries).
+     *
+     * binder 调用返回负数或抛异常时降级为 `am start` 命令行兜底。
+     * Falls back to the `am start` command when the binder call returns a negative code or
+     * throws.
+     *
+     * @param intent 要启动的 Intent / the intent to launch
+     * @param displayId 目标屏，默认主屏 / target display, defaults to the primary display
+     * @param forceFullscreen 强制全屏窗口模式 / forces fullscreen windowing mode
+     * @return true=启动成功（含兜底路径）/ true on success (including the fallback path)
      */
     @JvmStatic
     @JvmOverloads
@@ -81,13 +123,36 @@ object ActivityUtils {
      * PI 的 StartApp 允许把 package 写成 `包名/Activity` 的 component 全名（M9A 的 startup.json 即是），
      * 官方 adb controller 原样塞进 am start 所以两种都能用；走 PackageManager 与包名比对的地方必须先拆
      * 拆不出来时原样返回，让调用方按纯包名走既有失败路径
+     *
+     * PI's StartApp allows the package field to be a full `package/Activity` component name
+     * (M9A's startup.json does this); the official adb controller passes it verbatim to
+     * `am start`, so both forms work there. Every site comparing against PackageManager or a
+     * package name must flatten it first. Unparseable input is returned as-is so callers keep
+     * their existing plain-package failure path.
      */
     @JvmStatic
     fun packageNameOf(spec: String): String = componentOf(spec)?.packageName ?: spec
 
+    /** `包名/Activity` 形态才拆，纯包名返回 null / Flattens only `package/Activity` forms; null for a plain package name */
     private fun componentOf(spec: String): ComponentName? =
         spec.takeIf { it.contains('/') }?.let { ComponentName.unflattenFromString(it) }
 
+    /**
+     * 启动指定应用到 [displayId]：先强停清场，再投放 launcher intent
+     *
+     * [packageName] 允许 `包名/Activity` component 全名（见 [packageNameOf]）；
+     * launcher 与 leanback intent 都解析不到时返回 false。
+     *
+     * Launches the given app onto [displayId]: force-stops it first for a clean slate, then
+     * fires the launcher intent.
+     *
+     * [packageName] accepts a full `package/Activity` component name (see [packageNameOf]);
+     * returns false when neither a launcher nor a leanback launch intent can be resolved.
+     *
+     * @param forceStop 启动前先强停目标包，保证落在目标屏的是新任务 / force-stops the package before launch so a fresh task lands on the target display
+     * @param excludeFromRecents 加 EXCLUDE_FROM_RECENTS，最近任务里不露虚拟屏任务 / adds EXCLUDE_FROM_RECENTS so the virtual-display task stays out of Recents
+     * @return 是否成功发起启动 / whether the launch was dispatched successfully
+     */
     @JvmStatic
     @JvmOverloads
     fun startApp(
@@ -132,6 +197,10 @@ object ActivityUtils {
     /**
      * 返回运行在 [displayId] 上的最顶层 app 包名；没有任务或 API 不支持时返回 null。
      * 看门狗用它从虚拟屏反推目标 app，无需外部告知包名。
+     *
+     * Returns the top app package running on [displayId]; null when there is no task or the
+     * API is unavailable. The watchdog uses it to infer the target app from the virtual display
+     * instead of being told the package externally.
      */
     fun getTopPackageOnDisplay(displayId: Int): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
@@ -148,6 +217,10 @@ object ActivityUtils {
      * 检查指定包名的应用最近的活动 task 是否运行在给定 displayId 上。
      * API 28 无 TaskInfo.displayId 字段（@hide），宽松返回 true（不拦截）。
      * 任何异常也宽松返回 true，避免误伤。
+     *
+     * Checks whether the app's most recent active task runs on [targetDisplayId].
+     * API 28 lacks the hidden TaskInfo.displayId field, so it leniently returns true (no
+     * interception); any exception is also leniently true to avoid false positives.
      */
     fun isAppOnDisplay(packageName: String, targetDisplayId: Int): Boolean {
         return when (getAppDisplayId(packageName)) {
@@ -161,6 +234,14 @@ object ActivityUtils {
      * 启动后校验：等待 [packageName] 的任务出现在 [displayId] 上；若发现任务落在其它
      * display（如 One UI / 部分 ROM 会把游戏从虚拟屏挪回主屏，B 服 U8 SDK 二段跳也可能
      * 丢失 launchDisplayId），立即尝试拉回。仅在确认漂移且拉回失败时返回 false。
+     *
+     * Post-launch verification: waits for [packageName]'s task to appear on [displayId]; if the
+     * task is seen on another display (One UI and some ROMs move the game back to the primary
+     * display, and the B-server U8 SDK's two-stage launch can also drop launchDisplayId), a
+     * repin is attempted immediately. Returns false only when drift is confirmed and the repin
+     * fails.
+     *
+     * @param timeoutMs 等待任务出现的窗口，超时未观测到也宽松放行 / window waited for the task to appear; a timeout without a sighting passes leniently too
      */
     @JvmStatic
     @JvmOverloads
@@ -193,6 +274,13 @@ object ActivityUtils {
      * 1. moveRootTaskToDisplay / moveStackToDisplay（hidden API，shell 有 MANAGE_ACTIVITY_TASKS）
      * 2. am display move-stack 命令兜底
      * 3. 重新投放 launch intent（强制 FULLSCREEN），让系统 reparent 现有任务
+     *
+     * Moves [packageName]'s task back to [displayId]:
+     * 1. moveRootTaskToDisplay / moveStackToDisplay (hidden APIs; shell holds
+     *    MANAGE_ACTIVITY_TASKS)
+     * 2. the `am display move-stack` command as fallback
+     * 3. re-firing the launch intent (forced FULLSCREEN) so the system reparents the existing
+     *    task
      */
     @JvmStatic
     fun repinAppToDisplay(packageName: String, displayId: Int): Boolean {
@@ -223,6 +311,11 @@ object ActivityUtils {
      * 返回 [packageName] 最近任务所在的 displayId。
      * null = 无法判断（API < Q / 反射失败 / 异常）；[DISPLAY_NO_TASK] = 无运行中任务。
      * 取最近任务而非任意任务：漂移时新任务落在主屏，虚拟屏上可能残留旧任务。
+     *
+     * Returns the display of [packageName]'s most recent task.
+     * null = undeterminable (API < Q, reflection failure, or exception); [DISPLAY_NO_TASK] = no
+     * running task. The most recent task is used rather than any task: on drift the new task
+     * lands on the primary display while a stale one may linger on the virtual display.
      */
     private fun getAppDisplayId(packageName: String): Int? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
@@ -233,6 +326,7 @@ object ActivityUtils {
         }.getOrNull()
     }
 
+    /** 找不到任务返回 null（区分「无任务」与「判不出」，见 [getAppDisplayId]）/ null when no task matches (distinguishes "no task" from "undeterminable", see [getAppDisplayId]) */
     private fun findRecentTask(packageName: String): ActivityManager.RunningTaskInfo? {
         val am = FakeContext.get().getSystemService(ActivityManager::class.java) ?: return null
         @Suppress("DEPRECATION")
@@ -242,6 +336,7 @@ object ActivityUtils {
         }
     }
 
+    /** 隐藏 API 搬任务，失败再试 am 命令 / Moves the task via the hidden API, falling back to the am command */
     private fun moveAppTaskToDisplay(packageName: String, displayId: Int): Boolean {
         val task = runCatching { findRecentTask(packageName) }.getOrNull() ?: run {
             Ln.w("moveAppTaskToDisplay: no running task of $packageName")
@@ -283,6 +378,7 @@ object ActivityUtils {
         }
     }
 
+    /** `am display move-stack` 兜底 / `am display move-stack` fallback */
     private fun moveTaskViaAmCommand(taskId: Int, displayId: Int): Boolean {
         return try {
             val args = arrayOf("am", "display", "move-stack", taskId.toString(), displayId.toString())
@@ -302,6 +398,7 @@ object ActivityUtils {
         }
     }
 
+    // displayId 字段随版本在 TaskInfo 及其父类间挪动，沿继承链向上找
     private val taskDisplayIdField by lazy {
         runCatching {
             var cls: Class<*>? = ActivityManager.RunningTaskInfo::class.java
@@ -317,6 +414,7 @@ object ActivityUtils {
     private fun getTaskDisplayId(task: ActivityManager.RunningTaskInfo): Int =
         runCatching { taskDisplayIdField?.getInt(task) ?: -1 }.getOrDefault(-1)
 
+    /** `am start` 命令行兜底 / `am start` command-line fallback */
     private fun startViaAmCommand(intent: Intent, displayId: Int): Boolean {
         try {
             val intentUri = intent.toUri(Intent.URI_INTENT_SCHEME)

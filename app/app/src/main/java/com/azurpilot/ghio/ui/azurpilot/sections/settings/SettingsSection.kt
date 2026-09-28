@@ -25,6 +25,21 @@ import com.azurpilot.ghio.ui.components.AppNavigationRow
  *
  * 这里是「全局性」的东西；任务参数在配置分区里。分隔的依据是**作用域**：
  * 改了只影响一个实例的归配置，影响整个运行环境的归这里。
+ *
+ * The Settings section: instances, announcement, Meowfficer, runtime updater,
+ * and deploy settings.
+ *
+ * This page holds the "global" things; task arguments live in the Config
+ * section. The split criterion is **scope**: changes that affect a single
+ * instance belong to Config, changes that affect the whole runtime environment
+ * belong here.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param onOpenInstances 打开实例管理页 / opens the instance-management page
+ * @param onOpenAnnouncement 打开公告页 / opens the announcement page
+ * @param onOpenMeowfficer 打开指挥喵页 / opens the Meowfficer page
+ * @param onOpenUpdater 打开运行时更新页 / opens the runtime-updater page
+ * @param onOpenDeploy 打开部署设置页 / opens the deploy-settings page
  */
 @Composable
 fun SettingsSection(

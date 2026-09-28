@@ -40,6 +40,18 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * displayId 只是「最近一次 startVirtualDisplay 的返回值」：特权进程一断，
  * 屏与桥随之作废，快照整份清零，等下次连接/探测重建
+ *
+ * The single source of the shell's real state: privileged-process connectivity,
+ * bridge reachability and the virtual display's displayId.
+ *
+ * The bridge lives inside the privileged process (BridgeServer starts with
+ * RemoteServiceImpl), so the app side cannot reach its isRunning() —
+ * reachability can only come from periodic pings. The protocol matches the m0
+ * bridge (newline-delimited JSON), on the same port the AzurPilot client hits.
+ *
+ * displayId is merely "the most recent startVirtualDisplay return value": once
+ * the privileged process drops, display and bridge are void, the snapshot
+ * zeroes wholesale, and the next connect/probe rebuilds it.
  */
 class HostState(
     private val context: Context,
@@ -50,6 +62,8 @@ class HostState(
 ) {
 
     private val _snapshot = MutableStateFlow(HostSnapshot())
+
+    /** 外壳状态快照 / The shell's state snapshot. */
     val snapshot: StateFlow<HostSnapshot> = _snapshot.asStateFlow()
 
     /** 周期与按需探测共用一把锁，防并发探测挤在同一端口上 */
@@ -57,6 +71,12 @@ class HostState(
     private val envMutex = Mutex()
     private val pingSeq = AtomicInteger(0)
 
+    /**
+     * 订阅特权连接态并起周期桥探测；桥态每 [BRIDGE_PROBE_INTERVAL_MS] 一拍
+     *
+     * Subscribes to privileged connection state and starts periodic bridge
+     * probing on a [BRIDGE_PROBE_INTERVAL_MS] cadence.
+     */
     fun start() {
         scope.launch {
             servicePort.serviceState.collect { state ->
@@ -77,6 +97,13 @@ class HostState(
         }
     }
 
+    /**
+     * 立即 ping 一次桥并把结果落快照
+     *
+     * Probes the bridge once right away and lands the result in the snapshot.
+     *
+     * @return 桥是否可达 / whether the bridge is reachable
+     */
     suspend fun probeBridgeNow(): Boolean = probeMutex.withLock {
         val reachable = runCatching { pingBridge() }
             .onFailure { Timber.d("bridge probe failed: %s", it.message) }
@@ -90,6 +117,16 @@ class HostState(
      * 桥随特权进程自起，无需显式操作
      *
      * 幂等：屏已存在直接成功；断线重连后（快照已清零）可再次触发
+     *
+     * The "start" chain: ensure the privileged connection, setup(), then
+     * startVirtualDisplay(). The bridge comes up with the privileged process —
+     * no explicit step needed.
+     *
+     * Idempotent: an existing display succeeds at once; after a reconnect (the
+     * snapshot zeroed) it can fire again.
+     *
+     * @return 屏是否建起（或本来就在）/ whether the display came up (or was
+     *   already there)
      */
     suspend fun ensureEnvironmentStarted(): Boolean {
         envMutex.withLock {
@@ -141,7 +178,12 @@ class HostState(
         return _snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
     }
 
-    /** 「停止」链路：只停虚拟屏；特权进程与桥留着，下次开始不用重连 */
+    /**
+     * 「停止」链路：只停虚拟屏；特权进程与桥留着，下次开始不用重连
+     *
+     * The "stop" chain: only the virtual display stops; the privileged process
+     * and bridge stay, so the next start needs no reconnect.
+     */
     suspend fun stopEnvironment() {
         envMutex.withLock {
             servicePort.serviceOrNull()?.let { service ->
@@ -156,12 +198,19 @@ class HostState(
      * 预览面挂载/摘除：虚拟屏页 SurfaceView 的 Surface 交给特权进程渲染画面
      * （native bridge_preview 通道，零拷贝）。特权断线时静默失败——
      * 页面切走时靠 DisposableEffect 补一次摘面
+     *
+     * Mounts/unmounts the preview surface: the virtual-display page's
+     * SurfaceView hands its Surface to the privileged process for rendering
+     * (the native bridge_preview channel, zero-copy). Silent failure when the
+     * privileged process is gone — the page's DisposableEffect re-detaches as
+     * a safety net.
      */
     fun attachPreviewSurface(surface: Surface) {
         runCatching { servicePort.serviceOrNull()?.setMonitorSurface(surface) }
             .onFailure { Timber.w(it, "attachPreviewSurface failed") }
     }
 
+    /** 摘掉预览面 / Detaches the preview surface. */
     fun detachPreviewSurface() {
         runCatching { servicePort.serviceOrNull()?.setMonitorSurface(null) }
             .onFailure { Timber.w(it, "detachPreviewSurface failed") }
@@ -171,6 +220,15 @@ class HostState(
      * 虚拟屏页上的手动操作：坐标由 UI 换算到虚拟屏坐标系后传入，
      * 直通 AIDL 同名方法（oneway，内部带虚拟屏 displayId 注入，见 RemoteServiceImpl）。
      * 高频（一次滑动几十条），失败静默——特权断线时快照清零，注入也随之失去目标
+     *
+     * Manual actions on the virtual-display page: the UI converts coordinates
+     * into the virtual display's space, then passes them straight through to
+     * the same-named AIDL methods (oneway, injecting with the display's
+     * displayId internally — see RemoteServiceImpl).
+     *
+     * High frequency (dozens per swipe), silent on failure — when the
+     * privileged process drops, the snapshot zeroes and injection loses its
+     * target with it.
      */
     fun touchDown(x: Int, y: Int) {
         runCatching { servicePort.serviceOrNull()?.touchDown(x, y) }
@@ -187,7 +245,12 @@ class HostState(
             .onFailure { Timber.w(it, "touchUp failed") }
     }
 
-    /** m0 桥协议最小客户端：一行请求一行响应，判 "pong":true */
+    /**
+     * m0 桥协议最小客户端：一行请求一行响应，判 "pong":true
+     *
+     * A minimal m0-bridge protocol client: one request line, one response
+     * line; success is a `"pong":true`.
+     */
     private fun pingBridge(): Boolean {
         Socket().use { socket ->
             socket.connect(
@@ -202,6 +265,15 @@ class HostState(
         }
     }
 
+    /**
+     * 读一行响应；行超 [MAX_REPLY_LINE] 即断，防对端异常时内存被拖爆
+     *
+     * Reads one reply line; anything past [MAX_REPLY_LINE] aborts, so a broken
+     * peer cannot blow up memory.
+     *
+     * @throws IllegalStateException 连接被对端关闭或行超长 / when the peer
+     *   closes the connection or the line overruns the cap
+     */
     private fun readLine(input: BufferedInputStream): String {
         val line = ByteArrayOutputStream()
         while (true) {
@@ -215,22 +287,49 @@ class HostState(
     }
 
     private companion object {
+        /** 桥只听回环 / The bridge listens on loopback only. */
         const val BRIDGE_HOST = "127.0.0.1"
+
+        /** 桥端口：与 AzurPilot 客户端打的同一个 / The bridge port — the same one the AzurPilot client hits. */
         const val BRIDGE_PORT = 22301
+
+        /** 周期探测间隔 / The periodic probe interval. */
         const val BRIDGE_PROBE_INTERVAL_MS = 4_000L
         const val BRIDGE_CONNECT_TIMEOUT_MS = 1_500
         const val BRIDGE_READ_TIMEOUT_MS = 2_000
+
+        /** 等特权服务连接完成的上限 / The ceiling for waiting on the privileged connection. */
         const val CONNECT_WAIT_MS = 12_000L
+
+        /** 单行响应上限，超过即视为对端坏了 / The reply line cap; beyond it the peer is broken. */
         const val MAX_REPLY_LINE = 4 * 1024
     }
 }
 
+/**
+ * 外壳状态的一份不可变快照
+ *
+ * One immutable snapshot of the shell's state.
+ *
+ * @property privilegedConnected 特权服务是否已连 / whether the privileged
+ *   service is connected
+ * @property bridgeReachable 桥最近一次探测是否可达 / whether the bridge answered
+ *   the last probe
+ * @property vdDisplayId 虚拟屏 displayId；无屏为 [DefaultDisplayConfig.DISPLAY_NONE]
+ *   / the virtual display's displayId; [DefaultDisplayConfig.DISPLAY_NONE] when
+ *   there is none
+ */
 data class HostSnapshot(
     val privilegedConnected: Boolean = false,
     val bridgeReachable: Boolean = false,
     val vdDisplayId: Int = DefaultDisplayConfig.DISPLAY_NONE,
 ) {
-    /** 环境整体活着：屏在且桥通；悬浮球与 FGS 的「活着」判据 */
+    /**
+     * 环境整体活着：屏在且桥通；悬浮球与 FGS 的「活着」判据
+     *
+     * The environment as a whole is alive: display present and bridge
+     * reachable — the "alive" criterion for the floating ball and the FGS.
+     */
     val environmentUp: Boolean
         get() = bridgeReachable && vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
 }

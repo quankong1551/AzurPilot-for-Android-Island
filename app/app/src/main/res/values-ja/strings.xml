@@ -94,14 +94,25 @@
     <string name="settings_section_schedule">スケジュール設定</string>
     <string name="settings_section_other">その他の設定</string>
     <string name="settings_theme">テーマ</string>
+    <string name="settings_cat_display">表示と言語</string>
+    <string name="settings_cat_display_desc">テーマと言語</string>
+    <string name="settings_cat_screen">仮想ディスプレイ</string>
+    <string name="settings_cat_screen_desc">仮想ディスプレイのリフレッシュレート</string>
+    <string name="settings_cat_logs">ログ</string>
+    <string name="settings_cat_logs_desc">ログの表示とエクスポート</string>
+    <string name="settings_cat_keep_alive">バックグラウンド維持</string>
+    <string name="settings_cat_keep_alive_desc">常駐対策と状態</string>
+    <string name="settings_cat_advanced">実行とセキュリティ</string>
+    <string name="settings_cat_advanced_desc">権限バックエンドとロック保護</string>
+    <string name="settings_cat_widget">ウィジェット</string>
+    <string name="settings_cat_widget_desc">ホーム画面にウィジェットを追加</string>
+    <string name="settings_cat_runtime">Runtime</string>
+    <string name="settings_cat_runtime_desc">バージョンとミラー</string>
+    <string name="settings_cat_about">このアプリについて</string>
+    <string name="settings_cat_about_desc">バージョン・ライセンス・コンポーネント</string>
     <string name="settings_follow_system">システムに従う</string>
     <string name="settings_theme_light">ライト</string>
     <string name="settings_theme_dark">ダーク</string>
-    <string name="settings_ui_style">スタイル</string>
-    <string name="settings_ui_style_auto">自動</string>
-    <string name="settings_ui_style_md3">MD3</string>
-    <string name="settings_ui_style_miuix">Miuix</string>
-    <string name="settings_ui_style_hint">自動は端末で切り替え：Xiaomi・Redmi・POCO は Miuix スタイル、その他は MD3 を使用します。</string>
     <string name="settings_language">言語</string>
     <string name="settings_language_hint">言語を切り替えるとプロジェクトが再読み込みされます。実行中は切り替えられません</string>
     <string name="settings_run_mode">実行モード</string>
@@ -946,15 +957,14 @@
     <string name="widget_pin_success">ウィジェットの追加をリクエストしました</string>
     <string name="widget_pin_unsupported">現在のランチャーはウィジェット自動追加に対応していません。手動で追加してください</string>
 
-    <!-- 機密操作の画面ロック保護 -->
-    <string name="settings_sensitive_auth_title">機密操作の画面ロック保護</string>
-    <string name="settings_sensitive_auth_desc">設定や仮想画面にアクセスする際、システムロック（PIN/指紋/顔）の認証を要求します。未設定の場合はスキップされます。</string>
-    <string name="settings_sensitive_auth_no_lock_hint">（画面ロックが未設定のため、認証はスキップされます）</string>
-    <string name="auth_prompt_title_settings">認証して設定を開く</string>
-    <string name="auth_prompt_title_screen">認証して仮想画面を開く</string>
-    <string name="auth_prompt_title_disable">保護を無効化</string>
-    <string name="auth_prompt_subtitle">画面ロックまたは生体認証で本人確認を行ってください</string>
-    <string name="auth_gate_locked_title">ページがロックされています</string>
-    <string name="auth_gate_locked_desc">このページはシステムロックで保護されています。本人確認を行ってください。</string>
-    <string name="auth_gate_unlock_button">ロック解除</string>
+    <!-- アプリロック保護 -->
+    <string name="settings_app_lock_title">アプリロック保護</string>
+    <string name="settings_app_lock_desc">起動時およびバックグラウンド復帰時に画面ロック（PIN/指紋/顔）を要求します。未設定時は不要です。</string>
+    <string name="settings_app_lock_no_lock_hint">（端末に画面ロックが未設定のため、現在は不要です）</string>
+    <string name="auth_prompt_title_app">認証してアプリを開く</string>
+    <string name="auth_prompt_title_disable">アプリロック保護を無効化</string>
+    <string name="auth_prompt_subtitle">画面ロックパスコードまたは生体認証を使用してください</string>
+    <string name="app_lock_title">アプリはロックされています</string>
+    <string name="app_lock_desc">アプリロック保護が有効です。続行するには本人確認を行ってください。</string>
+    <string name="app_lock_unlock_button">ロックを解除</string>
 </resources>

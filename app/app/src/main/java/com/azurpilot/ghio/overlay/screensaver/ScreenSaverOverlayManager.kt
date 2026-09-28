@@ -31,6 +31,19 @@ import timber.log.Timber
 /**
  * 后台模式的环境期屏保
  *
+ * 仅 [RunMode.BACKGROUND] 下工作：环境运行期间用一块全黑悬浮层压住屏幕
+ * （TYPE_APPLICATION_OVERLAY，需 SYSTEM_ALERT_WINDOW），保屏保亮度双管齐下，
+ * 让后台挂机看起来像熄屏。挂载与移除都在主线程；[setup] 后自观察运行模式
+ * 与环境态，任务结束自动收起
+ *
+ * The screensaver shown over the environment while in background mode.
+ *
+ * Works in [RunMode.BACKGROUND] only: while the environment runs, a full-black
+ * overlay layer (TYPE_APPLICATION_OVERLAY, requires SYSTEM_ALERT_WINDOW)
+ * covers the screen, pairing keep-screen-on with minimum brightness so
+ * background idle looks like the screen is off. Mount and removal happen on
+ * the main thread; after [setup] the manager observes the run mode and the
+ * environment state on its own, dismissing automatically when the task ends.
  */
 class ScreenSaverOverlayManager(
     private val context: Context,
@@ -51,8 +64,17 @@ class ScreenSaverOverlayManager(
     private var hostJob: Job? = null
 
     private val _isShowing = MutableStateFlow(false)
+
+    /** 屏保当前是否盖在屏上 / Whether the screensaver currently covers the screen. */
     val isShowing: StateFlow<Boolean> = _isShowing.asStateFlow()
 
+    /**
+     * 开始观察运行模式：后台模式挂环境观察，前台模式撤观察并收起屏保；幂等
+     *
+     * Starts observing the run mode: background mode mounts the environment
+     * watcher, foreground mode stops it and dismisses the screensaver;
+     * idempotent.
+     */
     fun setup() {
         scope.launch {
             appSettings.runMode.collect { mode ->
@@ -66,8 +88,6 @@ class ScreenSaverOverlayManager(
             }
         }
     }
-
-    // ── 环境态 ──
 
     private fun observeHost() {
         if (hostJob != null) return
@@ -88,14 +108,27 @@ class ScreenSaverOverlayManager(
         }
     }
 
+    /** 停止环境观察 / Stops watching the environment state. */
     private fun stopObservingHost() {
         hostJob?.cancel()
         hostJob = null
     }
 
-    // ── 显隐 ──
-
-    /** 返回是否真的盖上了；没有悬浮窗权限时 addView 会抛，这里吞掉并如实回 false */
+    /**
+     * 盖上屏保；已盖时直接返回 true，非后台模式拒绝并告警
+     *
+     * 返回是否真的盖上了；没有悬浮窗权限时 addView 会抛，这里吞掉并如实回 false
+     *
+     * Covers the screen with the screensaver; returns true immediately when
+     * already showing, refuses with a warning outside background mode.
+     *
+     * The return states whether it really got shown; without the overlay
+     * permission addView throws, which is swallowed here and honestly
+     * reported as false.
+     *
+     * @return 盖上为 true，权限缺失或模式不符为 false / true when shown, false
+     *   when the permission is missing or the mode does not match
+     */
     suspend fun show(): Boolean = withContext(Dispatchers.Main.immediate) {
         if (_isShowing.value) return@withContext true
         if (appSettings.runMode.value != RunMode.BACKGROUND) {
@@ -115,6 +148,12 @@ class ScreenSaverOverlayManager(
         _isShowing.value
     }
 
+    /**
+     * 收起屏保；未盖时为 no-op，移除失败只记日志
+     *
+     * Dismisses the screensaver; a no-op when not showing, removal failures
+     * are only logged.
+     */
     suspend fun hide() = withContext(Dispatchers.Main.immediate) {
         val view = composeView ?: return@withContext
         composeView = null
@@ -125,6 +164,7 @@ class ScreenSaverOverlayManager(
             .onFailure { Timber.e(it, "Failed to remove screen saver") }
     }
 
+    /** 构建屏保视图：挂独立 owner、恒暗主题，并排除底部手势区 / Builds the screensaver view: own owner, always-dark theme, and a bottom gesture-exclusion zone. */
     private fun createView(): ComposeView = ComposeView(context).apply {
         setViewTreeLifecycleOwner(viewModelOwner)
         setViewTreeViewModelStoreOwner(viewModelOwner)
@@ -152,6 +192,13 @@ class ScreenSaverOverlayManager(
     /**
      * 不可聚焦：返回键与音量键要原样落给系统，屏保不该改变它们的行为
      * KEEP_SCREEN_ON + screenBrightness 压到最低是这层的核心——真息屏会让
+     * 后台运行中断，所以只能保持点亮装作熄屏
+     *
+     * Not focusable: the back and volume keys must fall through to the system
+     * unchanged; the screensaver must not alter their behavior.
+     * KEEP_SCREEN_ON plus the minimum screenBrightness is the core of this
+     * layer — a real screen-off would interrupt the background run, so the
+     * display is kept lit and merely dressed as off.
      */
     private fun createLayoutParams(): WindowManager.LayoutParams {
         @Suppress("DEPRECATION")
@@ -175,10 +222,10 @@ class ScreenSaverOverlayManager(
     }
 
     private companion object {
-        /** 0f 在部分 ROM 上被当成「跟随系统」，给一个够小但非零的值 */
+        /** 0f 在部分 ROM 上被当成「跟随系统」，给一个够小但非零的值 / 0f is treated as "follow system" on some ROMs, so a small-but-nonzero value is used. */
         const val MIN_BRIGHTNESS = 0.01f
 
-        /** 覆盖三大厂的手势条高度还有余量；解锁条本身离底 56dp，不会被这块挡住 */
+        /** 覆盖三大厂的手势条高度还有余量；解锁条本身离底 56dp，不会被这块挡住 / Covers the gesture-bar height of the three major OEMs with margin; the unlock bar itself sits 56dp above the bottom, clear of this zone. */
         const val GESTURE_EXCLUSION_DP = 120
     }
 }

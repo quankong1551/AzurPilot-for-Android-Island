@@ -66,6 +66,15 @@ import com.azurpilot.ghio.ui.components.AppCard
  * 与任务参数不同，这些是**运行环境**的配置：改完大多要重启 AzurPilot 才生效，
  * 所以这里不逐字段自动保存，而是攒到一份草稿里，由底部的「保存」一次提交——
  * 半套应用的设置比没保存更难排查。
+ *
+ * The deploy-settings page (`config/deploy.yaml`).
+ *
+ * Unlike task arguments these configure the **runtime environment**: most take
+ * effect only after AzurPilot restarts. So nothing auto-saves per field —
+ * edits accumulate into a draft committed in one go by the bottom "save" bar;
+ * a half-applied set of settings is harder to debug than an unsaved one.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun DeploySettingsPage(repository: AzurPilotRepository) {
@@ -189,11 +198,24 @@ fun DeploySettingsPage(repository: AzurPilotRepository) {
     }
 }
 
+/**
+ * 单个部署字段行，控件按字段类型挑（开关 / 下拉 / 密码 / 整数 / 文本）
+ *
+ * One deploy-field row; the control is picked by the field's type (switch /
+ * dropdown / password / integer / text).
+ *
+ * @param field 字段定义 / the field definition
+ * @param draft 草稿值；null 表示尚未改动，显示回落到 [AzurPilotDeployField.value] —
+ *   ApValue 本身就是可空类型，不要再叠一层 `?` / the draft value; null means
+ *   unmodified and falls back to [AzurPilotDeployField.value] — ApValue is
+ *   already nullable, do not stack another `?` on it
+ * @param enabled 演示模式下整体禁用 / false disables the row (demo mode)
+ * @param onDraft 写入草稿 / writes into the draft
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DeployFieldRow(
     field: AzurPilotDeployField,
-    // ApValue 本身就是可空类型，不要再叠一层 ?
     draft: ApValue,
     enabled: Boolean,
     onDraft: (ApValue) -> Unit,
@@ -303,6 +325,7 @@ private fun DeployFieldRow(
     }
 }
 
+/** 选项的显示文本：空串给占位符，其余按字符串渲染 / The display text of an option: an empty string becomes a placeholder, everything else renders as a string. */
 private fun optionText(value: ApValue): String = when (value) {
     null -> ""
     is String -> value.ifEmpty { "—" }

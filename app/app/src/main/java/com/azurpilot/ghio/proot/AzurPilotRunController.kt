@@ -35,34 +35,85 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 调度器在跑时 status 回报的 config 才是生效配置，下拉选择下次启动生效。
  * 控制面分工：进程的启停只走这条薄接口，原生界面只做内容面（总览 / 配置 / 日志 / 统计 / 设置），
  * 不再另开一条启停路径——两条控制面同时操作设备会互相打架。
+ *
+ * The AzurPilot scheduler's runtime state: data source for the overlay's
+ * "start/stop farming" and the log panel.
+ *
+ * All data comes from the gateway's Android thin API (`127.0.0.1:25548`,
+ * `module/api/android.py`, requires `X-AzurPilot-Android-Token`):
+ * - GET `android/status` → runner_alive/pid/config/gui_alive/log_lines
+ * - POST `android/start?config=N`, `android/stop` → scheduler start/stop
+ *   (idempotent; stop does SIGTERM→3 s→SIGKILL internally, so it answers slowly)
+ * - GET `android/logs?tail=N` → a plain-text log tail. Semantics: the newest
+ *   txt under log/ by mtime — the scheduler's file of the day while it runs,
+ *   mostly the gui startup log otherwise; either suffices for an overlay glance
+ * - GET `android/configs` → the instance config names under config/ (the data
+ *   source of the run-config dropdown)
+ *
+ * Polls every 4 s; an unreachable API is not an error (the proot session is
+ * down or coming up — reachable=false suffices). The run-config choice is
+ * persisted in SharedPreferences and passed through to the runner at start;
+ * while the scheduler runs, the config reported by status is the effective
+ * one, and a dropdown choice takes effect on the next start. Control-plane
+ * split: process start/stop goes only through this thin API, while the native
+ * UI handles the content surfaces (overview / config / logs / statistics /
+ * settings) — no second start/stop path, two control planes acting on the
+ * device at once would fight each other.
  */
 data class AzurPilotRunState(
+    /** 薄接口是否可达 / Whether the thin API answers. */
     val reachable: Boolean = false,
+    /** 调度器 runner 是否在跑 / Whether the scheduler runner is alive. */
     val runnerAlive: Boolean = false,
+    /** runner 的 pid；没跑为 null / The runner's pid; null when not running. */
     val pid: Int? = null,
+    /** WebUI/gui 进程是否活着 / Whether the WebUI/gui process is alive. */
     val guiAlive: Boolean = false,
+    /** 当日日志文件的行数 / Line count of the day's log file. */
     val logLines: Int = 0,
+    /** 日志尾（悬浮窗展示用） / The log tail, shown on the overlay. */
     val logTail: List<String> = emptyList(),
+    /** 一次启停请求在途 / A start/stop request is in flight. */
     val busy: Boolean = false,
+    /** config/ 下的实例配置名列表 / The instance config names under config/. */
     val configs: List<String> = emptyList(),
+    /** 下拉选中的运行配置，start 时透传 / The run-config picked in the dropdown, passed through at start. */
     val selectedConfig: String = DEFAULT_CONFIG,
-    /** 正在跑的实例名（/status 回报）；没在跑为 null */
+    /** 正在跑的实例名（/status 回报）；没在跑为 null / The instance actually running (reported by /status); null when idle. */
     val runningConfig: String? = null,
-    /** AzurPilot 工具（半自动点击/活动剧情）是否在跑（/status 回报） */
+    /** AzurPilot 工具（半自动点击/活动剧情）是否在跑（/status 回报） / Whether an AzurPilot tool (semi-auto click / event story) runs (reported by /status). */
     val toolAlive: Boolean = false,
-    /** 在跑的工具名（TOOL_* 常量）；没在跑为 null */
+    /** 在跑的工具名（TOOL_* 常量）；没在跑为 null / The running tool's name (the TOOL_* constants); null when idle. */
     val toolName: String? = null,
 ) {
     companion object {
         /** 与 seed_azurpilot.py 播种的实例名一致（上游 DEFAULT_CONFIG_NAME），否则首启会选到一个不存在的配置 */
         const val DEFAULT_CONFIG = "ap"
 
-        /** wrapper /tool/start 认识的工具名：半自动点击、活动剧情 */
+        /** wrapper /tool/start 认识的工具名：半自动点击、活动剧情 / Tool names /tool/start understands: semi-auto click and event story. */
         const val TOOL_SEMI_AUTO = "daemon"
         const val TOOL_EVENT_STORY = "event_story"
     }
 }
 
+/**
+ * AzurPilot 调度器与工具的运行态控制器
+ *
+ * 4s 轮询薄接口产出 [AzurPilotRunState] 给悬浮窗与日志板，并暴露调度器/工具的启停：
+ * 进程的启停只走这条薄接口（内容面归 [AzurPilotRepository]，见其类头的分工说明）。
+ * 每个请求都带 [AndroidControlAuth] 口令；轮询与请求全部在 IO 调度器上，
+ * [start] 挂在 App 生命周期上整个前台期间持续轮询。
+ *
+ * Controller for the AzurPilot scheduler and tool runtime state.
+ *
+ * Polls the thin API every 4 s to produce [AzurPilotRunState] for the overlay
+ * and the log panel, and exposes scheduler/tool start and stop: process
+ * control goes only through this thin API (content surfaces belong to
+ * [AzurPilotRepository] — see its class doc for the split). Every request
+ * carries the [AndroidControlAuth] token; polling and requests all run on the
+ * IO dispatcher, with [start] pinned to the app lifecycle so polling lasts the
+ * whole foreground period.
+ */
 class AzurPilotRunController(
     context: Context,
     private val scope: CoroutineScope,
@@ -78,12 +129,19 @@ class AzurPilotRunController(
                 ?: AzurPilotRunState.DEFAULT_CONFIG,
         )
     )
+
+    /** 对外只读的运行态 / The externally read-only runtime state. */
     val state = _state.asStateFlow()
 
     private val started = AtomicBoolean(false)
     private val refreshMutex = Mutex()
 
-    /** 幂等：挂到 AzurPilotApp.postCreate，轮询整个 App 生命周期 */
+    /**
+     * 幂等：挂到 AzurPilotApp.postCreate，轮询整个 App 生命周期
+     *
+     * Idempotent; hooked at AzurPilotApp.postCreate so polling lasts the whole
+     * app lifecycle.
+     */
     fun start() {
         if (!started.compareAndSet(false, true)) return
         scope.launch(AppDispatchers.IO) {
@@ -94,12 +152,18 @@ class AzurPilotRunController(
         }
     }
 
-    /** 选择运行配置：持久化，下次 /start 生效；调度器在跑时不拦，但生效要等下次启动 */
+    /**
+     * 选择运行配置：持久化，下次 /start 生效；调度器在跑时不拦，但生效要等下次启动
+     *
+     * Picks the run config: persisted, effective on the next /start; not
+     * blocked while the scheduler runs, but it applies only from the next start.
+     */
     fun selectConfig(name: String) {
         prefs.edit().putString(KEY_SELECTED_CONFIG, name).apply()
         _state.update { it.copy(selectedConfig = name) }
     }
 
+    /** 启动调度器（带下拉选中的配置）；环境未就绪时先拉环境 / Starts the scheduler (with the picked config); brings the environment up first when it is not ready. */
     fun startRunner() {
         val config = URLEncoder.encode(_state.value.selectedConfig, "UTF-8")
         startAfterEnvironmentReady("$BASE/start?config=$config")
@@ -111,28 +175,46 @@ class AzurPilotRunController(
      * 上游 `instance()` 在没给 config 时回落到硬编码的实例名再做 `configs.path()` 校验，
      * 那个名字在本部署里不存在 → 400 NOT_FOUND → 表现就是「点了停止没反应」。
      * 正在跑时以 /status 回报的实例为准，否则退回下拉选中的那个。
+     *
+     * Stops the scheduler: **the config must be passed explicitly**.
+     *
+     * Without a config, upstream `instance()` falls back to a hardcoded
+     * instance name and then validates it through `configs.path()`; that name
+     * does not exist in this deployment → 400 NOT_FOUND → the user sees
+     * "pressed stop, nothing happened". While running, the instance reported
+     * by /status wins; otherwise the dropdown's pick is used.
      */
     fun stopRunner() = postThenRefresh("$BASE/stop?config=${encodedConfig(running = true)}")
 
     /**
      * 工具启停：与调度器同一条 postThenRefresh 通道。
      * 互斥（启工具先停 runner、启 runner 先停工具）由 wrapper 集中执行，这里不做门控
+     *
+     * Tool start/stop: the same postThenRefresh channel as the scheduler.
+     * Mutual exclusion (starting a tool stops the runner first and vice versa)
+     * is enforced centrally by the wrapper; no gating here.
      */
     fun startTool(name: String) {
         val tool = URLEncoder.encode(name, "UTF-8")
         startAfterEnvironmentReady("$BASE/tool/start?name=$tool&config=${encodedConfig()}")
     }
 
-    /** 同 [stopRunner]：不带 config 会落到上游那个必然不存在的回落实例名上 */
+    /** 同 [stopRunner]：不带 config 会落到上游那个必然不存在的回落实例名上 / Same as [stopRunner]: without a config it lands on upstream's fallback instance name that cannot exist. */
     fun stopTool() = postThenRefresh("$BASE/tool/stop?config=${encodedConfig(running = true)}")
 
-    /** 当前该对哪个实例说话：优先 /status 回报的在跑实例，否则用下拉选中项 */
+    /**
+     * 当前该对哪个实例说话：优先 /status 回报的在跑实例，否则用下拉选中项
+     *
+     * Which instance to talk to right now: the instance reported running by
+     * /status takes precedence, otherwise the dropdown's pick.
+     */
     private fun encodedConfig(running: Boolean = false): String {
         val state = _state.value
         val name = if (running) state.runningConfig ?: state.selectedConfig else state.selectedConfig
         return URLEncoder.encode(name, "UTF-8")
     }
 
+    /** 先确保特权环境（虚拟屏）就绪再发请求；环境起不来就放弃并记日志 / Fires the request only after the privileged environment (virtual display) is up; gives up with a log line when it cannot start. */
     private fun startAfterEnvironmentReady(url: String) {
         scope.launch {
             _state.update { it.copy(busy = true) }
@@ -145,6 +227,7 @@ class AzurPilotRunController(
         }
     }
 
+    /** POST + 立刻刷新一次状态；失败只记日志，可达性由刷新兜底 / POSTs and immediately refreshes the state; failures only log — the refresh picks up reachability. */
     private fun postThenRefresh(url: String) {
         scope.launch(AppDispatchers.IO) {
             _state.update { it.copy(busy = true) }
@@ -169,6 +252,16 @@ class AzurPilotRunController(
      * 「WebUI 进程活着」最可靠的探针——首次部署、实例还没播种、调度器没起时它照样能答。
      * 先用它定可达性并把选中的实例自愈到列表里，后面带 `config=` 的调用才不会撞上
      * 上游那个必然不存在的回落实例名。
+     *
+     * One refresh.
+     *
+     * The order matters: `/configs` parses no instance (it returns the file
+     * names under `config/` directly), making it the most reliable probe of
+     * "the WebUI process is alive" — it answers even on first deploy, before
+     * instances are seeded, with the scheduler down. Reachability is decided
+     * with it first and the selected config self-heals into the list, so the
+     * later `config=`-bearing calls never hit upstream's fallback instance name
+     * that cannot exist.
      */
     private fun refreshLocked() {
         val configs = runCatching {
@@ -227,6 +320,7 @@ class AzurPilotRunController(
         }
     }
 
+    /** 带口令的 GET；非 200 或任何异常都以 null 收场 / A token-carrying GET; a non-200 or any exception ends in null. */
     private fun get(url: String, timeoutMs: Int): String? = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.setRequestProperty("X-AzurPilot-Android-Token", controlToken)
@@ -238,9 +332,17 @@ class AzurPilotRunController(
 
     private companion object {
         const val BASE = "http://127.0.0.1:${ProotHost.WEBUI_PORT}/android"
+
+        /** 轮询周期：悬浮窗数字跳动别太快，又要在 4s 内跟手 / Poll period: keeps overlay numbers from flickering yet still feels responsive. */
         const val POLL_MS = 4_000L
+
+        /** GET 探针的超时：探活要快，超时即按不可达处理 / GET probe timeout: probing must be quick; a timeout counts as unreachable. */
         const val HTTP_TIMEOUT_MS = 1_500
+
+        /** /stop 要等进程组死掉（SIGTERM→3s→SIGKILL），读超时给足 / /stop waits for the process group to die (SIGTERM→3 s→SIGKILL); the read timeout must cover it. */
         const val POST_READ_TIMEOUT_MS = 12_000
+
+        /** 悬浮窗展示的日志尾行数 / Log tail lines shown on the overlay. */
         const val LOG_TAIL = 50
         const val PREFS_NAME = "azurpilot_android"
         const val KEY_SELECTED_CONFIG = "selected_config"

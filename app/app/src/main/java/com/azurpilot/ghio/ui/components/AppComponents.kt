@@ -42,11 +42,20 @@ import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.azurpilot.ApMotion
 
 /**
- * 内容分组卡：M3 的 filled card（`surfaceContainerHighest` 底色 + 0 elevation），
+ * 渲染内容分组卡：M3 的 filled card（`surfaceContainerHighest` 底色 + 0 elevation），
  * 颜色、圆角、层级全走主题 token，调用点不再各写一遍
  *
  * [collapsible] 要求有 [title]：折叠靠点标题行，没标题就没有可点的表头
  * 展开态只活在本次会话（[rememberSaveable]）——收起是临时整理视线，不是配置，不该进 DataStore
+ *
+ * Renders a content group card: an M3 filled card (`surfaceContainerHighest`
+ * background at 0 elevation); color, corner radius, and elevation all come from the
+ * theme tokens so call sites stop repeating them.
+ *
+ * [collapsible] requires [title]: collapsing works by tapping the title row, and
+ * without a title there is no header to tap. The expanded state lives only for the
+ * session ([rememberSaveable]) — collapsing is a temporary focus aid, not a
+ * preference, so it must not reach DataStore.
  */
 @Composable
 fun AppCard(
@@ -126,7 +135,13 @@ fun AppCard(
     }
 }
 
-/** 尾控件固宽，标签占剩余并换行，避免长 label 挤掉 Switch/Icon */
+/**
+ * 渲染标签 + 尾控件的行：尾控件固宽，标签占剩余宽度并换行，避免长 label 挤掉 Switch/Icon
+ *
+ * Renders a label-with-trailing-control row: the trailing control keeps its width,
+ * the label takes the rest and wraps, so a long label cannot squeeze out a
+ * Switch/Icon.
+ */
 @Composable
 fun AppLabeledControlRow(
     label: String,
@@ -156,10 +171,17 @@ fun AppLabeledControlRow(
 }
 
 /**
- * 点进二级页面的一行：标题 + 说明 + 右侧箭头
+ * 渲染点进二级页面的一行：标题 + 说明 + 右侧箭头
  *
  * 与 [AppLabeledControlRow] 分开：那个的尾部是控件、点的是控件本身；这个整行可点，
  * 语义是「离开当前页」
+ *
+ * Renders a row that navigates into a second-level page: title + description + a
+ * right chevron.
+ *
+ * Kept separate from [AppLabeledControlRow]: that one carries a control in the
+ * trailing slot and the tap target is the control itself; this row is tappable as a
+ * whole, with the semantics of "leaving the current page".
  */
 @Composable
 fun AppNavigationRow(
@@ -200,11 +222,19 @@ fun AppNavigationRow(
 }
 
 /**
- * 孤件容器的卡片配方：M3 的 outlined card（`surface` 底 + `outlineVariant` 描边），
+ * 渲染孤件容器的卡片配方：M3 的 outlined card（`surface` 底 + `outlineVariant` 描边），
  * 与内容分组用的 filled [AppCard] 拉开层级
  *
  * 只给缩略图这类单独成块的图元用。成列表的行不要套它——同一批内容逐行套卡会
  * 把「它们属于同一处」这层意思抹掉，那是列表 + 分隔线的活
+ *
+ * Renders the card recipe for standalone containers: an M3 outlined card (`surface`
+ * background with an `outlineVariant` border), visually distinct from the filled
+ * [AppCard] used for content groups.
+ *
+ * Reserved for self-contained blocks such as thumbnails. Do not wrap list rows in
+ * it — carding each row of one batch erases the "these belong together" meaning,
+ * which is the job of a list with dividers.
  */
 @Composable
 fun AppCardSurface(
@@ -214,7 +244,12 @@ fun AppCardSurface(
     OutlinedCard(modifier = modifier) { content() }
 }
 
-/** 卡片内一组控件的小标题；一张卡装多组时靠它区分 */
+/**
+ * 渲染卡片内一组控件的小标题；一张卡装多组时靠它区分
+ *
+ * Renders the small heading of a control group inside a card; use it to tell
+ * groups apart when one card holds several.
+ */
 @Composable
 fun AppFieldLabel(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -225,6 +260,12 @@ fun AppFieldLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * 渲染标签/值信息行：标签占四成宽，值右对齐占六成宽，用于只读的键值展示
+ *
+ * Renders a label/value info row: the label takes 40% of the width and the
+ * right-aligned value 60%, for read-only key-value display.
+ */
 @Composable
 fun AppInfoRow(label: String, value: String) {
     Row(

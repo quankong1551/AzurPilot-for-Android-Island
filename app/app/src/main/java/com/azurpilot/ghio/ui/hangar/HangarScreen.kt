@@ -38,7 +38,12 @@ import com.azurpilot.ghio.ui.components.AzurPilotControlPanel
 import com.azurpilot.ghio.ui.components.AzurPilotLogBoard
 import org.koin.compose.koinInject
 
-/** 日志区固定高度：约 20 行可见，其余靠板内滚动；再往下由整页滚动接手 */
+/**
+ * 日志区固定高度：约 20 行可见，其余靠板内滚动；再往下由整页滚动接手
+ *
+ * Fixed height of the log area: about 20 visible lines, the rest scrolls inside
+ * the board; anything beyond is handed to the page-level scroll.
+ */
 private val LogBoardHeight = 320.dp
 
 /**
@@ -48,6 +53,21 @@ private val LogBoardHeight = 320.dp
  * 环境仍由 [HostState.ensureEnvironmentStarted] 在本页可见时自动拉起，与画面无关。
  * 配置面（改任务参数）仍在 AzurPilot WebUI tab，本页只选「跑哪个配置」；
  * 半自动点击 / 活动剧情那两个工具直接操作虚拟屏，入口已挪到虚拟屏页
+ *
+ * Renders the Hangar tab: run-config selection + AzurPilot control panel + run log.
+ *
+ * The whole page scrolls (the start button stays unclipped on short screens,
+ * split-screen, and landscape). The live virtual-display feed has been removed
+ * from this page; the environment is still raised automatically by
+ * [HostState.ensureEnvironmentStarted] while the page is visible, regardless of
+ * the feed. Task-parameter editing stays in the AzurPilot WebUI tab; this page
+ * only picks which config to run, and the two tools that drive the virtual
+ * display directly (semi-auto click / event story) have moved to the
+ * virtual-display page.
+ *
+ * @param active 是否为 pager 当前页；true 且特权连接就绪时触发一次环境拉起 /
+ *   whether this is the pager's current page; true with a ready privileged
+ *   connection triggers one environment start
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -127,6 +147,13 @@ fun HangarScreen(
  * 选择下次启动生效。
  *
  * 外面不套卡：outlined 输入框本就设计成落在 surface 上，再套一层 filled 卡是「框里再套框」
+ *
+ * Renders the run-config dropdown. Switching is locked while the scheduler runs —
+ * the effective config is the runningConfig reported by /status; a selection takes
+ * effect on the next start.
+ *
+ * No card wrapper outside: an outlined field is designed to sit directly on the
+ * surface; wrapping a filled card around it is a box inside a box.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

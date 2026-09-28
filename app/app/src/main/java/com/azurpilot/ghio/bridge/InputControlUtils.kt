@@ -1,0 +1,362 @@
+package com.azurpilot.ghio.bridge
+
+import android.os.RemoteException
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.KeyEvent
+import android.view.MotionEvent
+
+import com.azurpilot.ghio.ITouchEventCallback
+import com.azurpilot.ghio.third.Ln
+import com.azurpilot.ghio.third.wrappers.InputManager
+import com.azurpilot.ghio.third.wrappers.ServiceManager
+
+/**
+ * 触摸/按键注入的装配层：把 down/move/up 事件流组装成 MotionEvent 后经隐藏
+ * `injectInputEvent` 注入
+ *
+ * 维护当前触点集合 `slots` 与手势起始时间 `gestureDownTime`，每一步的目标状态由
+ * [TouchPointerSequence.plan] 纯函数推导；注入经 [InputManager]（shell 身份）。
+ * 所有 down/move/up 入口以本 object 为锁串行化，保证多触点序列的状态一致性；
+ * 调用方为特权进程内的 native 桥线程。
+ *
+ * Assembles touch/key injection: builds MotionEvents from the down/move/up
+ * stream and feeds them to the hidden `injectInputEvent`.
+ *
+ * Keeps the current pointer set `slots` and the gesture down time
+ * `gestureDownTime`; the target state of each step is derived by the pure
+ * [TouchPointerSequence.plan]. Injection goes through [InputManager] (shell
+ * identity). All down/move/up entries synchronize on this object so
+ * multi-pointer sequences stay consistent; callers are the privileged
+ * process's native bridge threads.
+ */
+object InputControlUtils {
+
+    private const val TAG = "InputControlUtils"
+
+    /** 懒初始化的 [InputManager] 包装；非空后不再重建 / Lazily created [InputManager] wrapper; never rebuilt once non-null. */
+    private var manager: InputManager? = null
+
+    /** 已注册的触摸回调，[Volatile] 保证跨线程可见 / Registered touch callback; [Volatile] for cross-thread visibility. */
+    @Volatile
+    private var touchCallback: ITouchEventCallback? = null
+
+    private fun getManager(): InputManager {
+        if (manager == null) {
+            manager = ServiceManager.getInputManager()
+        }
+        return manager!!
+    }
+
+    private const val DEFAULT_DEVICE_ID = 0
+    private val DEFAULT_SOURCE = InputDevice.SOURCE_TOUCHSCREEN
+
+    /** 进行中的多触点状态，仅在 [Synchronized] 入口内变更 / In-progress multi-pointer state, mutated only inside the [Synchronized] entries. */
+    private val slots = ArrayList<TouchPointerSequence.Pointer>()
+
+    /** 本次手势的按下时间（uptime ms）；0 表示无进行中手势 / Down time of the current gesture (uptime ms); 0 means no gesture in progress. */
+    private var gestureDownTime = 0L
+
+    /**
+     * 按当前触点集合构造多指 MotionEvent
+     *
+     * 坐标钳到非负；压力/尺寸恒 1（注入端只关心位置与触点数）。
+     *
+     * Builds a multi-pointer MotionEvent from the current pointer set.
+     *
+     * Coordinates are clamped to non-negative; pressure and size stay at 1
+     * (injection only cares about positions and pointer count).
+     */
+    private fun obtainFromSlots(downTime: Long, eventTime: Long, action: Int): MotionEvent {
+        val n = slots.size
+        val props = arrayOfNulls<MotionEvent.PointerProperties>(n)
+        val coords = arrayOfNulls<MotionEvent.PointerCoords>(n)
+        for ((i, p) in slots.withIndex()) {
+            val prop = MotionEvent.PointerProperties()
+            prop.id = p.contact
+            prop.toolType = MotionEvent.TOOL_TYPE_FINGER
+            props[i] = prop
+            val coord = MotionEvent.PointerCoords()
+            coord.x = maxOf(0f, p.x)
+            coord.y = maxOf(0f, p.y)
+            coord.pressure = 1.0f
+            coord.size = 1.0f
+            coords[i] = coord
+        }
+        return MotionEvent.obtain(
+            downTime, eventTime, action,
+            n, props, coords,
+            0, 0,
+            1.0f, 1.0f,
+            DEFAULT_DEVICE_ID, 0, DEFAULT_SOURCE, 0
+        )
+    }
+
+    /**
+     * 绑定目标显示器 → 通知回调 → 注入，finally 里回收事件
+     *
+     * Binds the target display, notifies the callback, injects, and recycles
+     * the event in a finally block.
+     */
+    private fun injectInputEvent(event: MotionEvent, displayId: Int, mode: Int): Boolean {
+        try {
+            if (!setDisplayId(event, displayId)) {
+                return false
+            }
+            notifyTouchCallback(event)
+            return getManager().injectInputEvent(event, mode)
+        } finally {
+            event.recycle()
+        }
+    }
+
+    /**
+     * 注册/注销触摸事件回调
+     *
+     * 每个注入的触摸事件都会把 (x, y, actionMasked) 回报给 [callback]；传 null
+     * 注销。回调抛出 RemoteException 或 RuntimeException 时视为对端失效，自动
+     * 注销，避免注入链路被反复拖垮。
+     *
+     * Registers or unregisters the touch event callback.
+     *
+     * Every injected touch event reports (x, y, actionMasked) to [callback];
+     * pass null to unregister. A RemoteException or RuntimeException from the
+     * callback marks the peer as dead and unregisters it automatically, so the
+     * injection chain is not dragged down repeatedly.
+     */
+    fun setTouchCallback(callback: ITouchEventCallback?) {
+        touchCallback = callback
+    }
+
+    /**
+     * 把触摸事件回报给已注册回调
+     *
+     * Reports the touch event to the registered callback.
+     */
+    private fun notifyTouchCallback(event: MotionEvent) {
+        val callback = touchCallback ?: return
+        try {
+            callback.onCallback(Math.round(event.x), Math.round(event.y), event.actionMasked)
+        } catch (e: Exception) {
+            if (e is RemoteException || e is RuntimeException) {
+                touchCallback = null
+                Ln.w(TAG + ": touch callback failed, clearing registration", e)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    /**
+     * displayId 为 0 时免绑定（默认屏），否则走隐藏 `InputEvent.setDisplayId`
+     *
+     * Skips binding for display 0 (the default), otherwise goes through the
+     * hidden `InputEvent.setDisplayId`.
+     */
+    private fun setDisplayId(event: InputEvent, displayId: Int): Boolean {
+        return displayId == 0 || InputManager.setDisplayId(event, displayId)
+    }
+
+    /**
+     * POINTER_DOWN/UP 需要把变更触点索引编码进 action 高位，其余原样返回
+     *
+     * Encodes the changing pointer index into the action's high bits for
+     * POINTER_DOWN/UP; other actions pass through unchanged.
+     */
+    private fun encodeAction(masked: Int, index: Int): Int {
+        if (masked == TouchPointerSequence.ACTION_POINTER_DOWN ||
+            masked == TouchPointerSequence.ACTION_POINTER_UP
+        ) {
+            return masked or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+        }
+        return masked
+    }
+
+    private fun replaceSlots(next: List<TouchPointerSequence.Pointer>) {
+        slots.clear()
+        slots.addAll(next)
+    }
+
+    /**
+     * 对进行中的手势补发 ACTION_CANCEL 并清空状态；无手势时仅清状态
+     *
+     * Sends a trailing ACTION_CANCEL for the in-progress gesture and clears
+     * the state; with no gesture in progress it only clears.
+     */
+    private fun injectCancel(displayId: Int) {
+        if (slots.isEmpty() || gestureDownTime == 0L) {
+            slots.clear()
+            gestureDownTime = 0
+            return
+        }
+        val cancel = obtainFromSlots(
+            gestureDownTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL
+        )
+        injectInputEvent(cancel, displayId, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
+        slots.clear()
+        gestureDownTime = 0
+    }
+
+    /**
+     * 执行一个 [TouchPointerSequence.Step]
+     *
+     * 必要时先取消旧手势（[Step.cancelFirst]），替换触点集合并注入；DOWN/
+     * POINTER_DOWN 用 WAIT_FOR_FINISH 让系统先把触点落下，避免后续 MOVE 落空；
+     * UP/POINTER_UP 之后收缩触点集合。
+     *
+     * Applies one [TouchPointerSequence.Step].
+     *
+     * Cancels the old gesture first when required ([Step.cancelFirst]), then
+     * replaces the pointer set and injects; DOWN/POINTER_DOWN use
+     * WAIT_FOR_FINISH so the system lands the pointer before later MOVE events,
+     * and UP/POINTER_UP shrink the pointer set afterwards.
+     */
+    private fun injectStep(step: TouchPointerSequence.Step, displayId: Int): Boolean {
+        if (!step.ok) {
+            return false
+        }
+        if (step.cancelFirst) {
+            injectCancel(displayId)
+        }
+        replaceSlots(step.pointers)
+        if (slots.isEmpty()) {
+            return false
+        }
+        if (gestureDownTime == 0L) {
+            gestureDownTime = SystemClock.uptimeMillis()
+        }
+        val action = encodeAction(step.actionMasked, step.changingIndex)
+        val wait = step.actionMasked == TouchPointerSequence.ACTION_DOWN ||
+            step.actionMasked == TouchPointerSequence.ACTION_POINTER_DOWN
+        val mode = if (wait) {
+            InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH
+        } else {
+            InputManager.INJECT_INPUT_EVENT_MODE_ASYNC
+        }
+        val result = injectInputEvent(
+            obtainFromSlots(gestureDownTime, SystemClock.uptimeMillis(), action),
+            displayId,
+            mode
+        )
+        if (step.actionMasked == TouchPointerSequence.ACTION_UP) {
+            slots.clear()
+            gestureDownTime = 0
+        } else if (step.actionMasked == TouchPointerSequence.ACTION_POINTER_UP) {
+            val idx = step.changingIndex
+            if (idx >= 0 && idx < slots.size) {
+                slots.removeAt(idx)
+            }
+        }
+        return result
+    }
+
+    /**
+     * 注入一次触摸按下
+     *
+     * [x] / [y] 为目标显示器像素坐标，[contact] 为触点编号，[displayId] 为
+     * 目标显示器（0 = 默认屏）。
+     *
+     * Injects one touch down.
+     *
+     * [x] / [y] are display-pixel coordinates on the target display, [contact]
+     * the pointer index and [displayId] the target display (0 = default).
+     *
+     * @return 注入是否成功 / whether the injection succeeded
+     */
+    @Synchronized
+    fun down(x: Int, y: Int, contact: Int, displayId: Int): Boolean {
+        return injectStep(
+            TouchPointerSequence.plan(
+                TouchPointerSequence.Kind.Down,
+                ArrayList(slots),
+                contact,
+                x.toFloat(),
+                y.toFloat()
+            ),
+            displayId
+        )
+    }
+
+    /**
+     * 注入一次触摸移动；契约同 [down]
+     *
+     * Injects one touch move; same contract as [down].
+     *
+     * @return 注入是否成功 / whether the injection succeeded
+     */
+    @Synchronized
+    fun move(x: Int, y: Int, contact: Int, displayId: Int): Boolean {
+        return injectStep(
+            TouchPointerSequence.plan(
+                TouchPointerSequence.Kind.Move,
+                ArrayList(slots),
+                contact,
+                x.toFloat(),
+                y.toFloat()
+            ),
+            displayId
+        )
+    }
+
+    /**
+     * 注入一次触摸抬起；契约同 [down]
+     *
+     * Injects one touch up; same contract as [down].
+     *
+     * @return 注入是否成功 / whether the injection succeeded
+     */
+    @Synchronized
+    fun up(x: Int, y: Int, contact: Int, displayId: Int): Boolean {
+        return injectStep(
+            TouchPointerSequence.plan(
+                TouchPointerSequence.Kind.Up,
+                ArrayList(slots),
+                contact,
+                x.toFloat(),
+                y.toFloat()
+            ),
+            displayId
+        )
+    }
+
+    /**
+     * 注入按键按下
+     *
+     * 等待分发完成（WAIT_FOR_FINISH），保证随后的 keyUp 不会超前于 keyDown。
+     *
+     * Injects a key down.
+     *
+     * Waits for the dispatch to finish (WAIT_FOR_FINISH) so a following keyUp
+     * cannot overtake it.
+     *
+     * @return 注入是否成功 / whether the injection succeeded
+     */
+    fun keyDown(keyCode: Int, displayId: Int): Boolean {
+        val downTime = SystemClock.uptimeMillis()
+        val keyEvent = KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, keyCode, 0)
+
+        if (!setDisplayId(keyEvent, displayId)) {
+            return false
+        }
+        return getManager().injectInputEvent(keyEvent, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH)
+    }
+
+    /**
+     * 注入按键抬起；异步注入（不等待分发结果）
+     *
+     * Injects a key up; asynchronous (does not wait for the dispatch result).
+     *
+     * @return 注入是否成功 / whether the injection succeeded
+     */
+    fun keyUp(keyCode: Int, displayId: Int): Boolean {
+        val upTime = SystemClock.uptimeMillis()
+        val keyEvent = KeyEvent(upTime, upTime, KeyEvent.ACTION_UP, keyCode, 0)
+
+        if (!setDisplayId(keyEvent, displayId)) {
+            return false
+        }
+
+        return getManager().injectInputEvent(keyEvent, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC)
+    }
+}

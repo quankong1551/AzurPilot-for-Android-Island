@@ -19,6 +19,31 @@ import com.azurpilot.ghio.ui.AppRoot
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
+/**
+ * App 唯一的壳 Activity：承载 Compose UI，并处理窗口层面的平台适配
+ *
+ * 职责：
+ * - splash 屏保持到设置异步加载完成才放行首帧
+ * - 挖孔屏 edge-to-edge 适配（见 onCreate 内的 cutout 模式说明）
+ * - 挂机 / 工具运行期间保持屏幕常亮：STARTED 期间跟随运行状态加 / 清
+ *   FLAG_KEEP_SCREEN_ON；退到后台或用户手动息屏时不阻止锁屏
+ * - 明暗切换时同步状态栏 / 导航栏样式，并把最终结果播给 [AppThemeState]，
+ *   供悬浮窗这类拿不到 Configuration 的独立窗口读取
+ *
+ * The app's sole shell Activity: hosts the Compose UI and handles
+ * window-level platform adaptations.
+ *
+ * Responsibilities:
+ * - hold the splash screen until settings finish loading asynchronously
+ * - display-cutout edge-to-edge adaptation (see the cutout-mode note in
+ *   onCreate)
+ * - keep the screen on while an automation session or tool runs: while
+ *   STARTED, FLAG_KEEP_SCREEN_ON follows the run state; backgrounding or a
+ *   manual screen-off still allows lock
+ * - on dark-theme changes, refresh the status / navigation bar styles and
+ *   publish the outcome to [AppThemeState] for standalone windows such as
+ *   overlays, which cannot read Configuration themselves
+ */
 class MainActivity : AppCompatActivity() {
 
     private val appSettings: AppSettingsManager by inject()
@@ -66,6 +91,7 @@ class MainActivity : AppCompatActivity() {
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { darkMode },
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Q+ 不关掉对比度强制，系统会在透明导航栏下面垫一层半透明 scrim
             window.isNavigationBarContrastEnforced = false
         }
     }

@@ -17,6 +17,20 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * 一次可安装的更新
+ * One installable update.
+ *
+ * @property versionCode 与 BuildConfig.VERSION_CODE 比较用的整型版本号 /
+ *   integer version code compared against BuildConfig.VERSION_CODE
+ * @property versionName 展示用版本名 / display version name
+ * @property apkUrl Release 域名下的 APK 地址，下载时可套镜像前缀 / APK URL
+ *   under the release host, prefixable with a mirror at download time
+ * @property apkSha256 期望的整文件 SHA-256（64 位十六进制）/ expected
+ *   whole-file SHA-256 (64 hex chars)
+ * @property apkSize 期望的字节大小，落盘后与实际文件核对 / expected size in
+ *   bytes, checked against the file on disk after download
+ */
 data class AppUpdateInfo(
     val versionCode: Int,
     val versionName: String,
@@ -25,6 +39,17 @@ data class AppUpdateInfo(
     val apkSize: Long,
 )
 
+/**
+ * 更新流程的 UI 快照 / UI snapshot of the update flow.
+ *
+ * @property checking 清单检查进行中 / a manifest check is running
+ * @property downloading 下载与校验进行中 / download and verification are
+ *   running
+ * @property available 有比当前包新的更新；null 表示无需更新 / a newer update
+ *   exists; null means up to date
+ * @property error 最近一次失败的文案，成功路径上清空 / copy of the latest
+ *   failure, cleared on the success path
+ */
 data class AppUpdateState(
     val checking: Boolean = false,
     val downloading: Boolean = false,
@@ -51,8 +76,28 @@ class AppUpdateManager(
     private val settings: AppSettingsManager,
 ) {
     private val _state = MutableStateFlow(AppUpdateState())
+
+    /** 更新流程状态流，UI 直接订阅 / The update-flow state stream, observed by the UI directly. */
     val state = _state.asStateFlow()
 
+    /**
+     * 拉取 Release 清单，判断是否有新版本
+     *
+     * 检查或下载进行中时本次调用直接忽略。清单里没有 `apkUrl` 视为「只发了
+     * rootfs，还没有可安装 APK」；字段合法性（Release 域名、SHA-256 形态、
+     * 大小为正）经 require 校验，不合法按失败处理。仅当清单版本号大于当前
+     * 包时才置 [AppUpdateState.available]。协程跑在注入 scope 的 IO 上。
+     *
+     * Fetches the release manifest and decides whether a newer version exists.
+     *
+     * The call is ignored while a check or download is already in flight. A
+     * manifest without `apkUrl` means "rootfs published, no installable APK
+     * yet". Field validity (release host, SHA-256 shape, positive size) is
+     * asserted via require, and any violation counts as a failure.
+     * [AppUpdateState.available] is set only when the manifest version code
+     * exceeds the running build. The coroutine runs on the injected scope's
+     * IO dispatcher.
+     */
     fun check() {
         if (_state.value.checking || _state.value.downloading) return
         scope.launch(AppDispatchers.IO) {
@@ -87,6 +132,23 @@ class AppUpdateManager(
         }
     }
 
+    /**
+     * 下载可用更新并交给系统安装器
+     *
+     * 无可用更新或已在下载时直接忽略。缓存目录里按 SHA-256 命名的 APK 通过
+     * 大小与哈希复核后直接复用；新下载先写 `.part` 临时文件，大小与 SHA-256
+     * 双校验通过才改名落定。安装经 FileProvider + ACTION_VIEW 拉起系统
+     * Package Installer，由它展示确认界面。
+     *
+     * Downloads the available update and hands it to the system installer.
+     *
+     * Ignored when nothing is available or a download is already running. A
+     * cached APK named by its SHA-256 is reused after size and hash
+     * re-verification; a fresh download lands in a `.part` temp file first and
+     * is renamed into place only after both size and SHA-256 pass.
+     * Installation goes through FileProvider + ACTION_VIEW, with the system
+     * Package Installer showing the confirmation.
+     */
     fun downloadAndInstall() {
         val info = _state.value.available ?: return
         if (_state.value.downloading) return
@@ -120,12 +182,23 @@ class AppUpdateManager(
         }
     }
 
+    /**
+     * 关闭当前更新提示并清掉错误 / Dismisses the current update prompt and clears the error.
+     */
     fun dismiss() = _state.update { it.copy(available = null, error = null) }
 
-    /** 当前生效的镜像前缀（与 Runtime 下载共用同一个源选择） */
+    /** 当前生效的镜像前缀（与 Runtime 下载共用同一个源选择）/ The effective mirror prefix (shares the source selection with the runtime download). */
     private fun mirrorPrefix() =
         ReleaseUrls.mirrorPrefix(settings.githubMirror.value, settings.githubMirrorCustom.value)
 
+    /**
+     * 拉取 URL 文本正文；12s 连接 / 读取超时，带 no-cache 头并跟随重定向
+     *
+     * Fetches the URL body as text: 12 s connect/read timeouts, a no-cache
+     * header, redirects followed.
+     *
+     * @throws IllegalArgumentException 非 2xx 状态时 / on a non-2xx status
+     */
     private fun requestText(url: String): String {
         val connection = URL(url).openConnection() as HttpURLConnection
         return try {
@@ -140,6 +213,9 @@ class AppUpdateManager(
         }
     }
 
+    /**
+     * 经 FileProvider 拉起系统安装器 / Launches the system installer via FileProvider.
+     */
     private fun launchInstaller(apk: File) {
         val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", apk)
         val intent = Intent(Intent.ACTION_VIEW).apply {

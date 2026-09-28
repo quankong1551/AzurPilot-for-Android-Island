@@ -11,10 +11,16 @@ import com.azurpilot.ghio.privileged.ShizukuReadiness
 import com.azurpilot.ghio.privileged.ShizukuReadinessStage
 
 /**
- * Shizuku 就绪引导弹窗
+ * 渲染 Shizuku 就绪引导弹窗
  *
  * 纯展示：按 [ShizukuReadiness.stage] 渲染对应的标题/正文/按钮，动作一律上抛
  * [ShizukuReadiness.needsGuidance] 为 false 时不渲染
+ *
+ * Renders the Shizuku readiness guide dialog.
+ *
+ * Presentation only: picks the title/body/buttons from [ShizukuReadiness.stage]
+ * and rethrows every action to the caller; renders nothing when
+ * [ShizukuReadiness.needsGuidance] is false.
  */
 @Composable
 fun ShizukuReadinessDialog(

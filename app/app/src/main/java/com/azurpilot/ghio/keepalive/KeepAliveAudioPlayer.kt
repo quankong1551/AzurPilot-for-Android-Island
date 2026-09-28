@@ -9,15 +9,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 
 /**
- * 后台 24 小时无音量音频播放器 / 24/7 background silent audio player
+ * 后台 24 小时无音量音频播放器
  *
  * 通过在底层 AudioFlinger 中保持一条活跃的无声音频流（AudioTrack MODE_STATIC 循环），
  * 让 Android 系统将本应用进程识别为正在进行媒体播放的前台活跃实体，从而防止进程被系统的
- * Low Memory Killer (LMK) 查杀，实现强效后台保活。
+ * Low Memory Killer (LMK) 查杀，实现强效后台保活。数据全 0 且音量为 0，用户无感知。
  *
- * Maintains an active silent audio stream in Android's AudioFlinger using AudioTrack in MODE_STATIC loop.
- * The system recognizes the app process as an active media playback entity, preventing termination by
- * the Low Memory Killer (LMK) and achieving robust background persistence without audible output or battery drain.
+ * 24/7 background silent audio player.
+ *
+ * Keeps an active silent audio stream (an AudioTrack looping in MODE_STATIC) alive in
+ * the underlying AudioFlinger, so Android recognizes the app process as an active media
+ * playback entity. That prevents termination by the Low Memory Killer (LMK) and delivers
+ * robust background persistence. The data is all zeros and the volume is 0, so the user
+ * hears nothing.
  */
 class KeepAliveAudioPlayer {
 
@@ -25,8 +29,21 @@ class KeepAliveAudioPlayer {
     private var audioTrack: AudioTrack? = null
 
     private val _isPlaying = MutableStateFlow(false)
+
+    /** 当前是否处于静音播放状态，供 UI 与自检读取 / Whether silent playback is active; read by the UI and the self-check. */
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    /**
+     * 启动静音循环播放；幂等，已在播时直接返回
+     *
+     * 任意线程可调，内部以 [lock] 串行化；初始化失败时回滚到已停止状态
+     *
+     * Starts the silent looping playback; idempotent, returns immediately when
+     * already playing.
+     *
+     * Callable from any thread, serialized on [lock]; on initialization failure it
+     * rolls back to a fully stopped state.
+     */
     fun start() {
         synchronized(lock) {
             if (audioTrack != null && _isPlaying.value) {
@@ -78,13 +95,23 @@ class KeepAliveAudioPlayer {
         }
     }
 
+    /**
+     * 停止并释放 AudioTrack；任意线程可调
+     *
+     * Stops and releases the AudioTrack; callable from any thread.
+     */
     fun stop() {
         synchronized(lock) {
             stopInternal()
         }
     }
 
-    /** 检查并在需要时恢复播放 / Check and revive playback if interrupted */
+    /**
+     * 自检播放状态：track 丢失或已停止播放时重启，由保活心跳周期性调用
+     *
+     * Self-checks the playback state and restarts when the track is gone or no
+     * longer playing; invoked periodically by the keep-alive heartbeat.
+     */
     fun ensurePlaying() {
         synchronized(lock) {
             val track = audioTrack
@@ -95,6 +122,7 @@ class KeepAliveAudioPlayer {
         }
     }
 
+    /** 停止并释放 track、复位状态；调用方必须已持有 [lock] / Stops and releases the track and resets state; callers must hold [lock]. */
     private fun stopInternal() {
         val track = audioTrack
         audioTrack = null

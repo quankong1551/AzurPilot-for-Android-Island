@@ -11,6 +11,12 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
+/**
+ * PRoot 运行时绑定：会话宿主、运行控制器、WebSocket 网关、偏好存储与仓库
+ *
+ * PRoot runtime bindings: the session host, run controller, WebSocket
+ * gateway, preference store, and repository.
+ */
 val prootModule = module {
     single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get()) }
     single { AzurPilotRunController(androidApplication(), get(named<AppCoroutineScope>()), get()) }

@@ -96,13 +96,6 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.core)
     implementation(libs.androidx.material.icons.extended)
-
-    // HyperOS 风格主题（Miuix）：色板灌进 M3 角色槽，组件树仍是 M3
-    implementation(libs.miuix.ui)
-    implementation(libs.miuix.squircle)
-    implementation(libs.miuix.icons)
-    implementation(libs.miuix.blur)
-    implementation(libs.miuix.nav)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore)
     implementation(libs.androidx.datastore.preferences)

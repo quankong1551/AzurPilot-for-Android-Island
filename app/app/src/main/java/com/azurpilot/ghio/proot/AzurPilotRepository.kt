@@ -27,6 +27,19 @@ import timber.log.Timber
  *
  * 与 [AzurPilotRunController] 的分工：那个走 `/android/…` 薄接口，管「起停进程 + 日志尾」，
  * 悬浮窗和主页控制面板要用；这里补上「总览 / 配置 / 统计 / 设置」这些真正的内容面。
+ *
+ * The single app-side home of the gateway's state.
+ *
+ * The WebUI frontend is "one WebSocket + one global store"; the same split is
+ * mirrored here: **subscriptions are issued from this one place only**
+ * (`events.subscribe` replaces wholesale — two subscribers would knock each
+ * other out), events are consumed here alone, and then split by topic into a
+ * set of StateFlows for the UI.
+ *
+ * Division of labor with [AzurPilotRunController]: that one goes through the
+ * `/android/…` thin API and manages "process start/stop + log tail" for the
+ * overlay and the home control panel; this one supplies the real content
+ * surfaces — overview / config / statistics / settings.
  */
 class AzurPilotRepository(
     private val scope: CoroutineScope,
@@ -34,64 +47,97 @@ class AzurPilotRepository(
     private val store: AzurPilotPreferenceStore,
 ) {
 
-    // ── 连接 ─────────────────────────────────────────────────────────────
-
     private val _connected = MutableStateFlow(false)
+
+    /** 网关长连接是否存活（自轮询同步） / Whether the gateway WebSocket is alive (synced by polling). */
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
-    /** 网关要求先登录（本机直连时为 false）；为真时界面出登录页 */
+    /**
+     * 网关要求先登录（本机直连时为 false）；为真时界面出登录页
+     *
+     * The gateway demands a login first (false for local direct connections);
+     * the UI shows a login page while true.
+     */
     private val _authRequired = MutableStateFlow(false)
     val authRequired: StateFlow<Boolean> = _authRequired.asStateFlow()
 
-    // ── 选择 ─────────────────────────────────────────────────────────────
-
+    /** 当前浏览的实例名；null 表示未选（此时只订与实例无关的主题） / The instance being browsed; null means none selected (only instance-independent topics are subscribed then). */
     private val _selectedInstance = MutableStateFlow(store.selectedInstance)
     val selectedInstance: StateFlow<String?> = _selectedInstance.asStateFlow()
 
-    // ── 骨架 ─────────────────────────────────────────────────────────────
-
     private val _schema = MutableStateFlow<AzurPilotSchema?>(null)
+
+    /** 界面骨架；null 表示还没拉到 / The UI skeleton; null until first fetched. */
     val schema: StateFlow<AzurPilotSchema?> = _schema.asStateFlow()
 
     private val _schemaError = MutableStateFlow<String?>(null)
+
+    /** 最近一次骨架拉取失败的文案 / The last skeleton fetch failure, as text. */
     val schemaError: StateFlow<String?> = _schemaError.asStateFlow()
 
+    /** schema 当前语言；语言没变时不重复拉取 / The schema's current language; no refetch until it changes. */
     private var schemaLanguage: String? = null
 
-    // ── 数据 ─────────────────────────────────────────────────────────────
-
     private val _instances = MutableStateFlow<List<AzurPilotInstance>>(emptyList())
+
+    /** 实例列表（`instances` 主题推送 + 首次 `instances.list`） / The instance list (`instances` topic push plus the first `instances.list`). */
     val instances: StateFlow<List<AzurPilotInstance>> = _instances.asStateFlow()
 
     private val _overview = MutableStateFlow<AzurPilotOverview?>(null)
+
+    /** 当前实例的总览快照 / The current instance's overview snapshot. */
     val overview: StateFlow<AzurPilotOverview?> = _overview.asStateFlow()
 
     private val _startup = MutableStateFlow<AzurPilotStartup?>(null)
+
+    /** 当前实例的开机自启设置 / The current instance's auto-start settings. */
     val startup: StateFlow<AzurPilotStartup?> = _startup.asStateFlow()
 
     private val _logs = MutableStateFlow<List<AzurPilotLogEntry>>(emptyList())
+
+    /** 日志板（增量推送 + 重连补拉，按 id 去重，最多 [LOG_LIMIT] 条） / The log panel (incremental pushes plus reconnect backfill, deduped by id, capped at [LOG_LIMIT]). */
     val logs: StateFlow<List<AzurPilotLogEntry>> = _logs.asStateFlow()
 
     private val _preview = MutableStateFlow<AzurPilotPreview?>(null)
+
+    /** 截图预览帧 / The screenshot preview frame. */
     val preview: StateFlow<AzurPilotPreview?> = _preview.asStateFlow()
 
     private val _deploy = MutableStateFlow<AzurPilotDeploySettings?>(null)
+
+    /** 部署设置页数据 / The deploy settings page data. */
     val deploySettings: StateFlow<AzurPilotDeploySettings?> = _deploy.asStateFlow()
 
     private val _updater = MutableStateFlow<AzurPilotUpdateStatus?>(null)
+
+    /** 运行时更新器状态 / The runtime updater status. */
     val updater: StateFlow<AzurPilotUpdateStatus?> = _updater.asStateFlow()
 
     private val _announcement = MutableStateFlow<AzurPilotAnnouncement?>(null)
+
+    /** 运行时公告（弹一次） / The runtime announcement (shown once). */
     val announcement: StateFlow<AzurPilotAnnouncement?> = _announcement.asStateFlow()
 
     private val _meowfficer = MutableStateFlow<AzurPilotMeowfficerReport?>(null)
+
+    /** 指挥喵评分报告 / The meowfficer scoring report. */
     val meowfficer: StateFlow<AzurPilotMeowfficerReport?> = _meowfficer.asStateFlow()
 
-    /** 统计数据有变（网关只在指纹变化时推）；界面收到就重取当前分类 */
+    /**
+     * 统计数据有变（网关只在指纹变化时推）；界面收到就重取当前分类
+     *
+     * Statistics data changed (the gateway pushes only when its fingerprint
+     * changes); the UI refetches the current category on receipt.
+     */
     private val _statisticsTick = MutableStateFlow(0L)
     val statisticsTick: StateFlow<Long> = _statisticsTick.asStateFlow()
 
-    /** 界面上的瞬时提示（运行/停止/保存失败等），一次性消费 */
+    /**
+     * 界面上的瞬时提示（运行/停止/保存失败等），一次性消费
+     *
+     * Transient toasts for the UI (run/stop/save failure and the like),
+     * consumed once.
+     */
     private val _messages = MutableStateFlow<String?>(null)
     val messages: StateFlow<String?> = _messages.asStateFlow()
 
@@ -104,6 +150,7 @@ class AzurPilotRepository(
     private val _schedulerBusy = MutableStateFlow(false)
     val schedulerBusy: StateFlow<Boolean> = _schedulerBusy.asStateFlow()
 
+    /** 配置编辑器：自动保存队列与本地在途值都在它里面 / The config editor: the autosave queue and local in-flight values live in it. */
     val configEditor = AzurPilotConfigEditor(scope, gateway)
 
     private var eventsJob: Job? = null
@@ -111,9 +158,20 @@ class AzurPilotRepository(
     private var updaterJob: Job? = null
     private val refreshMutex = Mutex()
 
-    /** 最近一次日志游标；`logs.get` 增量拉取与事件合并共用它 */
+    /**
+     * 最近一次日志游标；`logs.get` 增量拉取与事件合并共用它
+     *
+     * The last log cursor; shared by incremental `logs.get` backfill and event
+     * merging.
+     */
     private var logCursor = 0L
 
+    /**
+     * 启动事件消费与轮询；幂等，重复调用直接返回
+     *
+     * Starts event consumption and polling; idempotent, repeat calls return at
+     * once. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun start() {
         if (eventsJob == null) {
             eventsJob = scope.launch(AppDispatchers.IO) {
@@ -143,13 +201,18 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 订阅 ─────────────────────────────────────────────────────────────
-
     /**
      * 把订阅对齐到「当前实例 + 全部主题」
      *
      * 四个主题一起订：日志与截图的推送只在订阅期间产生，等到打开对应页面再订会先空一段时间；
      * 而它们本身是按需产出的，常订不产生额外负载。
+     *
+     * Aligns the subscription to "current instance + all topics".
+     *
+     * All four topics subscribe together: log and screenshot pushes exist only
+     * while subscribed, so subscribing after the page opens leaves it empty for
+     * a while first; they are produced on demand anyway, so a standing
+     * subscription costs nothing extra.
      */
     private suspend fun syncSubscription(force: Boolean = false) {
         if (!gateway.connected.value) return
@@ -175,6 +238,12 @@ class AzurPilotRepository(
      *
      * 界面上看不见时把 `preview` 去掉：截图帧是 base64 的大包，而它只在订阅期间才推——
      * 停在别的主页时还照收，纯属白耗流量与内存。
+     *
+     * Which topics should be subscribed.
+     *
+     * `preview` drops out while the UI cannot see it: a screenshot frame is a
+     * large base64 packet pushed only while subscribed — receiving it on some
+     * other page burns data and memory for nothing.
      */
     private fun wantedTopics(instance: String?): List<String> = when {
         instance == null -> listOf(TOPIC_INSTANCES)
@@ -182,9 +251,16 @@ class AzurPilotRepository(
         else -> TOPICS.filterNot { it == TOPIC_PREVIEW }
     }
 
+    /** 界面是否可见；离开时截图订阅会摘掉 / Whether the UI is visible; the screenshot subscription drops while away. */
     @Volatile
     private var foreground = true
 
+    /**
+     * 切换浏览的实例：清空所有实例相关数据并对齐订阅
+     *
+     * Switches the browsed instance: clears every instance-bound piece of data
+     * and realigns the subscription. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun selectInstance(name: String?) {
         if (_selectedInstance.value == name) return
         _selectedInstance.value = name
@@ -203,9 +279,12 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 骨架 ─────────────────────────────────────────────────────────────
-
-    /** 界面语言对应的 schema 语言；语言切换后下一次拉取自动换成新语言 */
+    /**
+     * 界面语言对应的 schema 语言；语言切换后下一次拉取自动换成新语言
+     *
+     * The schema language for the UI language; after a switch the next fetch
+     * picks up the new one automatically.
+     */
     private fun currentSchemaLanguage(): String = when (AppLocales.currentTag()?.lowercase()) {
         "en" -> "en-US"
         "ja" -> "ja-JP"
@@ -213,6 +292,12 @@ class AzurPilotRepository(
         else -> "zh-CN"
     }
 
+    /**
+     * 拉取界面骨架；同语言且已有缓存时跳过（除非 [force]）
+     *
+     * Fetches the UI skeleton; skipped when the language is unchanged and a
+     * copy is cached (unless [force]). IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun ensureSchema(force: Boolean = false) {
         val language = currentSchemaLanguage()
         if (!force && schemaLanguage == language && _schema.value != null) return
@@ -230,8 +315,7 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 事件 ─────────────────────────────────────────────────────────────
-
+    /** 按主题分发事件；实例相关主题先过滤，别的数据直接落对应流 / Dispatches events by topic; instance-bound topics filter first, the rest land directly in their flows. */
     private fun onEvent(event: JSONObject) {
         when (event.optString("topic")) {
             "instances" -> {
@@ -269,6 +353,11 @@ class AzurPilotRepository(
         }.filterNotNull()
     }
 
+    /**
+     * 落一份总览；别的实例的总览直接丢弃
+     *
+     * Applies one overview; overviews of other instances are dropped outright.
+     */
     private fun applyOverview(data: JSONObject?) {
         if (data == null) return
         val instance = data.optString("instance")
@@ -306,6 +395,12 @@ class AzurPilotRepository(
         )
     }
 
+    /**
+     * 落一批日志：`reset` 整体替换，否则按 id 增量去重合并
+     *
+     * Applies one batch of logs: `reset` replaces wholesale, otherwise the
+     * batch merges incrementally, deduped by id.
+     */
     private fun applyLogs(data: JSONObject?) {
         if (data == null) return
         val instance = data.optString("instance")
@@ -342,6 +437,12 @@ class AzurPilotRepository(
             )
         }.filterNotNull()
 
+    /**
+     * 落一帧截图；base64 解码在 Default 调度器上做，别把事件线程卡住
+     *
+     * Applies one screenshot frame; the base64 decode runs on the Default
+     * dispatcher so the event thread never stalls.
+     */
     private fun applyPreview(data: JSONObject?) {
         if (data == null) return
         val instance = data.optString("instance")
@@ -365,10 +466,12 @@ class AzurPilotRepository(
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }.getOrNull()
 
+    /** 消费掉当前瞬时提示 / Dismisses the current transient message. */
     fun dismissMessage() {
         _messages.value = null
     }
 
+    /** 塞一条瞬时提示给界面 / Posts one transient message to the UI. */
     private fun report(text: String) {
         _messages.value = text
     }
@@ -381,8 +484,12 @@ class AzurPilotRepository(
         if (reply is AzurPilotGateway.Reply.Ok) applyLogs(reply.obj)
     }
 
-    // ── 轮询 ─────────────────────────────────────────────────────────────
-
+    /**
+     * 一轮周期刷新：骨架、更新器、部署设置、实例列表、总览与自启设置逐个补齐
+     *
+     * One polling pass: skeleton, updater, deploy settings, instance list,
+     * overview and auto-start settings each topped up in turn.
+     */
     private suspend fun refreshLocked() {
         if (!gateway.connected.value) return
         ensureSchema()
@@ -417,9 +524,12 @@ class AzurPilotRepository(
             }
     }
 
-    // ── 运行控制 ─────────────────────────────────────────────────────────
-
-    /** 启动/停止调度器；成功与否都用 [messages] 报出来 */
+    /**
+     * 启动/停止调度器；成功与否都用 [messages] 报出来
+     *
+     * Starts or stops the scheduler; the outcome is reported via [messages]
+     * either way. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun setSchedulerRunning(running: Boolean) {
         val instance = _selectedInstance.value ?: return
         if (_schedulerBusy.value) return
@@ -437,6 +547,7 @@ class AzurPilotRepository(
         }
     }
 
+    /** 单跑一个任务；结果走 [overview] 与 [messages] / Runs one task on its own; the outcome lands in [overview] and [messages]. */
     fun runTask(task: String) {
         val instance = _selectedInstance.value ?: return
         scope.launch(AppDispatchers.IO) {
@@ -449,6 +560,11 @@ class AzurPilotRepository(
         }
     }
 
+    /**
+     * 改开机自启设置；传 null 的字段不动
+     *
+     * Updates the auto-start settings; fields passed as null stay untouched.
+     */
     fun setStartup(enabled: Boolean? = null, remember: Boolean? = null) {
         val instance = _selectedInstance.value ?: return
         scope.launch(AppDispatchers.IO) {
@@ -464,8 +580,13 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 实例管理 ─────────────────────────────────────────────────────────
-
+    /**
+     * 建实例：默认空配置，可指定模板 source 或导入文件；成功后自动切到新实例
+     *
+     * Creates an instance: an empty config by default, with an optional
+     * template `source` or an import file; switches to the new instance on
+     * success. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun createInstance(
         name: String,
         source: String? = null,
@@ -489,7 +610,12 @@ class AzurPilotRepository(
         }
     }
 
-    /** 删除要带 revision：网关拿它挡住「读到旧快照后删掉别人刚改的配置」 */
+    /**
+     * 删除要带 revision：网关拿它挡住「读到旧快照后删掉别人刚改的配置」
+     *
+     * Deletion must carry the revision: the gateway uses it to block "delete
+     * the config someone else just changed, based on a stale snapshot".
+     */
     fun deleteInstance(name: String) {
         scope.launch(AppDispatchers.IO) {
             val config = gateway.call("config.get", JSONObject().put("instance", name))
@@ -512,6 +638,12 @@ class AzurPilotRepository(
         }
     }
 
+    /**
+     * 列出可导入的配置文件（网关回的是裸数组）
+     *
+     * Lists the importable config files (the gateway answers with a bare
+     * array). IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun importableFiles(): List<AzurPilotImportable> =
         when (val reply = gateway.call("instances.importable")) {
             // 同样是裸数组
@@ -525,6 +657,7 @@ class AzurPilotRepository(
             else -> emptyList()
         }
 
+    /** 导入一份配置文件内容；成功后回调拿到实例名 / Imports one config file's content; the callback receives the instance name on success. */
     fun importConfig(name: String, content: String, onImported: (String) -> Unit = {}) {
         scope.launch(AppDispatchers.IO) {
             val params = JSONObject().put("name", name).put("content", content)
@@ -536,13 +669,22 @@ class AzurPilotRepository(
         }
     }
 
-    /** 导出用：拿一份完整实例列表（含 revision 之外的全部内容） */
+    /**
+     * 导出用：拿一份完整实例配置（含 revision 之外的全部内容）
+     *
+     * For export: fetches one instance's full config (everything beyond the
+     * revision). IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun exportConfig(instance: String): AzurPilotConfig? =
         (gateway.call("config.get", JSONObject().put("instance", instance)) as? AzurPilotGateway.Reply.Ok)
             ?.obj?.let(::parseConfig)
 
-    // ── 配置 ─────────────────────────────────────────────────────────────
-
+    /**
+     * 拉一份实例配置；不触发界面状态，编辑器与导出共用
+     *
+     * Fetches one instance's config; touches no UI state, shared by the editor
+     * and export. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun loadConfig(instance: String): AzurPilotConfig? =
         (gateway.call("config.get", JSONObject().put("instance", instance)) as? AzurPilotGateway.Reply.Ok)
             ?.obj?.let(::parseConfig)
@@ -553,7 +695,12 @@ class AzurPilotRepository(
         values = result.optJSONObject("values")?.toConfigValues().orEmpty(),
     )
 
-    /** 商店高级模式的脚本校验；返回诊断而不是抛错，编辑器要把行列标出来 */
+    /**
+     * 商店高级模式的脚本校验；返回诊断而不是抛错，编辑器要把行列标出来
+     *
+     * Validates the shop high-level strategy script; diagnostics are returned
+     * rather than thrown, since the editor must mark rows and columns.
+     */
     suspend fun validateShopStrategy(instance: String, task: String, script: String): AzurPilotShopValidation? {
         val params = JSONObject().put("instance", instance).put("task", task).put("script", script)
         val reply = gateway.call("shop_strategy.validate", params)
@@ -572,8 +719,12 @@ class AzurPilotRepository(
         return AzurPilotShopValidation(reply.obj.optBoolean("valid"), diagnostics)
     }
 
-    // ── 统计 ─────────────────────────────────────────────────────────────
-
+    /**
+     * 拉整份统计报表；未选实例时以 NOT_FOUND 失败
+     *
+     * Fetches the full statistics report; fails with NOT_FOUND when no
+     * instance is selected. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun statisticsReport(query: AzurPilotStatsQuery): Result<AzurPilotStatisticsReport> {
         val instance = _selectedInstance.value
             ?: return Result.failure(AzurPilotException("NOT_FOUND", "未选择实例"))
@@ -661,6 +812,11 @@ class AzurPilotRepository(
         )
     }
 
+    /**
+     * 拉单资源的历史曲线
+     *
+     * Fetches one resource's historical curve. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun statisticsResources(resource: String, days: Int): Result<AzurPilotStatistics> {
         val instance = _selectedInstance.value
             ?: return Result.failure(AzurPilotException("NOT_FOUND", "未选择实例"))
@@ -687,6 +843,12 @@ class AzurPilotRepository(
         )
     }
 
+    /**
+     * 让网关重扫战利品数据；完成后 [statisticsTick] 自增驱动界面重取
+     *
+     * Asks the gateway to rescan loot data; [statisticsTick] bumps on
+     * completion to drive a UI refetch.
+     */
     fun refreshLoot() {
         val instance = _selectedInstance.value ?: return
         scope.launch(AppDispatchers.IO) {
@@ -698,8 +860,12 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 部署设置 ─────────────────────────────────────────────────────────
-
+    /**
+     * 拉整份部署设置；结果同时落 [deploySettings]
+     *
+     * Fetches the whole deploy settings; the result also lands in
+     * [deploySettings]. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun loadDeploySettings(): AzurPilotDeploySettings? {
         val reply = gateway.call("settings.get")
         if (reply !is AzurPilotGateway.Reply.Ok) return null
@@ -742,7 +908,15 @@ class AzurPilotRepository(
         ).also { _deploy.value = it }
     }
 
-    /** 保存一组部署设置；空密码表示「不改」，由网关侧丢弃 */
+    /**
+     * 保存一组部署设置；空密码表示「不改」，由网关侧丢弃
+     *
+     * Saves one batch of deploy settings; an empty password means "leave it
+     * alone" and is dropped gateway-side.
+     *
+     * @param onDone (是否成功，失败文案；Offline 时文案为 null) / (success flag,
+     *   failure text; text is null when offline)
+     */
     fun patchDeploySettings(values: Map<String, ApValue>, onDone: (Boolean, String?) -> Unit = { _, _ -> }) {
         scope.launch(AppDispatchers.IO) {
             val payload = JSONObject()
@@ -764,9 +938,13 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 更新器 ───────────────────────────────────────────────────────────
-
-    /** 更新器是全局的，跟实例无关；页面在自己可见时起停这个轮询 */
+    /**
+     * 起更新器轮询；幂等，页面在自己可见时起它
+     *
+     * Starts updater polling; idempotent. The updater is global, instance
+     * independent — pages start and stop it as they become visible. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     fun startUpdaterPolling() {
         if (updaterJob?.isActive == true) return
         updaterJob = scope.launch(AppDispatchers.IO) {
@@ -777,11 +955,18 @@ class AzurPilotRepository(
         }
     }
 
+    /** 停更新器轮询 / Stops updater polling. */
     fun stopUpdaterPolling() {
         updaterJob?.cancel()
         updaterJob = null
     }
 
+    /**
+     * 拉一次更新器状态并落 [updater]
+     *
+     * Fetches the updater status once and lands it in [updater]. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     suspend fun refreshUpdater() {
         val reply = gateway.call("updater.status") as? AzurPilotGateway.Reply.Ok ?: return
         val data = reply.obj
@@ -801,6 +986,11 @@ class AzurPilotRepository(
         )
     }
 
+    /**
+     * 拉一页提交历史
+     *
+     * Fetches one page of commit history. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     suspend fun updaterCommits(offset: Int, limit: Int): AzurPilotCommitHistory? {
         val params = JSONObject().put("offset", offset).put("limit", limit)
         val reply = gateway.call("updater.commits", params)
@@ -825,6 +1015,12 @@ class AzurPilotRepository(
         )
     }
 
+    /**
+     * 发一个更新器动作（apply/cancel/check 等，透传给 `updater.<action>`）
+     *
+     * Sends one updater action (apply/cancel/check etc., passed through as
+     * `updater.<action>`).
+     */
     fun updaterAction(action: String) {
         scope.launch(AppDispatchers.IO) {
             when (val reply = gateway.call("updater.$action")) {
@@ -835,8 +1031,12 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 公告 ─────────────────────────────────────────────────────────────
-
+    /**
+     * 拉运行时公告；网关侧有缓存，[force] 才绕过
+     *
+     * Fetches the runtime announcement; gateway-side caching applies unless
+     * [force].
+     */
     fun refreshAnnouncement(force: Boolean = false) {
         scope.launch(AppDispatchers.IO) {
             val reply = gateway.call("announcement.get", JSONObject().put("force", force))
@@ -853,8 +1053,13 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 指挥喵评分 ───────────────────────────────────────────────────────
-
+    /**
+     * 拉指挥喵评分报告并落 [meowfficer]；未选实例时以 NOT_FOUND 失败
+     *
+     * Fetches the meowfficer scoring report and lands it in [meowfficer];
+     * fails with NOT_FOUND when no instance is selected. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     suspend fun loadMeowfficerReport(limit: Int = 100): Result<AzurPilotMeowfficerReport> {
         val instance = _selectedInstance.value ?: return Result.failure(AzurPilotException("NOT_FOUND", "未选择实例"))
         val params = JSONObject().put("instance", instance).put("limit", limit)
@@ -926,6 +1131,7 @@ class AzurPilotRepository(
         )
     }
 
+    /** 清掉评分报告；本地状态与网关侧一起清 / Clears the scoring report, both locally and gateway-side. */
     fun clearMeowfficerReport() {
         val instance = _selectedInstance.value ?: return
         scope.launch(AppDispatchers.IO) {
@@ -940,9 +1146,12 @@ class AzurPilotRepository(
         }
     }
 
-    // ── 屏保/后台让位 ────────────────────────────────────────────────────
-
-    /** 界面可见性变化：离开时把截图订阅摘掉，回来再补上 */
+    /**
+     * 界面可见性变化：离开时把截图订阅摘掉，回来再补上
+     *
+     * UI visibility changed: the screenshot subscription drops on leave and is
+     * restored on return.
+     */
     fun setForeground(value: Boolean) {
         if (foreground == value) return
         foreground = value
@@ -954,16 +1163,28 @@ class AzurPilotRepository(
     }
 
     private companion object {
+        /** 主轮询周期 / The main polling period. */
         const val POLL_MS = 5_000L
+
+        /** 更新器轮询周期 / The updater polling period. */
         const val UPDATER_POLL_MS = 3_000L
+
+        /** 日志板内存上限（条） / The log panel's in-memory cap, in entries. */
         const val LOG_LIMIT = 1_000
         const val TOPIC_INSTANCES = "instances"
         const val TOPIC_PREVIEW = "preview"
+
+        /** 常订主题；`preview` 可按可见性摘除 / The standing topics; `preview` may drop by visibility. */
         val TOPICS = listOf("instances", "overview", "logs", TOPIC_PREVIEW)
     }
 }
 
-/** 少量要跨重启留存的界面选择（选中实例） */
+/**
+ * 少量要跨重启留存的界面选择（选中实例）
+ *
+ * A handful of UI selections kept across restarts (the selected instance).
+ */
 interface AzurPilotPreferenceStore {
+    /** 上次选中的实例名 / The last selected instance name. */
     var selectedInstance: String?
 }

@@ -42,6 +42,29 @@ import timber.log.Timber
  * 只提供 [start] 不提供外部 stop：`startForegroundService` 之后若 `stopService` 抢在
  * onCreate 之前到达，系统会因 startForeground 未调用直接杀进程。终态退出由本服务自己
  * 观察两份状态完成
+ *
+ * Pins the app process to the foreground while the virtual display lives and
+ * while the proot session (the bundled AzurPilot environment) is active.
+ *
+ * Not about showing status — about staying alive: when the app process dies,
+ * the privileged process's watchdog kills itself and releases the display, and
+ * the long-running proot session loses its parent as well (the wrapper exits
+ * on a broken stdin pipe, but nobody holds the WebView/control surfaces
+ * anymore) — the user sees "the environment vanished halfway through". In
+ * practice MIUI's ProcessManager force-stops empty processes at Adj=905
+ * outright (`SwipeUpClean: force-stop <pkg> Adj=905`); a foreground service is
+ * the only layer that holds.
+ *
+ * The observed sources are [HostState.snapshot] and [ProotHost.state]: pinned
+ * while the display is up (a valid displayId) or the proot session is active
+ * (preparing/updating/starting/running), self-retiring when both are gone.
+ * Bridge reachability only feeds the text, never the exit criterion — a brief
+ * bridge flap must not tear down the keep-alive.
+ *
+ * Only [start] exists, no external stop: if `stopService` arrives before
+ * onCreate after a `startForegroundService`, the system kills the process for
+ * the un-called startForeground. The terminal exit is handled by this service
+ * watching the two states itself.
  */
 class RunForegroundService : Service() {
 
@@ -53,6 +76,12 @@ class RunForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * 先 startForeground 再判终态，顺序不能反；终态即自退，否则起观察协程
+     *
+     * Calls startForeground before the terminal check — the order must not
+     * flip; retires at once on the terminal state, otherwise starts observing.
+     */
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
@@ -66,6 +95,12 @@ class RunForegroundService : Service() {
         observe()
     }
 
+    /**
+     * 系统可能只走 onStartCommand（不经 onCreate 的重启路径）：FGS 提升要在这里再保一次
+     *
+     * The system may deliver only onStartCommand (the recreate path without
+     * onCreate): the FGS promotion is re-secured here.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 系统可能只走 onStartCommand；FGS 提升要在这里再保一次
         val snapshot = hostState.snapshot.value
@@ -85,11 +120,13 @@ class RunForegroundService : Service() {
         super.onDestroy()
     }
 
+    /** 幂等起观察协程 / Starts the observer coroutine idempotently. */
     private fun observe() {
         if (observeJob?.isActive == true) return
         observeJob = serviceScope.launch { observeSnapshot() }
     }
 
+    /** 合流两份状态：终态即退，否则刷新通知文案 / Combines the two states: exits on the terminal one, else refreshes the notification text. */
     private suspend fun observeSnapshot() {
         combine(hostState.snapshot, prootHost.state, ::Pair).collectLatest { (snapshot, proot) ->
             if (isTerminal(snapshot, proot)) {
@@ -100,15 +137,27 @@ class RunForegroundService : Service() {
         }
     }
 
-    /** 终态：虚拟屏撤了且 proot 会话也不在活跃阶段，保活没有存在意义 */
+    /**
+     * 终态：虚拟屏撤了且 proot 会话也不在活跃阶段，保活没有存在意义
+     *
+     * Terminal: the virtual display is gone and the proot session is in no
+     * active phase — the keep-alive has nothing left to do.
+     */
     private fun isTerminal(snapshot: HostSnapshot, proot: ProotSnapshot): Boolean =
         snapshot.vdDisplayId == DefaultDisplayConfig.DISPLAY_NONE && !proot.sessionActive
 
+    /** 撤前台并自停 / Drops the foreground and stops itself. */
     private fun stopNow() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
+    /**
+     * 建通知渠道（幂等）；重要性建成就改不了，沿用 run_execution
+     *
+     * Creates the notification channel (idempotent); a channel's importance is
+     * immutable once set, so run_execution is reused.
+     */
     private fun ensureChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -123,6 +172,12 @@ class RunForegroundService : Service() {
         notificationManager.createNotificationChannel(channel)
     }
 
+    /**
+     * 按系统版本带 SPECIAL_USE 类型起前台（API 34+ 必须指定类型）
+     *
+     * Promotes to foreground with the SPECIAL_USE type on API 34+, where a
+     * type is mandatory.
+     */
     private fun startAsForeground(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -131,6 +186,12 @@ class RunForegroundService : Service() {
         }
     }
 
+    /**
+     * 组通知文案，两级：屏在→按桥可达性；只剩 proot 会话→对应文案
+     *
+     * Builds the notification text, two levels: display present → by bridge
+     * reachability; proot session only → its own text.
+     */
     private fun buildNotification(snapshot: HostSnapshot, proot: ProotSnapshot): Notification {
         val content = if (snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
             val contentRes = if (snapshot.bridgeReachable) {
@@ -165,6 +226,7 @@ class RunForegroundService : Service() {
     private val notificationManager: NotificationManager
         get() = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
+    /** 回主界面的点击意图 / The tap intent back into MainActivity. */
     private fun contentIntent(): PendingIntent {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -178,9 +240,16 @@ class RunForegroundService : Service() {
     }
 
     companion object {
+        /** 渠道 id；重要性建成就改不了 / The channel id; its importance is immutable once created. */
         private const val CHANNEL_ID = "run_execution"
         private const val NOTIFICATION_ID = 1001
 
+        /**
+         * 拉起保活服务；失败只记日志（系统限制启动时不至于崩调用方）
+         *
+         * Spawns the keep-alive service; failures only log, so a system-side
+         * restriction never crashes the caller.
+         */
         fun start(context: Context) {
             runCatching {
                 context.startForegroundService(Intent(context, RunForegroundService::class.java))
@@ -189,7 +258,12 @@ class RunForegroundService : Service() {
     }
 }
 
-/** 16 以下没有实时动态开关，请求会被忽略 */
+/**
+ * 16 以下没有实时动态开关，请求会被忽略
+ *
+ * Below API 36 there is no live promoted-ongoing toggle and the request is
+ * simply ignored.
+ */
 private fun NotificationManager.canRequestPromotedOngoing(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return true
     return canPostPromotedNotifications()

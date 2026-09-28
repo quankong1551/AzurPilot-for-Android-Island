@@ -39,6 +39,7 @@ import com.azurpilot.ghio.ui.azurpilot.ApStatusPill
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
 
+/** 提交列表的分页大小 / The commit-list page size. */
 private const val COMMIT_PAGE = 50
 
 /**
@@ -46,6 +47,15 @@ private const val COMMIT_PAGE = 50
  *
  * Android 版的运行时**由宿主整包更新**（`managedByAndroid`），网关侧的 git 热更是有意关闭的，
  * 所以这里在那种情况下要把动作藏起来并说清原因——留一个按不动的按钮比没有按钮更糟。
+ *
+ * The runtime-updater page.
+ *
+ * On the Android build the runtime is **updated wholesale by the host**
+ * (`managedByAndroid`) and the gateway-side git hot-update is deliberately
+ * disabled, so in that case the actions are hidden with the reason spelled out
+ * — a button that does nothing is worse than no button.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun UpdaterPage(repository: AzurPilotRepository) {
@@ -171,6 +181,7 @@ fun UpdaterPage(repository: AzurPilotRepository) {
     }
 }
 
+/** 单条提交：短 SHA + 首行信息 + 作者与日期 / One commit: short SHA + first message line + author and date. */
 @Composable
 private fun CommitRow(commit: AzurPilotCommit) {
     Column(

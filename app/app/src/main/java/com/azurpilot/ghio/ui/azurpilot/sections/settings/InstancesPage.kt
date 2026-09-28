@@ -59,6 +59,15 @@ import org.json.JSONObject
  *
  * 删除走「先读 revision 再删」——网关拿它挡住「读到旧快照后删掉别人刚改的配置」，
  * 所以这里必须先取一次再带上去，不能只传名字。
+ *
+ * The instance-management page: create, delete, export, import.
+ *
+ * Deletion goes "read the revision first, then delete" — the gateway uses it
+ * to block "read a stale snapshot, then clobber a config someone else just
+ * changed", so the revision must be fetched and attached rather than passing
+ * only the name.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun InstancesPage(repository: AzurPilotRepository) {
@@ -201,7 +210,18 @@ fun InstancesPage(repository: AzurPilotRepository) {
     }
 }
 
-/** 建档：可以复制一个已有实例，也可以从模板起 */
+/**
+ * 建档：可以复制一个已有实例，也可以从模板起
+ *
+ * The create-instance card: copy an existing instance or start from the
+ * template.
+ *
+ * @param modifier 应用于卡片的修饰符 / the modifier applied to the card
+ * @param sources 可复制的已有实例名 / the existing instance names to copy from
+ * @param onCreate 确认创建：实例名 + 复制源（null 表示模板） / confirms creation:
+ *   the instance name plus the copy source (null for the template)
+ * @param onCancel 取消建档 / cancels creation
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CreateInstanceCard(
@@ -266,6 +286,11 @@ private fun CreateInstanceCard(
     }
 }
 
-/** 整份配置 → 带缩进的 JSON 文本，导出用 */
+/**
+ * 整份配置 → 带缩进的 JSON 文本，导出用；包装失败时回退成 `"{}"`
+ *
+ * A whole config → indented JSON text for export; falls back to `"{}"` when
+ * wrapping fails.
+ */
 private fun com.azurpilot.ghio.proot.ApConfigValues.toJsonString(): String =
     runCatching { (JSONObject.wrap(this) as? JSONObject)?.toString(2) }.getOrNull() ?: "{}"

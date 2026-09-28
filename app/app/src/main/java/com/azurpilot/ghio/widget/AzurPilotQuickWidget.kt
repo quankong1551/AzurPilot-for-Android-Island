@@ -33,13 +33,25 @@ import com.azurpilot.ghio.MainActivity
 import com.azurpilot.ghio.R
 
 /**
- * 2x1 极简快捷开关小组件 / 2x1 Minimal Quick Switch AppWidget (MD3)
+ * 2x1 极简快捷开关小组件
  *
  * 紧凑型胶囊设计，显示状态与配置，点击右侧按钮直接一键启停。
- * Compact MD3 pill design displaying state and config, with a quick toggle action.
+ *
+ * 与 4x2 面板同源的 MIUI 12.5 约束同样适用：圆角与着色全靠 shape drawable，
+ * 不用 `?attr` 矢量着色，也不用 cornerRadius 修饰符
+ *
+ * The 2x1 minimal quick-switch AppWidget.
+ *
+ * A compact MD3 pill displaying state and config, with a quick toggle action
+ * on the right-side button.
+ *
+ * The same MIUI 12.5 constraints as the 4x2 panel apply: corners and tints
+ * all come from shape drawables — no `?attr` vector tints, no cornerRadius
+ * modifier.
  */
 class AzurPilotQuickWidget : GlanceAppWidget() {
 
+    /** 组装并发布 RemoteViews 内容；状态经 [AzurPilotWidgetUpdater.currentState] 同步读取 / Assembles and publishes the RemoteViews content; the state is read synchronously via [AzurPilotWidgetUpdater.currentState]. */
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
             GlanceTheme {
@@ -80,7 +92,6 @@ class AzurPilotQuickWidget : GlanceAppWidget() {
                         modifier = GlanceModifier.fillMaxSize(),
                         verticalAlignment = Alignment.Vertical.CenterVertically
                     ) {
-                        // 左侧：App 图标 + 状态与配置说明
                         Image(
                             provider = ImageProvider(R.mipmap.ic_launcher),
                             contentDescription = null,
@@ -143,6 +154,9 @@ class AzurPilotQuickWidget : GlanceAppWidget() {
 
 /**
  * 接收器，连接系统 AppWidget 框架与 Glance 极简视图
+ *
+ * The receiver bridging the system AppWidget framework and the minimal Glance
+ * view.
  */
 class AzurPilotQuickWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = AzurPilotQuickWidget()

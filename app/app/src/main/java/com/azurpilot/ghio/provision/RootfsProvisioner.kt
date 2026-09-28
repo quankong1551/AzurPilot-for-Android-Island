@@ -28,27 +28,57 @@ import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
-/** 首启 rootfs 部署状态机 */
+/**
+ * 首启 rootfs 部署状态机
+ *
+ * The first-boot rootfs deployment state machine.
+ */
 sealed interface ProvisionState {
-    /** 刚启动，正在比对内置版本与已装版本 */
+    /**
+     * 刚启动，正在比对内置版本与已装版本
+     *
+     * Just started; comparing the bundled version against the installed one.
+     */
     data object Checking : ProvisionState
 
-    /** 未内置 rootfs.tar.xz（或架构不符），且 Release 清单也没有可部署的 Runtime */
+    /**
+     * 未内置 rootfs.tar.xz（或架构不符），且 Release 清单也没有可部署的 Runtime
+     *
+     * No bundled rootfs.tar.xz (or arch mismatch), and the release manifest
+     * offers no deployable Runtime either.
+     */
     data object NotBundled : ProvisionState
 
-    /** 磁盘余量不足（roadmap 硬校验：≥2GB） */
+    /**
+     * 磁盘余量不足（roadmap 硬校验：≥2GB）
+     *
+     * Not enough free disk (the roadmap's hard check: at least 2 GB).
+     */
     data class LowDisk(val freeBytes: Long) : ProvisionState
 
-    /** 解压中；进度按压缩字节读数 / 资产总长（流式解压拿不到的解压后总量不用） */
+    /**
+     * 解压中；进度按压缩字节读数 / 资产总长（流式解压拿不到的解压后总量不用）
+     *
+     * Extracting; progress reads compressed bytes / archive size (the
+     * uncompressed total is unavailable to streaming extraction and unused).
+     */
     data class Extracting(val doneBytes: Long, val totalBytes: Long) : ProvisionState
 
+    /** 下载中；进度按已下字节 / 总长 / Downloading; progress reads bytes done / total size. */
     data class Downloading(val doneBytes: Long, val totalBytes: Long) : ProvisionState
 
+    /** Runtime 在位可用 / The Runtime is in place and usable. */
     data object Ready : ProvisionState
 
+    /** 部署失败，[reason] 人可读 / Deployment failed; [reason] is human readable. */
     data class Failed(val reason: String) : ProvisionState
 }
 
+/**
+ * 运行时更新检查的界面态
+ *
+ * UI state of the runtime update check.
+ */
 data class RuntimeUpdateCheck(
     val checking: Boolean = false,
     val checked: Boolean = false,
@@ -106,7 +136,12 @@ class RootfsProvisioner(
     private val _updateCheck = MutableStateFlow(RuntimeUpdateCheck())
     val updateCheck: StateFlow<RuntimeUpdateCheck> = _updateCheck.asStateFlow()
 
-    /** 只查询 Latest，不下载或替换运行时。 */
+    /**
+     * 只查询 Latest，不下载或替换运行时。
+     *
+     * Queries Latest only; never downloads or replaces the runtime. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     fun checkForUpdates() {
         if (_updateCheck.value.checking) return
         _updateCheck.value = RuntimeUpdateCheck(checking = true)
@@ -122,12 +157,25 @@ class RootfsProvisioner(
         }
     }
 
-    /** 当前生效的镜像前缀；「换源」判断以 (镜像, 自定义前缀) 二元组整体比较 */
+    /**
+     * 当前生效的镜像前缀；「换源」判断以 (镜像, 自定义前缀) 二元组整体比较
+     *
+     * The mirror prefix in effect; "source switched" compares the
+     * (mirror, custom prefix) pair as a whole.
+     */
     private fun mirrorPrefix() = ReleaseUrls.mirrorPrefix(settings.githubMirror.value, settings.githubMirrorCustom.value)
 
+    /** 前缀与 [prefix] 不同即视为换了源 / True when the prefix differs from [prefix] — the source switched. */
     private fun sourceSwitched(prefix: String) = mirrorPrefix() != prefix
 
-    /** Latest 清单；镜像前缀与缓存绕过集中在这里。 */
+    /**
+     * Latest 清单；镜像前缀与缓存绕过集中在这里。
+     *
+     * Fetches the Latest manifest; mirror prefix and cache busting live here. IO
+     * 调度器上执行 / Runs on the IO dispatcher.
+     *
+     * @throws IOException 非 200 响应 / on a non-200 response
+     */
     private fun fetchIndex(): JSONObject {
         val indexUrl = ReleaseUrls.selected(ReleaseUrls.INDEX, mirrorPrefix())
         val connection = URL("$indexUrl?t=${System.currentTimeMillis()}").openConnection() as HttpURLConnection
@@ -142,12 +190,27 @@ class RootfsProvisioner(
         }
     }
 
+    /**
+     * Release 清单里的一条 Runtime 记录
+     *
+     * One Runtime entry in the release manifest.
+     */
     private data class ReleaseRuntime(val version: String, val url: String, val sha256: String, val size: Long)
 
     /**
      * 按 ABI 解析 Release 清单。新式清单是 `runtimes: { <abi>: {version,url,sha256,size} }`；
      * 旧式扁平字段（rootfsVersion 等）描述的一直是 arm64 包，仅对 arm64 生效。
      * 该架构没有可用 Runtime 时返回 null。
+     *
+     * Resolves the release manifest per ABI. The modern manifest is
+     * `runtimes: { <abi>: {version,url,sha256,size} }`; the legacy flat fields
+     * (rootfsVersion etc.) have always described the arm64 package and apply to
+     * arm64 only.
+     *
+     * @return 该架构的 Runtime 记录；不可用为 null / the Runtime record for the
+     *   ABI, or null when none is available
+     * @throws IllegalArgumentException 清单字段缺失或非法 / when a manifest
+     *   field is missing or invalid
      */
     private fun parseRuntime(info: JSONObject, abi: String): ReleaseRuntime? {
         info.optJSONObject("runtimes")?.let { runtimes ->
@@ -174,7 +237,14 @@ class RootfsProvisioner(
         return ReleaseRuntime(version, url, sha, size)
     }
 
-    /** 用户确认后调用；AppRoot 在结果出来前不会启动 proot。 */
+    /**
+     * 用户确认后调用；AppRoot 在结果出来前不会启动 proot。
+     *
+     * Called after the user confirms; AppRoot will not start proot before the
+     * outcome is in. 在跑则忽略；失败置 error 而非 Failed 态 / Ignored while a
+     * run is in flight; failures set the check error rather than the Failed
+     * state. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun applyUpdate() {
         if (!running.compareAndSet(false, true)) return
         _state.value = ProvisionState.Checking
@@ -193,25 +263,44 @@ class RootfsProvisioner(
         }
     }
 
+    /** 部署/更新流水线的互斥位 / The mutex flag around the provision/update pipeline. */
     private val running = AtomicBoolean(false)
 
     private val rootDir: File get() = File(app.filesDir, "rootfs")
     private val tmpDir: File get() = File(app.filesDir, "rootfs.tmp")
+
+    /** 已装版本标记文件 / The installed-version marker file. */
     private val markerFile: File get() = File(rootDir, MARKER_NAME)
 
+    /**
+     * 启动首次部署流水线；幂等，在跑时忽略
+     *
+     * Starts the first-deploy pipeline; idempotent, ignored while running.
+     */
     fun start() {
         if (running.compareAndSet(false, true)) {
             scope.launch { run() }
         }
     }
 
-    /** 失败/低磁盘/版本过期后手动重跑 */
+    /** 失败/低磁盘/版本过期后手动重跑 / Manual rerun after a failure, low disk or a stale version. */
     fun retry() = start()
 
-    /** 已装版本（marker 内容），设置页/诊断展示用 */
+    /**
+     * 已装版本（marker 内容），设置页/诊断展示用
+     *
+     * The installed version (marker content), for the settings page and
+     * diagnostics.
+     */
     fun installedVersion(): String? =
         runCatching { markerFile.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
 
+    /**
+     * 首启流水线主体：恢复上次中断的部署、按需解压、最后查更新
+     *
+     * The first-boot pipeline body: restore an interrupted deployment, extract
+     * when needed, then check for updates. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     private suspend fun run() = withContext(Dispatchers.IO) {
         _state.value = ProvisionState.Checking
         try {
@@ -245,6 +334,12 @@ class RootfsProvisioner(
         }
     }
 
+    /**
+     * 已装 rootfs 是否可用：架构匹配、marker 与清单版本一致、python 在位
+     *
+     * Whether the installed rootfs is usable: arch matches, the marker matches
+     * the manifest version, python is present.
+     */
     private fun isInstalled(): Boolean {
         val deviceAbi = RuntimeArch.deviceAbi() ?: return false
         val manifest = readManifest { it } ?: return false
@@ -257,6 +352,11 @@ class RootfsProvisioner(
                 }
     }
 
+    /**
+     * 内置包的版本与架构
+     *
+     * Version and arch of the bundled package.
+     */
     private data class BundledRuntime(val version: String, val arch: String)
 
     /** 内置包版本与架构；资产缺任一件都视为未内置。旧包没写 rootfs_arch，视为 arm64 */
@@ -270,6 +370,10 @@ class RootfsProvisioner(
     /**
      * 读 BUILD_MANIFEST 文本：[fromAssets]=true 读 assets 侧，否则读已解包目录。
      * 任何 IO 异常都以 null 收场（版本闸门视为不过）。
+     *
+     * Reads the BUILD_MANIFEST text: [fromAssets]=true reads the assets side,
+     * otherwise the unpacked directory. Any IO failure ends in null (the
+     * version gate counts as failed).
      */
     private inline fun <T> readManifest(fromAssets: Boolean = false, block: (String) -> T): T? = runCatching {
         val text = if (fromAssets) {
@@ -280,12 +384,21 @@ class RootfsProvisioner(
         block(text)
     }.getOrNull()
 
+    /** 抓 BUILD_MANIFEST 里的 rootfs_version / Pulls rootfs_version out of BUILD_MANIFEST text. */
     private fun parseVersion(manifestJson: String): String? =
         VERSION_KEY.find(manifestJson)?.groupValues?.get(1)
 
+    /** 抓 BUILD_MANIFEST 里的 rootfs_arch / Pulls rootfs_arch out of BUILD_MANIFEST text. */
     private fun parseArch(manifestJson: String): String? =
         ARCH_KEY.find(manifestJson)?.groupValues?.get(1)
 
+    /**
+     * 解压前的磁盘余量硬校验（≥2GB）
+     *
+     * The hard free-space check before extraction (at least 2 GB).
+     *
+     * @throws IOException 余量不足 / when free space is insufficient
+     */
     private fun checkDisk() {
         val free = app.filesDir.let { it.mkdirs(); it.usableSpace }
         if (free < MIN_FREE_BYTES) throw IOException("磁盘空间不足：剩余 ${free / 1_000_000} MB，需要至少 2 GB")
@@ -297,6 +410,17 @@ class RootfsProvisioner(
      * 清单里还没有 Runtime 字段（旧版 latest.json 只发布 APK）时返回 false；版本已与已装
      * 一致时也返回 false。设备架构不受支持、清单里没有该架构的包时抛异常，调用方把
      * 消息带进 Failed/错误态。
+     *
+     * Downloads and deploys the Runtime from Release.
+     *
+     * Returns false when the manifest has no Runtime fields yet (old latest.json
+     * shipped only the APK) and when the version already matches what is
+     * installed. Throws for an unsupported device arch or a manifest without
+     * this arch's package — callers funnel the message into Failed/error states.
+     *
+     * @return 是否真的部署了新 Runtime / whether a new Runtime was actually deployed
+     * @throws IOException 架构不受支持、无可用包或校验失败 / on an unsupported
+     *   arch, no available package, or a failed verification
      */
     private suspend fun installFromRelease(): Boolean {
         val info = fetchIndex()
@@ -329,7 +453,16 @@ class RootfsProvisioner(
         return true
     }
 
-    /** 单连接下载，进度直推状态机；SHA-256 由调用方在完成后统一校验 */
+    /**
+     * 单连接下载，进度直推状态机；SHA-256 由调用方在完成后统一校验
+     *
+     * Single-connection download with progress pushed straight into the state
+     * machine; the caller verifies SHA-256 after completion. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     *
+     * @throws DownloadAborted 下载途中换了源 / when the mirror source switches
+     *   mid-download
+     */
     private suspend fun downloadArchive(runtime: ReleaseRuntime, prefix: String, target: File) {
         val downloadUrl = ReleaseUrls.selected(runtime.url, prefix)
         ReleaseDownloader.download(
@@ -342,8 +475,28 @@ class RootfsProvisioner(
         }
     }
 
-    // ── 解压 ──
-
+    /**
+     * 流式解包到 `rootfs.tmp`，校验通过后整体换名到正式目录
+     *
+     * 步骤：解 tar → 补硬链接前向引用 → 版本/python 双校验 → 写 marker →
+     * 保留用户实例配置与日志 → 旧目录改名为 rootfs.previous → tmp 换名。
+     *
+     * Streams the archive into `rootfs.tmp` and renames it into place only
+     * after verification passes.
+     *
+     * Steps: untar → backfill forward-referencing hard links → version/python
+     * dual verification → write the marker → keep user instance configs and
+     * logs → rename the old directory to rootfs.previous → rename tmp in.
+     *
+     * @param openArchive 打开包流的工厂（可重复调用）/ factory opening the archive
+     *   stream (repeatable)
+     * @param total 包总长，进度分母 / the archive size, the progress denominator
+     * @param expectedVersion 解包完成后必须一致的版本 / the version the extracted
+     *   manifest must match
+     * @throws IOException 解包、路径或换名失败 / on extraction, path or rename failures
+     * @throws IllegalStateException 版本或 python 校验不过 / when the version or
+     *   python check fails
+     */
     private fun extract(openArchive: () -> InputStream, total: Long, expectedVersion: String) {
         tmpDir.deleteRecursively()
         check(tmpDir.mkdirs()) { "cannot create $tmpDir" }
@@ -394,6 +547,17 @@ class RootfsProvisioner(
         previous.deleteRecursively()
     }
 
+    /**
+     * 解一个 tar 条目；四类条目（目录/软链/硬链/文件）各走各路
+     *
+     * Extracts one tar entry; the four kinds (directory/symlink/hard link/file)
+     * each take their own path. 安全面：拒绝逃出 root 的路径与穿越软链的父目录
+     * / Security: paths escaping the root and parents traversing symlinks are
+     * rejected.
+     *
+     * @throws IOException 路径非法、穿越软链或替换软链 / on an illegal path, a
+     *   symlink traversal or a symlink replacement
+     */
     private fun extractEntry(
         tar: TarArchiveInputStream,
         entry: TarArchiveEntry,
@@ -453,7 +617,12 @@ class RootfsProvisioner(
         }
     }
 
-    /** 每 256KB 才推一次状态，StateFlow 合流前刷太勤纯属白跑重组 */
+    /**
+     * 每 256KB 才推一次状态，StateFlow 合流前刷太勤纯属白跑重组
+     *
+     * Pushes progress only every 256 KB — emitting any faster just burns
+     * recompositions before the StateFlow conflation settles.
+     */
     private class CountingInputStream(
         input: InputStream,
         private val onProgress: (Long) -> Unit,
@@ -477,13 +646,28 @@ class RootfsProvisioner(
     }
 
     private companion object {
+        /** APK 内置包路径 / The bundled in-APK archive path. */
         const val ASSET_ARCHIVE = "rootfs/rootfs.tar.xz"
+
+        /** APK 内置清单路径 / The bundled in-APK manifest path. */
         const val ASSET_MANIFEST = "rootfs/BUILD_MANIFEST"
+
+        /** 已解目录内清单的相对路径 / The manifest's path inside the unpacked tree. */
         const val MANIFEST_REL = "opt/azurpilot/BUILD_MANIFEST"
+
+        /** python 可达性探针路径 / The path used to probe python's presence. */
         const val PYTHON_REL = "opt/azurpilot/.venv/bin/python"
+
+        /** 已装版本标记文件名 / The installed-version marker file name. */
         const val MARKER_NAME = ".provisioned"
+
+        /** 磁盘余量硬校验阈值：2GB / The hard free-space check threshold: 2 GB. */
         const val MIN_FREE_BYTES = 2L * 1024 * 1024 * 1024
+
+        /** 解压缓冲：256KB 在吞吐与内存间取平 / The extraction buffer: 256 KB balances throughput and memory. */
         const val BUFFER_SIZE = 256 * 1024
+
+        /** 抓 BUILD_MANIFEST 字段的正则 / Regexes pulling the BUILD_MANIFEST fields. */
         val VERSION_KEY = Regex(""""rootfs_version"\s*:\s*"([^"]+)"""")
         val ARCH_KEY = Regex(""""rootfs_arch"\s*:\s*"([^"]+)"""")
         val SHA256 = Regex("[0-9a-f]{64}")

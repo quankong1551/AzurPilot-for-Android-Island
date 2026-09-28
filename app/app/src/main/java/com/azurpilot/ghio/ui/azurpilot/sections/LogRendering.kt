@@ -37,20 +37,35 @@ import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.theme.AzurPilotTheme
 
 /**
- * 日志行的富渲染
+ * 标准日志行：`INFO  11:15:39.621 │ 消息`，可选日期在时间之前
  *
- * 网关给的是一份**定宽控制台输出**：满屏 `═` 分隔线、两侧留白居中的横幅、以及
- * `INFO  11:15:39.621 │ 消息` 这种带前后留白的行。原样当纯文本铺出来会很难看——
- * 一百多个 `═` 会折成好几行，"串行"成一片噪声，级别、时间、消息也全是同一个颜色。
+ * 网关给的是一份**定宽控制台输出**：满屏 `═` 分隔线、两侧留白居中的横幅，原样当纯文本铺出来
+ * 会很难看——一百多个 `═` 会折成好几行，串成一片噪声，级别、时间、消息也全是同一个颜色。
+ * 本文件的分类规则与 WebUI 的 `LogPanel` 一致：先认分隔线，再认带标题的分隔线，
+ * 再认这里的标准日志行，最后认居中的横幅，都不匹配才原样输出。
  *
- * 这里的分类规则与 WebUI 的 `LogPanel` 一致：先认分隔线，再认带标题的分隔线，
- * 再认标准日志行，最后认居中的横幅，都不匹配才原样输出。
+ * The standard log line: `INFO  11:15:39.621 │ message`, with an optional date
+ * before the time.
+ *
+ * The gateway emits **fixed-width console output**: full screens of `═` rule
+ * lines and banners centered with side padding. Rendered verbatim as plain
+ * text it looks terrible — a hundred-plus `═` characters wrap into several
+ * lines of noise, and level, time, and message all share one color. This
+ * file's classification matches the WebUI's `LogPanel`: rule lines first, then
+ * titled rules, then the standard log line here, then centered banners, and a
+ * verbatim fallback when nothing matches.
  */
 private val LOG_LINE = Regex(
     """^([A-Z]{4,8})\s+(?:(\d{4}-\d{2}-\d{2})\s+)?(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\s*│\s*([\s\S]*)$""",
 )
+
+/** 带可选标题的分隔线：`═ 标题 ═` / A rule line with an optional title: `═ title ═`. */
 private val RULE = Regex("""^[═─]{3,}\s*(.*?)\s*[═─]{3,}$""")
+
+/** 纯分隔线（无标题） / A bare rule line with no title. */
 private val PURE_RULE = Regex("""^[═─]{3,}$""")
+
+/** 两侧各留三个以上空格的居中文本 / Text centered with three-plus spaces on each side. */
 private val CENTER_TITLE = Regex("""^\s{3,}(.*?)\s{3,}$""")
 
 /**
@@ -58,6 +73,13 @@ private val CENTER_TITLE = Regex("""^\s{3,}(.*?)\s{3,}$""")
  *
  * 一条日志里真正需要一眼认出的就这几类：布尔值、`<<<设备指令>>>`、`[标签]`、括号、
  * 路径、时间。整行同一个颜色时，这些信息要靠逐字读才能找到。
+ *
+ * The inline highlight targets.
+ *
+ * Only these classes of content need at-a-glance recognition in a log line:
+ * booleans, `<<<device directives>>>`, `[tags]`, brackets, paths, and times.
+ * When the whole line is one color, finding them means reading character by
+ * character. Capture groups are numbered; [highlight] styles by group index.
  */
 private val TOKEN = Regex(
     """(\b(?:True|False|None)\b)""" +          // 1 布尔/None
@@ -68,15 +90,31 @@ private val TOKEN = Regex(
         """|(\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b)""", // 6 时间
 )
 
-/** 一行日志该怎么画 */
+/**
+ * 一行日志该怎么画
+ *
+ * How one log line is rendered.
+ */
 private sealed interface LogLineKind {
+    /** 分隔线；`double` 表示 `═` 双线 / A rule line; `double` marks a `═` double rule. */
     data class Rule(val title: String?, val double: Boolean) : LogLineKind
+
+    /** 标准日志行 / A standard log entry. */
     data class Entry(val level: String, val date: String?, val time: String, val message: String) : LogLineKind
+
+    /** 居中横幅 / A centered banner. */
     data class Banner(val text: String) : LogLineKind
+
+    /** 无法识别的原文 / Unrecognized text, rendered verbatim. */
     data class Raw(val text: String) : LogLineKind
 }
 
-/** 行内高亮用的一套颜色：AnnotatedString 在非 composable 上下文里拼，颜色得先取出来 */
+/**
+ * 行内高亮用的一套颜色：AnnotatedString 在非 composable 上下文里拼，颜色得先取出来
+ *
+ * The palette for inline highlighting: the AnnotatedString is built outside a
+ * composable context, so the colors must be resolved up front.
+ */
 private class LogPalette(
     val body: Color,
     val muted: Color,
@@ -93,6 +131,7 @@ private class LogPalette(
     fun levelOf(level: String): Color = levelColors[level] ?: defaultLevel
 }
 
+/** 取当期主题的调色板；只读组合，可在组合期直接调用 / Resolves the current theme's palette; a read-only combination, callable during composition. */
 @Composable
 @ReadOnlyComposable
 private fun palette(): LogPalette = LogPalette(
@@ -121,6 +160,18 @@ private fun palette(): LogPalette = LogPalette(
  *
  * 网关的横幅是「两侧各留三个以上空格」的居中文本，但那也是普通行可能有的形状，
  * 所以要看上下文：上下都是双线、自己既不是线也不是标准日志行，才当横幅。
+ *
+ * Whether this line is a banner sandwiched between two `═` rules.
+ *
+ * The gateway's banners are centered text with three-plus spaces of padding on
+ * each side — but that is also a shape an ordinary line can have, so context
+ * decides: only when both neighbors are double rules and the line itself is
+ * neither a rule nor a standard log entry does it count as a banner.
+ *
+ * @param previous 上一行；首行为 null / the previous line; null for the first
+ * @param entry 当前行 / the current line
+ * @param next 下一行；末行为 null / the next line; null for the last
+ * @return 是否按居中横幅渲染 / whether to render the line as a centered banner
  */
 fun isLogBanner(previous: AzurPilotLogEntry?, entry: AzurPilotLogEntry, next: AzurPilotLogEntry?): Boolean {
     val text = entry.text.trim()
@@ -132,6 +183,7 @@ fun isLogBanner(previous: AzurPilotLogEntry?, entry: AzurPilotLogEntry, next: Az
         PURE_RULE.matches(after) && after.contains('═')
 }
 
+/** 把一行日志归入 [LogLineKind] 之一；`centered` 来自相邻行的横幅判断 / Classifies a log line into one of [LogLineKind]; `centered` comes from the neighbor-based banner check. */
 private fun classify(entry: AzurPilotLogEntry, centered: Boolean): LogLineKind {
     val raw = entry.text.trimEnd('\r', '\n')
     val trimmed = raw.trim()
@@ -161,7 +213,18 @@ private fun classify(entry: AzurPilotLogEntry, centered: Boolean): LogLineKind {
     return LogLineKind.Raw(raw.trimEnd())
 }
 
-/** 一行日志；[search] 非空时命中处加底色 */
+/**
+ * 一行日志；[search] 非空时命中处加底色
+ *
+ * One log line; when [search] is non-empty, hits get a highlight background.
+ *
+ * @param entry 日志行 / the log entry
+ * @param modifier 应用于行的修饰符 / the modifier applied to the row
+ * @param centered 相邻行判定为横幅时为 true / true when the neighbor check
+ *   classified the line as a banner
+ * @param search 搜索词，命中处加底色 / the search term; hits get a highlight
+ *   background
+ */
 @Composable
 fun ApLogRow(
     entry: AzurPilotLogEntry,
@@ -216,6 +279,16 @@ fun ApLogRow(
  * 只读的日志板：富渲染 + 自动沉底
  *
  * 给「需要顺带看一眼日志」的地方用（工具任务页）。要筛选、搜索、导出就用日志分区那一套。
+ *
+ * The read-only log board: rich rendering plus auto-scroll to the bottom.
+ *
+ * For spots that merely need logs glanced at (the tool-task page). Filtering,
+ * search, and export belong to the full Logs section instead.
+ *
+ * @param entries 日志行，按时间正序 / the log entries, oldest first
+ * @param modifier 应用于日志板的修饰符 / the modifier applied to the board
+ * @param emptyHint 空态文案；缺省用通用文案 / the empty-state text; a generic
+ *   one is used by default
  */
 @Composable
 fun ApLogBoard(
@@ -264,6 +337,13 @@ fun ApLogBoard(
  *
  * 画成真的线而不是字符：一百多个 `═` 铺出来会折行，而且每行宽度还会随字号变化。
  * 双层线用两像素、单层线用细线，与日志里 `═` / `─` 的语义对应。
+ *
+ * A rule line.
+ *
+ * Drawn as a real line instead of characters: a hundred-plus `═` glyphs wrap,
+ * and the line width would shift with the font size anyway. Double rules use
+ * two pixels and single rules a hairline, matching the `═` / `─` semantics in
+ * the log.
  */
 @Composable
 private fun LogRule(title: String?, double: Boolean, search: String, modifier: Modifier) {
@@ -301,7 +381,11 @@ private fun LogRule(title: String?, double: Boolean, search: String, modifier: M
     }
 }
 
-/** 行内高亮 + 搜索命中底色 */
+/**
+ * 行内高亮 + 搜索命中底色
+ *
+ * Inline token highlighting plus a background on search hits.
+ */
 private fun highlight(text: String, search: String, colors: LogPalette): AnnotatedString {
     if (text.isEmpty()) return AnnotatedString("")
     val needle = search.trim().lowercase()
@@ -332,7 +416,12 @@ private fun highlight(text: String, search: String, colors: LogPalette): Annotat
     }
 }
 
-/** 片段本身还要再过一遍搜索命中，否则高亮会吃掉搜索底色 */
+/**
+ * 片段本身还要再过一遍搜索命中，否则高亮会吃掉搜索底色
+ *
+ * Each segment is re-scanned for search hits; otherwise the token highlight
+ * would swallow the search background.
+ */
 private fun AnnotatedString.Builder.appendSegment(segment: String, needle: String, colors: LogPalette) {
     if (needle.isEmpty()) {
         append(segment)

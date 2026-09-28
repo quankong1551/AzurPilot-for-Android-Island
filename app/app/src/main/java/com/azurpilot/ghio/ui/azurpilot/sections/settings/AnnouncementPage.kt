@@ -33,6 +33,16 @@ import com.azurpilot.ghio.ui.components.AppCard
  * 正文是 Markdown。这里**不**引入 Markdown 渲染器：公告的实际内容是标题 + 段落 + 少量强调，
  * 为它拉一个解析器加一份 XSS 面不划算。做最小清洗（去掉标记符号）后按纯文本排版，
  * 需要原样看的话右侧有「在浏览器打开」。
+ *
+ * The announcement page.
+ *
+ * The body is Markdown. A Markdown renderer is **not** introduced here: real
+ * announcements are a title, paragraphs, and a little emphasis — pulling in a
+ * parser plus an XSS surface for that is not worth it. Minimal scrubbing
+ * (stripping marker characters) and plain-text layout instead; the
+ * "open in browser" action sits on the right for the verbatim view.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun AnnouncementPage(repository: AzurPilotRepository) {
@@ -96,6 +106,15 @@ fun AnnouncementPage(repository: AzurPilotRepository) {
  * 极简 Markdown 清洗：只处理公告里真的会出现的那几种标记
  *
  * 目标是「读起来不别扭」，不是解析 Markdown——标题符号、加粗星号、链接语法去掉即可。
+ *
+ * Minimal Markdown scrubbing: handles only the marker kinds that actually
+ * appear in announcements.
+ *
+ * The goal is "reads without friction", not parsing Markdown — heading marks,
+ * bold asterisks, and link syntax get stripped, nothing more.
+ *
+ * @param source 公告原文 / the raw announcement body
+ * @return 清洗后的纯文本 / the scrubbed plain text
  */
 private fun plainMarkdown(source: String): String = source
     .lineSequence()
@@ -109,6 +128,11 @@ private fun plainMarkdown(source: String): String = source
     .joinToString("\n")
     .trim()
 
+/** 链接语法：留文字、去地址 / Link syntax: keep the text, drop the address. */
 private val LINK = Regex("""\[([^\]]*)\]\([^)]*\)""")
+
+/** 加粗星号 / Bold markers. */
 private val BOLD = Regex("""\*\*([^*]+)\*\*""")
+
+/** 斜体星号（不匹配加粗，避免吃掉 `**`） / Italic markers (not matching bold, so `**` survives). */
 private val ITALIC = Regex("""(?<!\*)\*([^*]+)\*(?!\*)""")

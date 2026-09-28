@@ -1,20 +1,11 @@
 package com.azurpilot.ghio.ui.settings
 
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.hardware.display.DisplayManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.Display
 import android.widget.Toast
-import com.azurpilot.ghio.widget.AzurPilotControlWidgetReceiver
-import com.azurpilot.ghio.widget.AzurPilotQuickWidgetReceiver
-import androidx.compose.material3.Slider
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalContext
-import kotlin.math.round
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,31 +14,44 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.koinInject
 import androidx.fragment.app.FragmentActivity
-import com.azurpilot.ghio.auth.SensitiveAuthManager
+import android.content.ComponentName
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.ui.Alignment
+import com.azurpilot.ghio.auth.AppLockManager
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.domain.RemoteBackend
@@ -58,31 +62,59 @@ import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
 import com.azurpilot.ghio.theme.AppTokens
-import androidx.compose.material3.Button
 import com.azurpilot.ghio.ui.components.MirrorSourcePicker
-import com.azurpilot.ghio.update.ReleaseUrls
-import com.azurpilot.ghio.proot.AzurPilotRepository
-import com.azurpilot.ghio.provision.RootfsProvisioner
-import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.ui.components.AppCard
 import com.azurpilot.ghio.ui.components.AppFieldLabel
 import com.azurpilot.ghio.ui.components.AppInfoRow
 import com.azurpilot.ghio.ui.components.AppLabeledControlRow
 import com.azurpilot.ghio.ui.components.AppNavigationRow
 import com.azurpilot.ghio.ui.components.AppSingleChoiceFlow
+import com.azurpilot.ghio.ui.navigation.Routes
+import com.azurpilot.ghio.update.ReleaseUrls
+import com.azurpilot.ghio.proot.AzurPilotRepository
+import com.azurpilot.ghio.provision.RootfsProvisioner
+import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.update.AppUpdateManager
+import com.azurpilot.ghio.widget.AzurPilotControlWidgetReceiver
+import com.azurpilot.ghio.widget.AzurPilotQuickWidgetReceiver
+import android.appwidget.AppWidgetManager
+import kotlin.math.round
 import kotlinx.coroutines.launch
 
+/**
+ * 设置主页的分类入口：一行一个二级页
+ *
+ * Category entries of the settings hub: one row per second-level page.
+ */
+enum class SettingsSection(val route: String, val titleRes: Int, val descRes: Int) {
+    Display(Routes.SETTINGS_DISPLAY, R.string.settings_cat_display, R.string.settings_cat_display_desc),
+    VirtualDisplay(Routes.SETTINGS_VIRTUAL_DISPLAY, R.string.settings_cat_screen, R.string.settings_cat_screen_desc),
+    Logs(Routes.SETTINGS_LOGS, R.string.settings_cat_logs, R.string.settings_cat_logs_desc),
+    KeepAlive(Routes.SETTINGS_KEEP_ALIVE, R.string.settings_cat_keep_alive, R.string.settings_cat_keep_alive_desc),
+    Advanced(Routes.SETTINGS_ADVANCED, R.string.settings_cat_advanced, R.string.settings_cat_advanced_desc),
+    Widget(Routes.SETTINGS_WIDGET, R.string.settings_cat_widget, R.string.settings_cat_widget_desc),
+    Runtime(Routes.SETTINGS_RUNTIME, R.string.settings_cat_runtime, R.string.settings_cat_runtime_desc),
+    About(Routes.SETTINGS_ABOUT, R.string.settings_cat_about, R.string.settings_cat_about_desc),
+}
+
+/**
+ * 设置主页：只列分类入口，内容在各二级页
+ *
+ * 与旧版单页平铺的差异：每类设置推入独立路由（[SettingsSection]），返回由 NavHost 负责
+ *
+ * Renders the settings hub: category entries only; the content lives in the
+ * second-level pages.
+ *
+ * Difference from the old single-page layout: each category pushes its own route
+ * ([SettingsSection]) and back navigation is the NavHost's job.
+ *
+ * @param onOpenSection 点分类行时回传对应入口 / invoked with the tapped section
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     state: SettingsUiState,
-    onIntent: (SettingsIntent) -> Unit,
-    // 二级页面与 SAF 都需要 Activity 宿主，导航与弹窗归 AppRoot 那一层
-    onOpenAppLog: () -> Unit,
-    onOpenRunnerLog: () -> Unit,
-    onExportRunnerLogs: () -> Unit,
-    onExportLauncherLogs: () -> Unit,
+    onOpenSection: (SettingsSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -110,109 +142,115 @@ fun SettingsScreen(
                 ),
             verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
         ) {
-            DisplayCard(state, onIntent)
-            VirtualDisplayFrameRateCard()
-            LogCard(state, onIntent, onOpenAppLog, onOpenRunnerLog, onExportRunnerLogs, onExportLauncherLogs)
-            KeepAliveCard(state, onIntent)
-            OtherCard(state, onIntent)
-            WidgetCard()
-            RuntimeCard()
-            AboutCard()
-        }
-    }
-}
-
-@Composable
-private fun VirtualDisplayFrameRateCard(settings: AppSettingsManager = koinInject()) {
-    val context = LocalContext.current
-    val displays = remember(context) { context.getSystemService(DisplayManager::class.java) }
-    var maximum by remember(displays) {
-        mutableStateOf(displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f)
-    }
-    DisposableEffect(displays) {
-        fun updateMaximum() {
-            maximum = displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f
-        }
-        val listener = object : DisplayManager.DisplayListener {
-            override fun onDisplayAdded(displayId: Int) = updateMaximum()
-            override fun onDisplayRemoved(displayId: Int) = updateMaximum()
-            override fun onDisplayChanged(displayId: Int) {
-                if (displayId == Display.DEFAULT_DISPLAY) updateMaximum()
+            AppCard {
+                SettingsSection.entries.forEachIndexed { index, section ->
+                    if (index > 0) HorizontalDivider()
+                    AppNavigationRow(
+                        label = stringResource(section.titleRes),
+                        description = stringResource(section.descRes),
+                        onClick = { onOpenSection(section) },
+                    )
+                }
             }
         }
-        displays.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
-        updateMaximum()
-        onDispose { displays.unregisterDisplayListener(listener) }
     }
-    val savedRate by settings.virtualDisplayRefreshRate.collectAsStateWithLifecycle()
-    val loaded by settings.loaded.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-    val available = maximum.isFinite() && maximum > 1f
-    val upper = if (available) maximum else 60f
-    var selected by remember(savedRate, upper) {
-        mutableStateOf(if (savedRate == 0f) upper else savedRate.coerceIn(1f, upper))
+}
+
+/**
+ * 渲染设置二级页骨架：返回栏 + 标题 + 滚动内容
+ *
+ * Renders the settings sub-page skeleton: back bar + title + scrolling content.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsSubPage(
+    titleRes: Int,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            // NavHost 层没有背景，不铺底色的话下层主页会从顶栏与卡片间隙透出来
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+        TopAppBar(
+            title = { Text(stringResource(titleRes)) },
+            // 二级页盖在 AppRoot 的 Scaffold 之外，没人替它吃状态栏 inset，顶栏自己处理
+            scrollBehavior = scrollBehavior,
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                    )
+                }
+            },
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .imePadding()
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    start = AppTokens.Spacing.lg,
+                    end = AppTokens.Spacing.lg,
+                    top = AppTokens.Spacing.sm,
+                    bottom = AppTokens.Spacing.lg,
+                ),
+            verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
+            content = content,
+        )
     }
-    AppCard(title = stringResource(R.string.settings_virtual_display_rate), collapsible = true) {
-        if (supported) {
-            AppInfoRow(
-                stringResource(R.string.settings_virtual_display_rate_requested),
-                stringResource(R.string.settings_virtual_display_rate_value, selected),
+}
+
+/**
+ * 渲染显示二级页：主题模式与界面语言
+ *
+ * Renders the display page: theme mode and UI language.
+ *
+ * @param onIntent 设置意图回调，交 ViewModel 落盘 / settings intent callback,
+ *   persisted by the view model
+ * @param onBack 返回回调 / back callback
+ */
+@Composable
+fun DisplaySettingsPage(
+    state: SettingsUiState,
+    onIntent: (SettingsIntent) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SettingsSubPage(titleRes = R.string.settings_cat_display, onBack = onBack, modifier = modifier) {
+        AppCard {
+            AppFieldLabel(stringResource(R.string.settings_theme))
+            val modes = listOf(
+                ThemeMode.System to stringResource(R.string.settings_follow_system),
+                ThemeMode.Light to stringResource(R.string.settings_theme_light),
+                ThemeMode.Dark to stringResource(R.string.settings_theme_dark),
             )
-            Slider(
-                value = selected,
-                onValueChange = { selected = round(it).coerceIn(1f, upper) },
-                onValueChangeFinished = {
-                    // 最大档保存为 0，后续启动可继续跟随主屏当前刷新率。
-                    val requested = if (selected == upper) 0f else selected
-                    scope.launch { settings.setVirtualDisplayRefreshRate(requested) }
-                },
-                valueRange = 1f..upper,
-                enabled = loaded && available,
-                modifier = Modifier.fillMaxWidth(),
+            AppSingleChoiceFlow(
+                options = modes,
+                selected = state.themeMode,
+                onSelect = { onIntent(SettingsIntent.SetThemeMode(it)) },
             )
-            if (available) {
-                AppInfoRow(
-                    stringResource(R.string.settings_virtual_display_rate_maximum),
-                    stringResource(R.string.settings_virtual_display_rate_value, maximum),
-                )
-            }
-            Text(
-                stringResource(if (available) R.string.settings_virtual_display_rate_hint
-                    else R.string.settings_virtual_display_rate_unavailable),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Text(
-                stringResource(R.string.settings_virtual_display_rate_unsupported),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        }
+        AppCard {
+            AppFieldLabel(stringResource(R.string.settings_language))
+            LanguageChoice(onIntent)
         }
     }
 }
 
-/** 主题与语言：都只改观感，合成一张卡 */
-@Composable
-private fun DisplayCard(state: SettingsUiState, onIntent: (SettingsIntent) -> Unit) {
-    AppCard(title = stringResource(R.string.settings_section_display), collapsible = true) {
-        AppFieldLabel(stringResource(R.string.settings_theme))
-        val modes = listOf(
-            ThemeMode.System to stringResource(R.string.settings_follow_system),
-            ThemeMode.Light to stringResource(R.string.settings_theme_light),
-            ThemeMode.Dark to stringResource(R.string.settings_theme_dark),
-        )
-        AppSingleChoiceFlow(
-            options = modes,
-            selected = state.themeMode,
-            onSelect = { onIntent(SettingsIntent.SetThemeMode(it)) },
-        )
-        AppFieldLabel(stringResource(R.string.settings_language))
-        LanguageChoice(onIntent)
-    }
-}
-
+/**
+ * 渲染语言单选；档位与平台 per-app locale 的回显映射见行内注释
+ *
+ * Renders the language choice; see the inline notes for how options map back to
+ * the platform's per-app locale on re-composition.
+ */
 @Composable
 private fun ColumnScope.LanguageChoice(onIntent: (SettingsIntent) -> Unit) {
     // 事实来源在平台侧 per-app locale（AppLocales），不进 UserConfiguration；
@@ -264,59 +302,161 @@ private fun ColumnScope.LanguageChoice(onIntent: (SettingsIntent) -> Unit) {
 }
 
 /**
- * 日志区：两个查看入口 + 两条导出 + 自动清理开关
+ * 渲染虚拟屏二级页：刷新率滑杆，上限跟随主屏当前刷新率
  *
- * 前四项都是「离开这一页」，只有自动清理是就地开关；关闭走确认弹窗（占空间警告）
+ * 滑杆经 round 取整只落整数档；「最大档存 0」的约定见行内注释。
+ *
+ * Renders the virtual-display page: a refresh-rate slider whose ceiling follows
+ * the main display's current refresh rate.
+ *
+ * The slider rounds to whole-number tiers; see the inline notes for the "max
+ * tier stored as 0" convention.
+ *
+ * @param onBack 返回回调 / back callback
  */
 @Composable
-private fun LogCard(
+fun VirtualDisplaySettingsPage(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    settings: AppSettingsManager = koinInject(),
+) {
+    val context = LocalContext.current
+    val displays = remember(context) { context.getSystemService(DisplayManager::class.java) }
+    var maximum by remember(displays) {
+        mutableStateOf(displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f)
+    }
+    DisposableEffect(displays) {
+        fun updateMaximum() {
+            maximum = displays.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f
+        }
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = updateMaximum()
+            override fun onDisplayRemoved(displayId: Int) = updateMaximum()
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId == Display.DEFAULT_DISPLAY) updateMaximum()
+            }
+        }
+        displays.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        updateMaximum()
+        onDispose { displays.unregisterDisplayListener(listener) }
+    }
+    val savedRate by settings.virtualDisplayRefreshRate.collectAsStateWithLifecycle()
+    val loaded by settings.loaded.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    val available = maximum.isFinite() && maximum > 1f
+    val upper = if (available) maximum else 60f
+    var selected by remember(savedRate, upper) {
+        mutableStateOf(if (savedRate == 0f) upper else savedRate.coerceIn(1f, upper))
+    }
+    SettingsSubPage(titleRes = R.string.settings_cat_screen, onBack = onBack, modifier = modifier) {
+        AppCard {
+            if (supported) {
+                AppInfoRow(
+                    stringResource(R.string.settings_virtual_display_rate_requested),
+                    stringResource(R.string.settings_virtual_display_rate_value, selected),
+                )
+                Slider(
+                    value = selected,
+                    onValueChange = { selected = round(it).coerceIn(1f, upper) },
+                    onValueChangeFinished = {
+                        // 最大档保存为 0，后续启动可继续跟随主屏当前刷新率。
+                        val requested = if (selected == upper) 0f else selected
+                        scope.launch { settings.setVirtualDisplayRefreshRate(requested) }
+                    },
+                    valueRange = 1f..upper,
+                    enabled = loaded && available,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (available) {
+                    AppInfoRow(
+                        stringResource(R.string.settings_virtual_display_rate_maximum),
+                        stringResource(R.string.settings_virtual_display_rate_value, maximum),
+                    )
+                }
+                Text(
+                    stringResource(if (available) R.string.settings_virtual_display_rate_hint
+                        else R.string.settings_virtual_display_rate_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    stringResource(R.string.settings_virtual_display_rate_unsupported),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 日志二级页：两个查看入口 + 两条导出 + 自动清理开关
+ *
+ * 前四项都是「离开这一页」，只有自动清理是就地开关；关闭走确认弹窗（占空间警告）
+ *
+ * Renders the logs page: two viewer entries + two exports + the auto-clean toggle.
+ *
+ * The first four items all leave this page; only auto-clean is an in-place
+ * switch, and turning it off goes through a confirm dialog (storage-growth
+ * warning).
+ */
+@Composable
+fun LogsSettingsPage(
     state: SettingsUiState,
     onIntent: (SettingsIntent) -> Unit,
     onOpenAppLog: () -> Unit,
     onOpenRunnerLog: () -> Unit,
     onExportRunnerLogs: () -> Unit,
     onExportLauncherLogs: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var showDisableConfirm by remember { mutableStateOf(false) }
-    AppCard(title = stringResource(R.string.settings_section_log), collapsible = true) {
-        AppNavigationRow(
-            label = stringResource(R.string.app_log_title),
-            description = stringResource(R.string.settings_log_launcher_desc),
-            onClick = onOpenAppLog,
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.azurpilot_log_title),
-            description = stringResource(R.string.settings_log_azurpilot_desc),
-            onClick = onOpenRunnerLog,
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.log_export_azurpilot_title),
-            description = stringResource(R.string.settings_log_export_azurpilot_desc),
-            onClick = onExportRunnerLogs,
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.log_export_launcher_title),
-            description = stringResource(R.string.settings_log_export_launcher_desc),
-            onClick = onExportLauncherLogs,
-        )
-        // 开启直接落盘；关闭先弹确认：关掉之后过期日志只增不减
-        AppLabeledControlRow(
-            label = stringResource(R.string.settings_auto_clean_logs),
-            trailing = {
-                Switch(
-                    checked = state.autoCleanLogs,
-                    onCheckedChange = { enabled ->
-                        if (enabled) onIntent(SettingsIntent.SetAutoCleanLogs(true))
-                        else showDisableConfirm = true
-                    },
-                )
-            },
-        )
-        Text(
-            text = stringResource(R.string.settings_auto_clean_logs_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    SettingsSubPage(titleRes = R.string.settings_cat_logs, onBack = onBack, modifier = modifier) {
+        AppCard {
+            AppNavigationRow(
+                label = stringResource(R.string.app_log_title),
+                description = stringResource(R.string.settings_log_launcher_desc),
+                onClick = onOpenAppLog,
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.azurpilot_log_title),
+                description = stringResource(R.string.settings_log_azurpilot_desc),
+                onClick = onOpenRunnerLog,
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.log_export_azurpilot_title),
+                description = stringResource(R.string.settings_log_export_azurpilot_desc),
+                onClick = onExportRunnerLogs,
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.log_export_launcher_title),
+                description = stringResource(R.string.settings_log_export_launcher_desc),
+                onClick = onExportLauncherLogs,
+            )
+        }
+        AppCard {
+            // 开启直接落盘；关闭先弹确认：关掉之后过期日志只增不减
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_auto_clean_logs),
+                trailing = {
+                    Switch(
+                        checked = state.autoCleanLogs,
+                        onCheckedChange = { enabled ->
+                            if (enabled) onIntent(SettingsIntent.SetAutoCleanLogs(true))
+                            else showDisableConfirm = true
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_auto_clean_logs_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
     if (showDisableConfirm) {
         AlertDialog(
@@ -338,11 +478,18 @@ private fun LogCard(
     }
 }
 
-/** 激进后台保活系统卡片 */
+/**
+ * 渲染后台保活二级页：总开关 + 七路保活手段的逐项状态
+ *
+ * Renders the keep-alive page: the master switch plus per-mechanism status for
+ * the seven keep-alive means.
+ */
 @Composable
-private fun KeepAliveCard(
+fun KeepAliveSettingsPage(
     state: SettingsUiState,
     onIntent: (SettingsIntent) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
     keepAliveManager: KeepAliveManager = koinInject(),
 ) {
     val context = LocalContext.current
@@ -357,197 +504,217 @@ private fun KeepAliveCard(
         AccessibilityHelperService.isServiceEnabled(context) || isAccessibilityConnected
     }
 
-    AppCard(title = stringResource(R.string.settings_section_keepalive), collapsible = true) {
-        AppLabeledControlRow(
-            label = stringResource(R.string.settings_keepalive_title),
-            trailing = {
-                Switch(
-                    checked = state.keepAliveEnabled,
-                    onCheckedChange = { enabled ->
-                        onIntent(SettingsIntent.SetKeepAlive(enabled))
-                    },
-                )
-            },
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    SettingsSubPage(titleRes = R.string.settings_cat_keep_alive, onBack = onBack, modifier = modifier) {
+        AppCard {
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_keepalive_title),
+                trailing = {
+                    Switch(
+                        checked = state.keepAliveEnabled,
+                        onCheckedChange = { enabled ->
+                            onIntent(SettingsIntent.SetKeepAlive(enabled))
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AppCard {
+            AppFieldLabel(stringResource(R.string.permission_section))
 
-        AppFieldLabel(stringResource(R.string.permission_section))
+            // 1. 24小时后台无音量音频
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_audio),
+                value = stringResource(
+                    if (state.keepAliveEnabled && isAudioPlaying) {
+                        R.string.settings_keepalive_status_active
+                    } else {
+                        R.string.settings_keepalive_status_inactive
+                    }
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_audio_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 1. 24小时后台无音量音频
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_audio),
-            value = stringResource(
-                if (state.keepAliveEnabled && isAudioPlaying) {
-                    R.string.settings_keepalive_status_active
-                } else {
-                    R.string.settings_keepalive_status_inactive
-                }
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_audio_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 2. 前台 1px 微型浮窗像素
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_pixel),
+                value = stringResource(
+                    when {
+                        !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
+                        isOverlayAttached -> R.string.settings_keepalive_status_active
+                        !hasOverlayPermission -> R.string.settings_keepalive_status_need_permission
+                        else -> R.string.settings_keepalive_status_inactive
+                    }
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_pixel_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 2. 前台 1px 微型浮窗像素
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_pixel),
-            value = stringResource(
-                when {
-                    !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
-                    isOverlayAttached -> R.string.settings_keepalive_status_active
-                    !hasOverlayPermission -> R.string.settings_keepalive_status_need_permission
-                    else -> R.string.settings_keepalive_status_inactive
-                }
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_pixel_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 3. CPU 防休眠唤醒锁 (WakeLock)
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_wakelock),
+                value = stringResource(
+                    if (state.keepAliveEnabled && isWakeLockHeld) {
+                        R.string.settings_keepalive_status_active
+                    } else {
+                        R.string.settings_keepalive_status_inactive
+                    }
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_wakelock_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 3. CPU 防休眠唤醒锁 (WakeLock)
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_wakelock),
-            value = stringResource(
-                if (state.keepAliveEnabled && isWakeLockHeld) {
-                    R.string.settings_keepalive_status_active
-                } else {
-                    R.string.settings_keepalive_status_inactive
-                }
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_wakelock_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 4. 系统定时作业与精准闹钟 (JobScheduler & AlarmManager)
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_alarm_job),
+                value = stringResource(
+                    if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                    else R.string.settings_keepalive_status_inactive
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_alarm_job_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 4. 系统定时作业与精准闹钟 (JobScheduler & AlarmManager)
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_alarm_job),
-            value = stringResource(
-                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
-                else R.string.settings_keepalive_status_inactive
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_alarm_job_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 5. 双进程互保与系统广播监听
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_daemon_broadcast),
+                value = stringResource(
+                    if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                    else R.string.settings_keepalive_status_inactive
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_daemon_broadcast_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 5. 双进程互保与系统广播监听
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_daemon_broadcast),
-            value = stringResource(
-                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
-                else R.string.settings_keepalive_status_inactive
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_daemon_broadcast_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 6. 伴侣设备服务
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_companion),
+                value = stringResource(
+                    if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
+                    else R.string.settings_keepalive_status_inactive
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_companion_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // 6. 伴侣设备服务
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_companion),
-            value = stringResource(
-                if (state.keepAliveEnabled) R.string.settings_keepalive_status_active
-                else R.string.settings_keepalive_status_inactive
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_companion_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        // 4. 无障碍守护联动
-        AppInfoRow(
-            label = stringResource(R.string.settings_keepalive_accessibility),
-            value = stringResource(
-                when {
-                    !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
-                    isAccessibilityConnected || hasAccessibility -> R.string.settings_keepalive_status_active
-                    else -> R.string.settings_keepalive_status_need_accessibility
-                }
-            ),
-        )
-        Text(
-            text = stringResource(R.string.settings_keepalive_accessibility_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+            // 7. 无障碍守护联动
+            AppInfoRow(
+                label = stringResource(R.string.settings_keepalive_accessibility),
+                value = stringResource(
+                    when {
+                        !state.keepAliveEnabled -> R.string.settings_keepalive_status_inactive
+                        isAccessibilityConnected || hasAccessibility -> R.string.settings_keepalive_status_active
+                        else -> R.string.settings_keepalive_status_need_accessibility
+                    }
+                ),
+            )
+            Text(
+                text = stringResource(R.string.settings_keepalive_accessibility_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
-/** 启动模式与安全锁保护 */
+/**
+ * 渲染运行与安全二级页：提权后端选择 + 应用锁屏保护
+ *
+ * Renders the advanced page: privileged backend choice + app lock protection.
+ */
 @Composable
-private fun OtherCard(
+fun AdvancedSettingsPage(
     state: SettingsUiState,
     onIntent: (SettingsIntent) -> Unit,
-    sensitiveAuthManager: SensitiveAuthManager = koinInject(),
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    appLockManager: AppLockManager = koinInject(),
 ) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
-    val isDeviceSecure = remember(context) { sensitiveAuthManager.isDeviceSecure(context) }
+    val isDeviceSecure = remember(context) { appLockManager.isDeviceSecure(context) }
 
-    AppCard(title = stringResource(R.string.settings_section_other), collapsible = true) {
-        AppFieldLabel(stringResource(R.string.permission_backend))
-        AppSingleChoiceFlow(
-            // 只列后端名，不展示「可用/不可用」——选哪个都行，可用性交给连接流程判
-            options = RemoteBackend.entries.map { it to it.display },
-            selected = state.remoteAccess.configuredBackend,
-            onSelect = { onIntent(SettingsIntent.SetBackend(it)) },
-        )
-
-        AppFieldLabel(stringResource(R.string.settings_sensitive_auth_title))
-        AppLabeledControlRow(
-            label = stringResource(R.string.settings_sensitive_auth_title),
-            trailing = {
-                Switch(
-                    checked = state.sensitiveAuthEnabled,
-                    onCheckedChange = { targetEnabled ->
-                        if (!targetEnabled && isDeviceSecure) {
-                            // 关闭保护前需要进行系统锁身份确认
-                            activity?.let { act ->
-                                sensitiveAuthManager.authenticate(
-                                    activity = act,
-                                    title = context.getString(R.string.auth_prompt_title_disable),
-                                    subtitle = context.getString(R.string.auth_prompt_subtitle),
-                                    onSuccess = {
-                                        onIntent(SettingsIntent.SetSensitiveAuth(false))
-                                    },
-                                )
+    SettingsSubPage(titleRes = R.string.settings_cat_advanced, onBack = onBack, modifier = modifier) {
+        AppCard {
+            AppFieldLabel(stringResource(R.string.permission_backend))
+            AppSingleChoiceFlow(
+                // 只列后端名，不展示「可用/不可用」——选哪个都行，可用性交给连接流程判
+                options = RemoteBackend.entries.map { it to it.display },
+                selected = state.remoteAccess.configuredBackend,
+                onSelect = { onIntent(SettingsIntent.SetBackend(it)) },
+            )
+        }
+        AppCard {
+            AppFieldLabel(stringResource(R.string.settings_app_lock_title))
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_app_lock_title),
+                trailing = {
+                    Switch(
+                        checked = state.appLockEnabled,
+                        onCheckedChange = { targetEnabled ->
+                            if (!targetEnabled && isDeviceSecure) {
+                                // 关闭保护前需要进行系统锁身份确认
+                                activity?.let { act ->
+                                    appLockManager.authenticate(
+                                        activity = act,
+                                        title = context.getString(R.string.auth_prompt_title_disable),
+                                        subtitle = context.getString(R.string.auth_prompt_subtitle),
+                                        onSuccess = {
+                                            onIntent(SettingsIntent.SetAppLock(false))
+                                        },
+                                    )
+                                }
+                            } else {
+                                onIntent(SettingsIntent.SetAppLock(targetEnabled))
                             }
-                        } else {
-                            onIntent(SettingsIntent.SetSensitiveAuth(targetEnabled))
-                        }
-                    },
-                )
-            },
-        )
-        Text(
-            text = stringResource(R.string.settings_sensitive_auth_desc) +
-                if (!isDeviceSecure) " " + stringResource(R.string.settings_sensitive_auth_no_lock_hint) else "",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_app_lock_desc) +
+                    if (!isDeviceSecure) " " + stringResource(R.string.settings_app_lock_no_lock_hint) else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
-/** 桌面小组件固定添加卡片 / Home screen widget pin card */
+/**
+ * 渲染桌面小组件固定添加二级页：走系统的 pin 请求把两颗小组件挂上桌面
+ *
+ * Renders the widget pin page: asks the system to pin the two widgets to the
+ * home screen.
+ */
 @Composable
-private fun WidgetCard() {
+fun WidgetSettingsPage(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val appWidgetManager = remember(context) { AppWidgetManager.getInstance(context) }
     val supported = remember(appWidgetManager) {
@@ -569,75 +736,101 @@ private fun WidgetCard() {
         }
     }
 
-    AppCard(title = stringResource(R.string.widget_pin_to_home), collapsible = true) {
-        Text(
-            text = stringResource(R.string.widget_pin_to_home_description),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.widget_pin_control),
-            description = stringResource(R.string.widget_control_description),
-            onClick = { pinWidget(AzurPilotControlWidgetReceiver::class.java) },
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.widget_pin_quick),
-            description = stringResource(R.string.widget_quick_description),
-            onClick = { pinWidget(AzurPilotQuickWidgetReceiver::class.java) },
-        )
-    }
-}
-
-@Composable
-private fun AboutCard() {
-    val uriHandler = LocalUriHandler.current
-    AppCard(title = stringResource(R.string.settings_about), collapsible = true) {
-        Text(
-            text = stringResource(R.string.settings_about_description),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        AppInfoRow(stringResource(R.string.settings_version), BuildConfig.VERSION_NAME)
-        AppInfoRow(stringResource(R.string.settings_build), BuildConfig.VERSION_CODE.toString())
-        AppNavigationRow(
-            label = stringResource(R.string.settings_about_license),
-            description = "AGPL-3.0",
-            onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/LICENSE") },
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.settings_about_repository),
-            description = "github.com/wess09/AzurPilot-for-Android",
-            onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android") },
-        )
-        AppNavigationRow(
-            label = stringResource(R.string.settings_about_source_project),
-            description = "github.com/Shinarin/ALAS-AOS",
-            onClick = { uriHandler.openUri("https://github.com/Shinarin/ALAS-AOS") },
-        )
-        AppFieldLabel(stringResource(R.string.settings_about_components))
-        val components = listOf(
-            Triple("AzurPilot", "GPL-3.0", "https://github.com/wess09/AzurPilot"),
-            Triple("PRoot", "GPL-2.0", "https://github.com/proot-me/proot"),
-            Triple("Shizuku", "Apache-2.0", "https://github.com/RikkaApps/Shizuku"),
-            Triple("libsu", "Apache-2.0", "https://github.com/topjohnwu/libsu"),
-            Triple("Koin", "Apache-2.0", "https://github.com/InsertKoinIO/koin"),
-            Triple("Timber", "Apache-2.0", "https://github.com/JakeWharton/timber"),
-            Triple("Apache Commons Compress", "Apache-2.0", "https://github.com/apache/commons-compress"),
-        )
-        components.forEach { (name, license, url) ->
-            AppNavigationRow(label = name, description = license, onClick = { uriHandler.openUri(url) })
+    SettingsSubPage(titleRes = R.string.settings_cat_widget, onBack = onBack, modifier = modifier) {
+        AppCard {
+            Text(
+                text = stringResource(R.string.widget_pin_to_home_description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.widget_pin_control),
+                description = stringResource(R.string.widget_control_description),
+                onClick = { pinWidget(AzurPilotControlWidgetReceiver::class.java) },
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.widget_pin_quick),
+                description = stringResource(R.string.widget_quick_description),
+                onClick = { pinWidget(AzurPilotQuickWidgetReceiver::class.java) },
+            )
         }
-        AppNavigationRow(
-            label = stringResource(R.string.settings_about_all_dependencies),
-            onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/app/gradle/libs.versions.toml") },
-        )
     }
 }
 
 /**
- * 运行时卡：启动时由宿主更新完整 rootfs，上游 git 热更仍由 Android 关闭。
+ * 渲染关于二级页：版本信息、许可证与仓库链接、第三方组件清单
+ *
+ * Renders the about page: version info, license and repository links, and the
+ * third-party component list.
+ *
+ * @param onBack 返回回调 / back callback
  */
 @Composable
-private fun RuntimeCard(
+fun AboutSettingsPage(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val uriHandler = LocalUriHandler.current
+    SettingsSubPage(titleRes = R.string.settings_cat_about, onBack = onBack, modifier = modifier) {
+        AppCard {
+            Text(
+                text = stringResource(R.string.settings_about_description),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            AppInfoRow(stringResource(R.string.settings_version), BuildConfig.VERSION_NAME)
+            AppInfoRow(stringResource(R.string.settings_build), BuildConfig.VERSION_CODE.toString())
+        }
+        AppCard {
+            AppNavigationRow(
+                label = stringResource(R.string.settings_about_license),
+                description = "AGPL-3.0",
+                onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/LICENSE") },
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.settings_about_repository),
+                description = "github.com/wess09/AzurPilot-for-Android",
+                onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android") },
+            )
+            AppNavigationRow(
+                label = stringResource(R.string.settings_about_source_project),
+                description = "github.com/Shinarin/ALAS-AOS",
+                onClick = { uriHandler.openUri("https://github.com/Shinarin/ALAS-AOS") },
+            )
+        }
+        AppCard {
+            AppFieldLabel(stringResource(R.string.settings_about_components))
+            val components = listOf(
+                Triple("AzurPilot", "GPL-3.0", "https://github.com/wess09/AzurPilot"),
+                Triple("PRoot", "GPL-2.0", "https://github.com/proot-me/proot"),
+                Triple("Shizuku", "Apache-2.0", "https://github.com/RikkaApps/Shizuku"),
+                Triple("libsu", "Apache-2.0", "https://github.com/topjohnwu/libsu"),
+                Triple("Koin", "Apache-2.0", "https://github.com/InsertKoinIO/koin"),
+                Triple("Timber", "Apache-2.0", "https://github.com/JakeWharton/timber"),
+                Triple("Apache Commons Compress", "Apache-2.0", "https://github.com/apache/commons-compress"),
+            )
+            components.forEach { (name, license, url) ->
+                AppNavigationRow(label = name, description = license, onClick = { uriHandler.openUri(url) })
+            }
+            AppNavigationRow(
+                label = stringResource(R.string.settings_about_all_dependencies),
+                onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/app/gradle/libs.versions.toml") },
+            )
+        }
+    }
+}
+
+/**
+ * 渲染运行时二级页：启动时由宿主更新完整 rootfs，上游 git 热更仍由 Android 关闭。
+ *
+ * Renders the runtime page: the host updates the full rootfs at startup; upstream
+ * git hot-updates stay disabled by the Android shell.
+ *
+ * @param onBack 返回回调 / back callback
+ */
+@Composable
+fun RuntimeSettingsPage(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
     repository: AzurPilotRepository = koinInject(),
     provisioner: RootfsProvisioner = koinInject(),
     updateManager: AppUpdateManager = koinInject(),
@@ -651,77 +844,81 @@ private fun RuntimeCard(
     val githubMirror by settings.githubMirror.collectAsStateWithLifecycle()
     val githubMirrorCustom by settings.githubMirrorCustom.collectAsStateWithLifecycle()
     val installedVersion = provisioner.installedVersion()
-    AppCard(title = stringResource(R.string.settings_runtime), collapsible = true) {
-        AppInfoRow(
-            stringResource(R.string.settings_runtime_commit),
-            updater?.localHead?.take(12)
-                ?: installedVersion?.substringBefore('-')
-                ?: stringResource(R.string.settings_runtime_unknown),
-        )
-        if (installedVersion != null) {
-            AppInfoRow(stringResource(R.string.settings_runtime_installed), installedVersion)
-        }
-        runtimeCheck.latestVersion?.let { latest ->
-            AppInfoRow(stringResource(R.string.settings_runtime_latest), latest)
-        }
-        if (runtimeCheck.checked) {
-            val status = when {
-                runtimeCheck.error != null -> stringResource(R.string.settings_runtime_check_failed, runtimeCheck.error!!)
-                runtimeCheck.latestVersion == installedVersion -> stringResource(R.string.settings_runtime_current)
-                runtimeCheck.latestVersion != null -> stringResource(R.string.settings_runtime_new_version)
-                else -> stringResource(R.string.settings_runtime_unknown)
-            }
-            Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Text(
-            text = stringResource(R.string.settings_runtime_managed),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = stringResource(R.string.settings_github_mirror),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        MirrorSourcePicker(
-            selected = githubMirror,
-            onSelect = { mirror -> scope.launch { settings.setGithubMirror(mirror) } },
-        )
-        if (githubMirror == ReleaseUrls.CUSTOM) {
-            // 草稿以盘上值为准重新同步；点保存才落盘，避免每敲一个字符写一次 DataStore
-            var customDraft by remember(githubMirrorCustom) { mutableStateOf(githubMirrorCustom) }
-            OutlinedTextField(
-                value = customDraft,
-                onValueChange = { customDraft = it },
-                label = { Text(stringResource(R.string.settings_mirror_custom_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+    SettingsSubPage(titleRes = R.string.settings_cat_runtime, onBack = onBack, modifier = modifier) {
+        AppCard {
+            AppInfoRow(
+                stringResource(R.string.settings_runtime_commit),
+                updater?.localHead?.take(12)
+                    ?: installedVersion?.substringBefore('-')
+                    ?: stringResource(R.string.settings_runtime_unknown),
             )
-            TextButton(
-                enabled = customDraft != githubMirrorCustom,
-                onClick = { scope.launch { settings.setGithubMirrorCustom(customDraft) } },
+            if (installedVersion != null) {
+                AppInfoRow(stringResource(R.string.settings_runtime_installed), installedVersion)
+            }
+            runtimeCheck.latestVersion?.let { latest ->
+                AppInfoRow(stringResource(R.string.settings_runtime_latest), latest)
+            }
+            if (runtimeCheck.checked) {
+                val status = when {
+                    runtimeCheck.error != null -> stringResource(R.string.settings_runtime_check_failed, runtimeCheck.error!!)
+                    runtimeCheck.latestVersion == installedVersion -> stringResource(R.string.settings_runtime_current)
+                    runtimeCheck.latestVersion != null -> stringResource(R.string.settings_runtime_new_version)
+                    else -> stringResource(R.string.settings_runtime_unknown)
+                }
+                Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                text = stringResource(R.string.settings_runtime_managed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = provisioner::checkForUpdates,
+                enabled = !runtimeCheck.checking && provisionState is com.azurpilot.ghio.provision.ProvisionState.Ready,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(stringResource(R.string.settings_mirror_custom_save))
+                Text(stringResource(if (runtimeCheck.checking) R.string.settings_runtime_checking else R.string.settings_runtime_check))
             }
         }
-        Text(
-            text = stringResource(R.string.settings_github_mirror_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(
-            onClick = provisioner::checkForUpdates,
-            enabled = !runtimeCheck.checking && provisionState is com.azurpilot.ghio.provision.ProvisionState.Ready,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(if (runtimeCheck.checking) R.string.settings_runtime_checking else R.string.settings_runtime_check))
-        }
-        Button(
-            onClick = updateManager::check,
-            enabled = !updateState.downloading,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.settings_app_check))
+        AppCard {
+            Text(
+                text = stringResource(R.string.settings_github_mirror),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            MirrorSourcePicker(
+                selected = githubMirror,
+                onSelect = { mirror -> scope.launch { settings.setGithubMirror(mirror) } },
+            )
+            if (githubMirror == ReleaseUrls.CUSTOM) {
+                // 草稿以盘上值为准重新同步；点保存才落盘，避免每敲一个字符写一次 DataStore
+                var customDraft by remember(githubMirrorCustom) { mutableStateOf(githubMirrorCustom) }
+                OutlinedTextField(
+                    value = customDraft,
+                    onValueChange = { customDraft = it },
+                    label = { Text(stringResource(R.string.settings_mirror_custom_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    enabled = customDraft != githubMirrorCustom,
+                    onClick = { scope.launch { settings.setGithubMirrorCustom(customDraft) } },
+                ) {
+                    Text(stringResource(R.string.settings_mirror_custom_save))
+                }
+            }
+            Text(
+                text = stringResource(R.string.settings_github_mirror_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = updateManager::check,
+                enabled = !updateState.downloading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.settings_app_check))
+            }
         }
     }
 }

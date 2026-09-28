@@ -12,7 +12,7 @@ import android.os.IBinder
 import timber.log.Timber
 
 /**
- * 金标联盟「公平运行内存」机制适配 / ITGSA "Fair Running Memory" adaptation
+ * 适配金标联盟「公平运行内存」机制：接收系统的 TRIM 预警与 KILL 查杀前广播并按协议应答
  *
  * HyperOS / OriginOS 等按金标联盟标准实现的系统会统计应用（同 uid 高优先级进程集合）的
  * PSS 与 Java 堆，超限时先发 TRIM 预警广播（应释放内存），查杀前再发 KILL 广播（应
@@ -29,6 +29,32 @@ import timber.log.Timber
  *
  * 本应用内存大头是 root uid 的 proot 运行时进程，不计入本应用 PSS；应用侧能释放的量有限，
  * 适配的价值在于按协议应答：系统视本应用为已适配，预警/查杀前会给缓冲而不是直接强杀。
+ *
+ * Adapts the ITGSA "Fair Running Memory" scheme: receives the system's TRIM warning and
+ * pre-kill KILL broadcasts and replies per the protocol.
+ *
+ * HyperOS / OriginOS and other ROMs implementing the ITGSA standard track the app's (the
+ * same-uid high-priority process group's) PSS and Java heap. Past a limit they first send
+ * a TRIM warning broadcast (release memory), then a KILL broadcast before killing (back
+ * up the scene and reply within 3 seconds). An app that does not adapt never learns of
+ * the memory risk and gets its background retention discounted — for this app that means
+ * being killed mid-task and losing the virtual display, so the adaptation is mandatory.
+ *
+ * Protocol (Fair Running Memory spec / HyperOS developer docs):
+ * - actions: `itgsa.intent.action.TRIM` (warning) / `itgsa.intent.action.KILL` (pre-kill
+ *   notice)
+ * - extras["common"]: notifyType (1000 = PSS over limit, 2000 = Java heap over limit),
+ *   notifyId, reason, action ("trim"/"kill"), callback (IBinder)
+ * - extras["extra"]: notifyType=1000 carries pss/pssLimit, 2000 carries
+ *   heapAlloc/heapCapacity (KB)
+ * - reply: callback.transact(FIRST_CALL_TRANSACTION, data, reply, FLAG_ONEWAY), with data
+ *   writing notifyType, notifyId, result (0 = handled, 1 = not handled) and extra (with a
+ *   "reply" note) in that order; 3-second hard deadline
+ *
+ * The bulk of this app's memory belongs to the root-uid proot runtime process and does
+ * not count toward the app's PSS, so little can be freed app-side; the value of adapting
+ * lies in replying per protocol: the system then treats the app as adapted and grants a
+ * buffer before warning / killing instead of killing outright.
  */
 class FairMemoryAdaptation(private val context: Context) {
 
@@ -37,7 +63,12 @@ class FairMemoryAdaptation(private val context: Context) {
 
     private var registered = false
 
-    /** 对端 callback binder 的死亡监听：对端（系统侧）挂了就解除引用，避免重复应答失败 */
+    /**
+     * 对端 callback binder 的死亡监听；对端（系统侧）进程死亡时仅记录日志
+     *
+     * Death recipient for the system-side callback binder; logs only when the
+     * system process dies.
+     */
     private val deathRecipient = IBinder.DeathRecipient {
         Timber.d("FairMemory: system callback binder died")
     }
@@ -48,6 +79,17 @@ class FairMemoryAdaptation(private val context: Context) {
         }
     }
 
+    /**
+     * 注册 TRIM / KILL 广播接收；幂等，重复调用直接返回
+     *
+     * 回调统一切到 [handlerThread] 处理；注册失败仅告警，不抛出
+     *
+     * Registers the TRIM / KILL broadcast receiver; idempotent, repeat calls return
+     * immediately.
+     *
+     * Callbacks are dispatched on [handlerThread]; registration failures are logged,
+     * not thrown.
+     */
     fun start() {
         if (registered) return
         val filter = IntentFilter().apply {
@@ -68,6 +110,12 @@ class FairMemoryAdaptation(private val context: Context) {
         }
     }
 
+    /**
+     * 注销广播接收并退出监听线程；未注册时为空操作
+     *
+     * Unregisters the broadcast receiver and quits the handler thread; a no-op
+     * when not registered.
+     */
     fun stop() {
         if (!registered) return
         runCatching { context.unregisterReceiver(receiver) }
@@ -76,6 +124,12 @@ class FairMemoryAdaptation(private val context: Context) {
         handlerThread.quitSafely()
     }
 
+    /**
+     * 解析广播并按协议应答；运行在 [handlerThread] 上，须在 3 秒硬限内完成
+     *
+     * Parses the broadcast and replies per the protocol; runs on [handlerThread] and
+     * must complete within the 3-second hard deadline.
+     */
     private fun handle(intent: Intent) {
         val common = intent.getBundleExtra(BUNDLE_COMMON)
         if (common == null) {
@@ -113,7 +167,12 @@ class FairMemoryAdaptation(private val context: Context) {
         reply(callback, notifyType, notifyId, result)
     }
 
-    /** 预警（action=trim）：释放应用侧内存。运行时大头在 root 侧，这里只能尽力触发回收 */
+    /**
+     * 预警（action=trim）：释放应用侧内存。运行时大头在 root 侧，这里只能尽力触发回收
+     *
+     * Trim warning (action=trim): frees app-side memory. The bulk lives in the root
+     * runtime, so this can only request a best-effort GC.
+     */
     private fun trimMemory() {
         Runtime.getRuntime().gc()
         Timber.i("FairMemory: trim handled, GC requested")
@@ -122,11 +181,17 @@ class FairMemoryAdaptation(private val context: Context) {
     /**
      * 查杀（action=kill）：3 秒硬限内备份现场。本应用的状态（设置、日志、ALAS 场景文件）
      * 本就实时落盘，查杀后的拉活自愈由保活体系负责，这里补一条现场记录
+     *
+     * Pre-kill (action=kill): backs up the scene within the 3-second hard deadline.
+     * This app's state (settings, logs, ALAS scene files) is already persisted to disk
+     * in real time and the keep-alive system handles post-kill recovery, so this only
+     * records a scene log entry.
      */
     private fun saveScene() {
         Timber.w("FairMemory: KILL received, scene persisted on disk, keep-alive will recover")
     }
 
+    /** 生成 extra 包的可读摘要供日志使用 / Builds a human-readable summary of the extra bundle for logging. */
     private fun describe(notifyType: Int, extra: Bundle): String = when (notifyType) {
         // vivo 文档的表键名是 heapSize，小米示例代码读的是 heapAlloc，两处都兜一下
         NOTIFY_TYPE_PSS ->
@@ -142,7 +207,12 @@ class FairMemoryAdaptation(private val context: Context) {
         else -> "notifyType=$notifyType"
     }
 
-    /** 应答系统：FLAG_ONEWAY 立即返回，协议见类 KDoc；3 秒硬限内必须完成 */
+    /**
+     * 应答系统：FLAG_ONEWAY 立即返回，协议见类 KDoc；3 秒硬限内必须完成
+     *
+     * Replies to the system; FLAG_ONEWAY returns immediately. See the protocol in
+     * the class doc; must complete within the 3-second hard deadline.
+     */
     private fun reply(callback: IBinder, notifyType: Int, notifyId: Int, result: Int) {
         val data = android.os.Parcel.obtain()
         val replyParcel = android.os.Parcel.obtain()
@@ -185,10 +255,16 @@ class FairMemoryAdaptation(private val context: Context) {
         const val KEY_HEAP_SIZE = "heapSize"
         const val KEY_HEAP_CAPACITY = "heapCapacity"
 
+        /** 预警类型：PSS 超限 / Warning type: PSS over limit. */
         const val NOTIFY_TYPE_PSS = 1000
+
+        /** 预警类型：Java 堆超限 / Warning type: Java heap over limit. */
         const val NOTIFY_TYPE_HEAP = 2000
 
+        /** 应答结果：已处理 / Reply result: handled. */
         const val RESULT_HANDLED = 0
+
+        /** 应答结果：未处理 / Reply result: not handled. */
         const val RESULT_UNHANDLED = 1
 
         const val KEY_REPLY = "reply"

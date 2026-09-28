@@ -36,9 +36,18 @@ import org.koin.androidx.compose.koinViewModel
 import java.io.File
 
 /**
- * 尾部加载日志查看器（带顶栏的整页）：启动器日志与 AzurPilot 日志 txt 共用
+ * 渲染尾部加载日志查看器（带顶栏的整页）：启动器日志与 AzurPilot 日志 txt 共用
  *
  * [file] 为 null（路径解析失败/已不存在）直接显示缺失态
+ *
+ * Renders the tail-loading log viewer (full page with a top bar); shared by the
+ * launcher logs and AzurPilot txt logs.
+ *
+ * A null [file] (path resolution failed / file gone) shows the missing state
+ * directly.
+ *
+ * @param file 要查看的日志文件；null 走缺失态 / log file to view; null shows the
+ *   missing state
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +99,14 @@ fun LogTailScreen(
  *
  * 长行换行，不挂横向滚动：`LazyColumn` 外面套 `horizontalScroll` 时列表宽度取的是当前可见的
  * 最长一行，竖向一滑宽度就变、横向偏移跟着被夹一次，真机上卡到滑不动
+ *
+ * Renders the viewer body (no top bar): opens reading the last ~500KB, and the
+ * "load earlier" button at the top walks 500KB further back each time.
+ *
+ * Long lines wrap; no horizontal scrolling: wrapping `LazyColumn` in
+ * `horizontalScroll` sizes the list to the longest currently visible line, so a
+ * vertical flick changes the width and clamps the horizontal offset once per
+ * scroll — on real devices it jams until it cannot move.
  */
 @Composable
 fun LogTailContent(

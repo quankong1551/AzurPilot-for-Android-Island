@@ -44,6 +44,15 @@ import kotlinx.coroutines.delay
  *
  * 报告是**机器级**的（`log/meowfficer_score.json`），跟哪个实例无关，所以 `instance` 参数
  * 只用于校验。页面可见期间每 5 秒刷一次：评分任务跑起来之后，结果会自己出现。
+ *
+ * The Meowfficer (commander cat) scoring page.
+ *
+ * The report is **machine-level** (`log/meowfficer_score.json`), independent of
+ * any instance, so the `instance` parameter is only for validation. It
+ * refreshes every 5 seconds while the page is visible: once the scoring task
+ * runs, the result shows up on its own.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun MeowfficerPage(repository: AzurPilotRepository) {
@@ -146,6 +155,15 @@ fun MeowfficerPage(repository: AzurPilotRepository) {
     }
 }
 
+/**
+ * 一只指挥喵的评分卡：等级/品阶/结论徽章 + 结论与养成建议
+ *
+ * One commander cat's score card: level/tier/verdict badges plus the verdict
+ * and training advice.
+ *
+ * @param cat 评分数据 / the scoring data
+ * @param modifier 应用于卡片的修饰符 / the modifier applied to the card
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CatCard(cat: AzurPilotCat, modifier: Modifier = Modifier) {
@@ -218,6 +236,7 @@ private fun CatCard(cat: AzurPilotCat, modifier: Modifier = Modifier) {
     }
 }
 
+/** 「标签: 值」行，固定 4:6 分栏 / A "label: value" row with a fixed 4:6 split. */
 @Composable
 private fun ApMeowRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.md)) {
@@ -231,6 +250,13 @@ private fun ApMeowRow(label: String, value: String) {
     }
 }
 
-/** 评分报告是网关提供的独立 HTML，走设备本机浏览器看（不是 WebUI） */
+/**
+ * 评分报告是网关提供的独立 HTML，走设备本机浏览器看（不是 WebUI）
+ *
+ * The score report is a standalone HTML served by the gateway, viewed in the
+ * device's local browser (not the WebUI).
+ */
 private const val MEOWFFICER_REPORT_URL = "http://127.0.0.1:${com.azurpilot.ghio.proot.ProotHost.WEBUI_PORT}/reports/meowfficer_score"
+
+/** 页面可见期间的轮询间隔（毫秒） / The polling interval while the page is visible, in milliseconds. */
 private const val POLL_MS = 5_000L

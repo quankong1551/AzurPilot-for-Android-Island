@@ -64,7 +64,14 @@ import com.azurpilot.ghio.ui.azurpilot.taskStateText
 import com.azurpilot.ghio.ui.components.AppCard
 import com.azurpilot.ghio.ui.components.AppLabeledControlRow
 
-/** 总览：调度器状态、资源、实时画面、任务计划 */
+/**
+ * 总览：调度器状态、资源、实时画面、任务计划
+ *
+ * The Overview section: scheduler status, resources, the live preview, and the
+ * task plan.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ */
 @Composable
 fun OverviewSection(repository: AzurPilotRepository) {
     val overview by repository.overview.collectAsStateWithLifecycle()
@@ -162,6 +169,16 @@ fun OverviewSection(repository: AzurPilotRepository) {
  *
  * 总览是「一眼看状态并动手」的那一页，启停按钮必须在它上面。状态是 error 时按钮回到「启动」
  * ——那正是重试的入口；进行中的那一次会禁用按钮，stop 在服务端最长要等 30s 才回话。
+ *
+ * The scheduler start/stop button.
+ *
+ * Overview is the "see the status and act" page, so the start/stop button must
+ * live here. When the status is error the button flips back to "start" — that
+ * is exactly the retry entry; the in-flight call disables the button, since
+ * stop can take up to 30 s on the server before it answers.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param running 调度器当前是否在运行 / whether the scheduler is running
  */
 @Composable
 private fun SchedulerButton(repository: AzurPilotRepository, running: Boolean) {
@@ -197,6 +214,7 @@ private fun SchedulerButton(repository: AzurPilotRepository, running: Boolean) {
     }
 }
 
+/** 任务计数小字：运行中 / 待运行 / 等待 / A small task-count line: running / pending / waiting. */
 @Composable
 private fun TaskCounts(tasks: List<AzurPilotTask>) {
     Text(
@@ -212,7 +230,12 @@ private fun TaskCounts(tasks: List<AzurPilotTask>) {
     )
 }
 
-/** 资源格：两列铺开，零值显示占位符（服务端用 0 + 哨兵时间戳表达「从未同步」） */
+/**
+ * 资源格：两列铺开，零值显示占位符（服务端用 0 + 哨兵时间戳表达「从未同步」）
+ *
+ * The resource grid: two columns; zero values render as a placeholder (the
+ * server expresses "never synced" as 0 plus a sentinel timestamp).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ResourceGrid(resources: List<AzurPilotResource>) {
@@ -262,7 +285,15 @@ private fun ResourceGrid(resources: List<AzurPilotResource>) {
     }
 }
 
-/** 实时画面：网关只在订阅期间推帧，这里不做抓拍 */
+/**
+ * 实时画面：网关只在订阅期间推帧，这里不做抓拍
+ *
+ * The live preview: the gateway pushes frames only while subscribed; no
+ * snapshot capture here.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param modifier 应用于卡片的修饰符 / the modifier applied to the card
+ */
 @Composable
 private fun PreviewCard(repository: AzurPilotRepository, modifier: Modifier = Modifier) {
     val preview by repository.preview.collectAsStateWithLifecycle()
@@ -306,7 +337,15 @@ private fun PreviewCard(repository: AzurPilotRepository, modifier: Modifier = Mo
     }
 }
 
-/** 任务计划：顺序沿用网关的排序（运行中 → 待运行 → 等待） */
+/**
+ * 任务计划：顺序沿用网关的排序（运行中 → 待运行 → 等待）
+ *
+ * The task plan: the order follows the gateway's (running → pending →
+ * waiting).
+ *
+ * @param tasks 任务列表 / the task list
+ * @param onRunNow 立刻运行某任务 / runs one task immediately
+ */
 @Composable
 private fun TaskPlan(tasks: List<AzurPilotTask>, onRunNow: (String) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {

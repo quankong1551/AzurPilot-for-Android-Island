@@ -28,20 +28,45 @@ import kotlinx.coroutines.launch
  *
  * **凡是在启动早期同步读 `.value` 的调用方都必须先等 [loaded]**：早读一步拿到的是
  * 默认值，Root 用户会被当成 Shizuku。启动首屏与 `AzurPilotApp.postCreate` 都挂在这上面
+ *
+ * 自持一条 IO 协程程域做读盘与迁移，进程级单例（Koin single）；所有写入都是
+ * DataStore 事务，跨协程安全。
+ *
+ * The single read/write entry point for app settings.
+ *
+ * Each setting is exposed as a StateFlow. Disk reading is asynchronous, so
+ * before [loaded] is set `.value` still holds the schema defaults — the
+ * synchronous `.value` exists for the
+ * [com.azurpilot.ghio.privileged.RemoteServiceManager] chain (it takes a
+ * `() -> RemoteBackend` with no suspension point), so the disk read cannot be
+ * dropped, only moved out of the constructor.
+ *
+ * **Every caller that synchronously reads `.value` early in startup must first
+ * await [loaded]**: reading one step early yields the default value and a Root
+ * user is treated as Shizuku. Both the startup screen and
+ * `AzurPilotApp.postCreate` hang off this.
+ *
+ * The manager owns one IO coroutine scope for disk reads and migration, and is
+ * a process-level singleton (Koin single); all writes are DataStore
+ * transactions, safe across coroutines.
  */
 class AppSettingsManager(private val context: Context) : AppSettingsGateway {
 
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchers.IO)
 
     companion object {
+        /** 单名 DataStore；属性委托保证全进程只有一个实例 / The single-name DataStore; the property delegate guarantees one instance per process. */
         private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "app_settings")
     }
 
+    /** 整包 [AppSettings] 的原始流，未解析、含全部字段 / The raw flow of the whole [AppSettings], unparsed with all fields. */
     val settings: Flow<AppSettings> = with(AppSettingsSchema) { context.dataStore.flow }
 
     private val defaults = AppSettings()
 
     private val _virtualDisplayRefreshRate = MutableStateFlow(0f)
+
+    /** 虚拟屏刷新率，非法盘上值一律回落 0f / The virtual display refresh rate; invalid stored values always fall back to 0f. */
     val virtualDisplayRefreshRate: StateFlow<Float> = _virtualDisplayRefreshRate.asStateFlow()
 
     private val _loaded = MutableStateFlow(false)
@@ -51,16 +76,29 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
      *
      * 等待点：启动首屏（`MainActivity`）与 `AzurPilotApp.postCreate`（`RemoteServiceManager`
      * 一初始化就同步读 startupBackend）
+     *
+     * Whether the first disk read has landed in the StateFlows below; only
+     * after this is set does `.value` hold the on-disk values.
+     *
+     * Awaiting points: the startup screen (`MainActivity`) and
+     * `AzurPilotApp.postCreate` (RemoteServiceManager synchronously reads
+     * startupBackend as soon as it initializes).
      */
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
     private val _startupBackend = MutableStateFlow(parseBackend(defaults.startupBackend))
+
+    /** 启动期提权后端 / The privileged backend used at startup. */
     val startupBackend: StateFlow<RemoteBackend> = _startupBackend.asStateFlow()
 
     private val _skipShizukuCheck = MutableStateFlow(defaults.skipShizukuCheck.toBoolean())
+
+    /** 是否跳过 Shizuku 引导提醒 / Whether the Shizuku onboarding reminder is skipped. */
     val skipShizukuCheck: StateFlow<Boolean> = _skipShizukuCheck.asStateFlow()
 
     private val _shizukuLaunchPackage = MutableStateFlow(defaults.shizukuLaunchPackage)
+
+    /** Shizuku 管理器包名 / The Shizuku manager package name. */
     val shizukuLaunchPackage: StateFlow<String> = _shizukuLaunchPackage.asStateFlow()
 
     private val _runMode = MutableStateFlow(parseRunMode(defaults.runMode))
@@ -78,13 +116,17 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     private val _keepAliveEnabled = MutableStateFlow(defaults.keepAliveEnabled.toBoolean())
     override val keepAliveEnabled: StateFlow<Boolean> = _keepAliveEnabled.asStateFlow()
 
-    private val _sensitiveAuthEnabled = MutableStateFlow(defaults.sensitiveAuthEnabled.toBoolean())
-    override val sensitiveAuthEnabled: StateFlow<Boolean> = _sensitiveAuthEnabled.asStateFlow()
+    private val _appLockEnabled = MutableStateFlow(defaults.appLockEnabled.toBoolean())
+    override val appLockEnabled: StateFlow<Boolean> = _appLockEnabled.asStateFlow()
 
     private val _githubMirror = MutableStateFlow(defaults.githubMirror)
+
+    /** Release 下载源 / The release download source. */
     val githubMirror: StateFlow<String> = _githubMirror.asStateFlow()
 
     private val _githubMirrorCustom = MutableStateFlow(defaults.githubMirrorCustom)
+
+    /** 自定义镜像前缀 / The custom mirror prefix. */
     val githubMirrorCustom: StateFlow<String> = _githubMirrorCustom.asStateFlow()
 
     init {
@@ -103,7 +145,7 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
                 _screenSaverEnabled.value = s.screenSaverEnabled.toBoolean()
                 _autoCleanLogs.value = s.autoCleanLogs.toBoolean()
                 _keepAliveEnabled.value = s.keepAliveEnabled.toBoolean()
-                _sensitiveAuthEnabled.value = s.sensitiveAuthEnabled.toBoolean()
+                _appLockEnabled.value = s.appLockEnabled.toBoolean()
                 _githubMirror.value = s.githubMirror
                 _githubMirrorCustom.value = s.githubMirrorCustom
                 // 必须是最后一行：置位即宣告上面全部就位
@@ -115,6 +157,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /**
      * 旧版是布尔镜像开关（useGithubMirror=true 即 ghproxy.net）；新键不存在而旧开关为 true
      * 时迁到对应镜像。迁移先于上面的 collect 完成（同一 scope 顺序 launch）。
+     *
+     * Legacy versions used a boolean mirror switch (useGithubMirror=true meant
+     * ghproxy.net); when the new key is absent and the old switch is true, the
+     * value migrates to the corresponding mirror. The migration completes
+     * before the collect above (sequential launches on the same scope).
      */
     private fun migrateLegacyMirrorSwitch() {
         scope.launch {
@@ -131,19 +178,23 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
         }
     }
 
+    /** 写入启动期提权后端 / Writes the startup privileged backend. */
     suspend fun setStartupBackend(backend: RemoteBackend) = with(AppSettingsSchema) {
         context.dataStore.edit { it[startupBackend] = backend.name }
     }
 
+    /** 写入虚拟屏刷新率；负数或非有限值直接抛 [IllegalArgumentException] / Writes the virtual display refresh rate; a negative or non-finite value throws [IllegalArgumentException] immediately. */
     suspend fun setVirtualDisplayRefreshRate(rate: Float): Unit = with(AppSettingsSchema) {
         require(rate.isFinite() && rate >= 0f)
         context.dataStore.edit { it[virtualDisplayRefreshRate] = rate.toString() }
     }
 
+    /** 写入「跳过 Shizuku 提醒」 / Writes the "skip Shizuku reminder" flag. */
     suspend fun setSkipShizukuCheck(skip: Boolean) = with(AppSettingsSchema) {
         context.dataStore.edit { it[skipShizukuCheck] = skip.toString() }
     }
 
+    /** 写入 Shizuku 管理器包名 / Writes the Shizuku manager package name. */
     suspend fun setShizukuLaunchPackage(packageName: String) = with(AppSettingsSchema) {
         context.dataStore.edit { it[shizukuLaunchPackage] = packageName }
     }
@@ -168,25 +219,34 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
         context.dataStore.edit { it[keepAliveEnabled] = enabled.toString() }
     }
 
-    override suspend fun setSensitiveAuthEnabled(enabled: Boolean): Unit = with(AppSettingsSchema) {
-        context.dataStore.edit { it[sensitiveAuthEnabled] = enabled.toString() }
+    override suspend fun setAppLockEnabled(enabled: Boolean): Unit = with(AppSettingsSchema) {
+        context.dataStore.edit { it[appLockEnabled] = enabled.toString() }
     }
 
+    /** 写入 Release 下载源 / Writes the release download source. */
     suspend fun setGithubMirror(mirror: String): Unit = with(AppSettingsSchema) {
         context.dataStore.edit { it[githubMirror] = mirror }
     }
 
+    /** 写入自定义镜像前缀 / Writes the custom mirror prefix. */
     suspend fun setGithubMirrorCustom(prefix: String): Unit = with(AppSettingsSchema) {
         context.dataStore.edit { it[githubMirrorCustom] = prefix }
     }
 
-    /** 盘上是历史遗留或手改的非法值时回落默认，不让设置读取本身抛异常 */
+    /**
+     * 解析后端枚举；盘上是历史遗留或手改的非法值时回落默认，不让设置读取本身抛异常
+     *
+     * Parses the backend enum; a legacy or hand-edited invalid stored value
+     * falls back to the default instead of making the settings read throw.
+     */
     private fun parseBackend(raw: String): RemoteBackend =
         runCatching { RemoteBackend.valueOf(raw) }.getOrDefault(RemoteBackend.SHIZUKU)
 
+    /** 解析运行模式枚举，非法值回落 [RunMode.BACKGROUND] / Parses the run mode enum; invalid values fall back to [RunMode.BACKGROUND]. */
     private fun parseRunMode(raw: String): RunMode =
         runCatching { RunMode.valueOf(raw) }.getOrDefault(RunMode.BACKGROUND)
 
+    /** 解析悬浮控制模式枚举，非法值回落 [OverlayControlMode.FLOAT_BALL] / Parses the overlay control mode enum; invalid values fall back to [OverlayControlMode.FLOAT_BALL]. */
     private fun parseOverlayMode(raw: String): OverlayControlMode =
         runCatching { OverlayControlMode.valueOf(raw) }.getOrDefault(OverlayControlMode.FLOAT_BALL)
 }

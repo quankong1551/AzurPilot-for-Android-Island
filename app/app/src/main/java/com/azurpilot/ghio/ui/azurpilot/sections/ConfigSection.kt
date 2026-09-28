@@ -73,15 +73,29 @@ import com.azurpilot.ghio.ui.components.AppNavigationRow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-/** FleetInfo 是唯一不走通用表单的任务：它的结果是一个隐藏的 JSON 舰队快照 */
+/**
+ * FleetInfo 是唯一不走通用表单的任务：它的结果是一个隐藏的 JSON 舰队快照
+ *
+ * FleetInfo is the only task that bypasses the generic form: its result is a
+ * hidden JSON fleet snapshot.
+ */
 private const val FLEET_INFO = "FleetInfo"
 
-/** 自启开关挂在系统设置任务页上——它描述的是「整机启动时怎么办」，不属于任何一个任务参数 */
+/**
+ * 自启开关挂在系统设置任务页上——它描述的是「整机启动时怎么办」，不属于任何一个任务参数
+ *
+ * The startup switches hang on the system-settings task page — they describe
+ * "what happens at app start", not any single task argument.
+ */
 private const val STARTUP_TASK = "Alas"
 
+/** 舰队快照里的角色键，与编队号一起定位一支舰队 / The role keys in a fleet snapshot; together with a fleet number they locate one fleet. */
 private val FLEET_ROLES = listOf("vanguard", "main", "submarine")
+
+/** 编队号取值范围 / The possible fleet numbers. */
 private val FLEET_NUMBERS = listOf(1, 2, 3, 4, 5, 6)
 
+/** 工具任务页展示的日志行数 / The number of log lines shown on a tool-task page. */
 private const val TOOL_LOG_LINES = 60
 
 /**
@@ -89,6 +103,15 @@ private const val TOOL_LOG_LINES = 60
  *
  * 目录结构与名称全部取自 `schema.get`——菜单分组由 `menu.json` 定，任务名与分组标题走运行时翻译，
  * 所以上游加了任务这里自动就有了。
+ *
+ * The Config section: the task catalog.
+ *
+ * Catalog structure and names all come from `schema.get` — menu grouping is
+ * defined by `menu.json`, and task names and group titles go through runtime
+ * translation, so tasks added upstream show up here automatically.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param onOpenTask 打开某任务的配置页 / opens one task's config page
  */
 @Composable
 fun ConfigSection(repository: AzurPilotRepository, onOpenTask: (String) -> Unit) {
@@ -156,12 +179,29 @@ fun ConfigSection(repository: AzurPilotRepository, onOpenTask: (String) -> Unit)
  *
  * 布局：搜索条是列表的**第一项**，上滑就跟着内容滚走——参数动辄八九组上百项，
  * 把搜索和目录钉在顶上等于常驻吃掉一整行。滚走之后由顶栏的搜索图标把它找回来。
+ *
+ * One task's config page.
+ *
+ * Arguments, grouping, and control shapes are all decided by the schema; the
+ * UI only "renders + commits", which is why 97 tasks with 2500+ arguments need
+ * no per-task code.
+ *
+ * Layout: the search bar is the list's **first item** and scrolls away with
+ * the content — tasks routinely span eight or nine groups with hundreds of
+ * items, and pinning search + directory to the top would permanently eat a
+ * whole row. Once scrolled away, the top bar's search icon brings it back.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param task 任务名，来自路由参数 / the task name from the route argument
+ * @param topBarAction 外壳的顶栏动作位：搜索条滚走之后，用它在顶栏显示「找回搜索」
+ *   的入口；null 表示宿主没有顶栏 / the shell's top-bar action slot: once the
+ *   search bar scrolls away it shows the search-recovery entry in the top bar;
+ *   null when the host has no top bar
  */
 @Composable
 fun TaskConfigPage(
     repository: AzurPilotRepository,
     task: String,
-    /** 搜索条滚走之后，外壳用它在顶栏显示「找回搜索」的入口 */
     topBarAction: ApTopBarAction? = null,
 ) {
     val schema by repository.schema.collectAsStateWithLifecycle()
@@ -421,6 +461,20 @@ fun TaskConfigPage(
  *
  * 自绘 Surface + BasicTextField，而不是 OutlinedTextField：后者带标签与 supportingText 的内边距，
  * 单行也要 56dp 起步，在这个位置太贵。全圆角与 MD3 的 search bar 一致。
+ *
+ * A compact search field.
+ *
+ * A hand-rolled Surface + BasicTextField instead of OutlinedTextField: the
+ * latter carries label and supportingText padding — 56 dp minimum even for a
+ * single line — too expensive in this spot. The fully rounded shape matches
+ * the MD3 search bar.
+ *
+ * @param value 当前搜索词 / the current query
+ * @param onValueChange 搜索词变化回调 / invoked when the query changes
+ * @param placeholder 占位文案 / the placeholder text
+ * @param modifier 应用于搜索条的修饰符 / the modifier applied to the field
+ * @param focusRequester 外部请求聚焦用（如顶栏找回搜索） / lets the outside
+ *   request focus (e.g. the top-bar search recovery)
  */
 @Composable
 private fun ApCompactSearchField(
@@ -491,7 +545,15 @@ private fun ApCompactSearchField(
     }
 }
 
-/** 分组目录：一眼看全分组，且不占配置区的高度 */
+/**
+ * 分组目录：一眼看全分组，且不占配置区的高度
+ *
+ * The group directory: every group visible at a glance without occupying any
+ * config-area height.
+ *
+ * @param titles 分组标题，顺序与列表一致 / the group titles, in list order
+ * @param onJump 跳到第 index 组的卡片 / jumps to the index-th group's card
+ */
 @Composable
 private fun GroupDirectoryMenu(titles: List<String>, onJump: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -522,6 +584,17 @@ private fun GroupDirectoryMenu(titles: List<String>, onJump: (Int) -> Unit) {
  *
  * 「启动时自动运行」与「启动时记忆运行」是两个不同的策略，WebUI 把它们并排放在系统设置任务页上；
  * 这里照做——只在别处给一个「自动运行」会让人以为记忆功能不存在。
+ *
+ * The startup-switches card.
+ *
+ * "Auto-run at start" and "remember the run at start" are two different
+ * policies; the WebUI puts them side by side on the system-settings task page,
+ * and this card does the same — offering "auto-run" alone elsewhere would make
+ * people believe the remember feature does not exist.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param startup 自启配置；null 表示尚未加载，此时开关禁用 / the startup config;
+ *   null while not yet loaded, in which case the switches are disabled
  */
 @Composable
 private fun StartupCard(repository: AzurPilotRepository, startup: AzurPilotStartup?) {
@@ -566,6 +639,14 @@ private fun StartupCard(repository: AzurPilotRepository, startup: AzurPilotStart
  *
  * `FleetInfo.Result` 是 `display: hide` 的 `stored` 字段，通用表单看不见它，所以这个任务页
  * 必须单独渲染——否则点进去只有一句「没有可配置项」。
+ *
+ * The fleet-scan result card.
+ *
+ * `FleetInfo.Result` is a `stored` field with `display: hide` that the generic
+ * form cannot see, so this task page must render it on its own — otherwise the
+ * page shows nothing but "nothing to configure".
+ *
+ * @param value `FleetInfo.Result` 的原始值 / the raw `FleetInfo.Result` value
  */
 @Composable
 private fun FleetInfoCard(value: ApValue) {
@@ -635,14 +716,17 @@ private fun FleetInfoCard(value: ApValue) {
     }
 }
 
+/** 角色键 → 分区标题资源 / Maps a role key to its section-title resource. */
 private fun fleetRoleLabel(role: String): Int = when (role) {
     "vanguard" -> R.string.ap_fleet_vanguard
     "main" -> R.string.ap_fleet_main
     else -> R.string.ap_fleet_submarine
 }
 
+/** 一艘船：名字 + 可选等级 / One ship: a name plus an optional level. */
 private data class FleetShip(val name: String, val level: Int?)
 
+/** 舰队快照：角色 → 编队号 → 船列表 / A fleet snapshot: role → fleet number → ship list. */
 private data class FleetSnapshot(val roles: Map<String, Map<Int, List<FleetShip>>>)
 
 /**
@@ -650,6 +734,13 @@ private data class FleetSnapshot(val roles: Map<String, Map<Int, List<FleetShip>
  *
  * 服务端存的是 `{vanguard: {"1": [{name, level}]}, main: …, submarine: …}`，但历史上也存过
  * JSON 字符串。两种都收；返回 null 表示内容根本不像舰队记录（与「记录为空」区分开）。
+ *
+ * Parses a fleet snapshot.
+ *
+ * The server stores `{vanguard: {"1": [{name, level}]}, main: …, submarine:
+ * …}`, but historically it also stored a JSON string. Both are accepted;
+ * returning null means the content does not look like a fleet record at all
+ * (kept distinct from "the record is empty").
  */
 private fun parseFleetInfo(value: ApValue): FleetSnapshot? {
     val map: Map<*, *> = when (value) {
@@ -686,7 +777,18 @@ private fun parseFleetInfo(value: ApValue): FleetSnapshot? {
     return FleetSnapshot(roles)
 }
 
-/** 受限 Lua 脚本的检查：返回 null 表示通过，否则是可直接显示的诊断文案 */
+/**
+ * 受限 Lua 脚本的检查：返回 null 表示通过，否则是可直接显示的诊断文案
+ *
+ * Validates a restricted Lua script: null means it passed; otherwise the
+ * return value is a diagnostic ready to display.
+ *
+ * @param repository 网关仓库 / the gateway repository
+ * @param task 任务名，随校验请求回传 / the task name, sent with the validation
+ *   request
+ * @param script 脚本内容 / the script content
+ * @return 诊断文案；通过时为 null / the diagnostic text, or null when valid
+ */
 private suspend fun checkScript(
     repository: AzurPilotRepository,
     task: String,
@@ -703,6 +805,7 @@ private suspend fun checkScript(
     return first.message + where
 }
 
+/** 由编辑器状态推导某参数行的展示状态 / Derives a field row's display status from the editor state. */
 private fun fieldStatus(path: String, editor: AzurPilotEditorState): ApFieldStatus = when {
     editor.failed.containsKey(path) -> ApFieldStatus.Failed
     path in editor.saving -> ApFieldStatus.Saving
@@ -715,6 +818,13 @@ private fun fieldStatus(path: String, editor: AzurPilotEditorState): ApFieldStat
  *
  * 与 WebUI 的 `isFieldVisible` 同一套规则：`display: hide` 不显示；空的 `storage`
  * 既不生成字段也不生成分组——旧版 `put_arg_storage` 就是这么做的，空存储区显示出来只会是噪音。
+ *
+ * Whether an argument should be shown.
+ *
+ * Same rules as the WebUI's `isFieldVisible`: `display: hide` is not shown;
+ * an empty `storage` produces neither a field nor a group — the legacy
+ * `put_arg_storage` behaves the same, and an empty storage area would be pure
+ * noise on screen.
  */
 private fun isFieldVisible(argument: String, field: AzurPilotField, value: ApValue): Boolean {
     if (argument == "_info" || field.hidden) return false

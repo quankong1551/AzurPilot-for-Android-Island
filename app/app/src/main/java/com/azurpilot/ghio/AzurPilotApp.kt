@@ -48,6 +48,24 @@ import org.koin.core.logger.Level
 import org.koin.core.qualifier.named
 import timber.log.Timber
 
+/**
+ * Application 入口：初始化进程级全局，并按依赖顺序拉起各常驻组件
+ *
+ * 仅主进程走完整初始化；其余进程（:daemon 等守护进程）只挂调试日志树后返回。
+ * 顺序：路径解析 → 崩溃兜底 → Koin → 日志写入器挂载；随后等设置异步加载完成，
+ * 在主线程 [postCreate] 里拉起提权、宿主状态、运行控制器、网关与仓库、
+ * 悬浮窗、保活与桌面小组件刷新。
+ *
+ * The Application entry point: initializes process-level globals and starts
+ * the resident components in dependency order.
+ *
+ * Only the main process takes the full path; any other process (the :daemon
+ * watchdog among them) plants the debug log tree and returns. Order: path
+ * resolution → crash handler → Koin → log writer installation; then, once
+ * settings finish loading asynchronously, [postCreate] runs on the main thread
+ * to start privilege management, host state, the run controller, the gateway
+ * and repository, overlays, keep-alive, and widget refresh.
+ */
 class AzurPilotApp : Application() {
 
     private val writer by inject<AppLogWriter>()
@@ -93,6 +111,23 @@ class AzurPilotApp : Application() {
         }
     }
 
+    /**
+     * 在主线程按依赖顺序拉起常驻组件；由 [onCreate] 在设置加载完成后调用
+     *
+     * 覆盖：提权端口初始化、宿主状态与运行控制器启动、WebSocket 网关与仓库
+     * 订阅（仓库首个实例对齐运行控制器当前选中的配置）、小组件防抖刷新
+     * （任一运行态变化后 300ms 合并一次）、悬浮窗装配、保活与金标联盟
+     * 「公平运行内存」适配。
+     *
+     * Starts the resident components on the main thread in dependency order;
+     * invoked by [onCreate] once settings finish loading.
+     *
+     * Covers: privilege port initialization, host state and run controller
+     * startup, the WebSocket gateway and repository subscriptions (the
+     * repository's first instance aligns with the run controller's selected
+     * config), debounced widget refresh (coalesced 300 ms after any run-state
+     * change), overlay setup, keep-alive, and the "fair memory" adaptation.
+     */
     @OptIn(FlowPreview::class)
     fun postCreate(koin: Koin) {
         koin.get<PermissionManager>()
@@ -102,7 +137,7 @@ class AzurPilotApp : Application() {
         hostState.start()
         val runController = koin.get<AzurPilotRunController>()
         runController.start()
-        // 富接口：与 /android/* 薄接口并存。实例选择归 repository 自己管，
+        // 富接口：与 /android/… 薄接口并存。实例选择归 repository 自己管，
         // 首次进入时对齐运行控制器选的那个配置——否则原生界面一打开就是空实例。
         koin.get<AzurPilotGateway>().start()
         val repository = koin.get<AzurPilotRepository>()
@@ -140,6 +175,16 @@ class AzurPilotApp : Application() {
         FairMemoryAdaptation(this).start()
     }
 
+    /**
+     * 判断当前进程是否为主进程 / Returns whether the current process is the main process.
+     *
+     * API 28 起 [getProcessName] 直接可用；更早版本遍历 runningAppProcesses 按
+     * pid 匹配，拿不到进程列表时按 packageName 兜底。
+     *
+     * [getProcessName] is available since API 28; older levels scan
+     * runningAppProcesses by pid, falling back to packageName when the list is
+     * unavailable.
+     */
     private fun isMainProcess(): Boolean {
         val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getProcessName()

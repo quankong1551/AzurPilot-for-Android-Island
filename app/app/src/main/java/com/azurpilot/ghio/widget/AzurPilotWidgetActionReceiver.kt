@@ -19,16 +19,29 @@ import org.koin.core.qualifier.named
 import timber.log.Timber
 
 /**
- * 桌面小组件用户点击操作广播接收器 / Broadcast receiver handling user click actions from AppWidgets
+ * 桌面小组件用户点击操作广播接收器
  *
  * 核心安全机制：在用户点击小组件的广播接收窗口内第一时间拉起 [RunForegroundService]，
  * 享有 Android 12+ 后台启动前台服务的临时豁免权，彻底避免 ForegroundServiceStartNotAllowedException。
  *
- * Core safety mechanism: Starts [RunForegroundService] immediately inside the user touch
- * broadcast window to utilize the Android 12+ foreground service start exemption.
+ * 生命周期仅限 onReceive：耗时工作全部转交协程（Koin 的 [AppCoroutineScope]，
+ * Koin 未就绪时退回临时 Main 协程域）；[ACTION_REFRESH] 只重发状态，不触发动作
+ *
+ * The broadcast receiver handling user click actions from the AppWidgets.
+ *
+ * Core safety mechanism: starts [RunForegroundService] immediately inside the
+ * user-touch broadcast window to use the Android 12+ temporary exemption for
+ * starting a foreground service from the background, avoiding
+ * ForegroundServiceStartNotAllowedException entirely.
+ *
+ * Its lifetime is bounded by onReceive: all slow work is handed to a
+ * coroutine (Koin's [AppCoroutineScope], falling back to a temporary Main
+ * scope when Koin is not ready); [ACTION_REFRESH] only republishes state and
+ * triggers no action.
  */
 class AzurPilotWidgetActionReceiver : BroadcastReceiver() {
 
+    /** 分发小组件动作；仅处理 [ACTION_TOGGLE_RUNNER] 与 [ACTION_REFRESH] / Dispatches widget actions; only [ACTION_TOGGLE_RUNNER] and [ACTION_REFRESH] are handled. */
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         Timber.d("AzurPilotWidgetActionReceiver received action=%s", action)
@@ -43,6 +56,19 @@ class AzurPilotWidgetActionReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * 处理启停切换：运行中则停，未运行则走「提 FGS → 等 PRoot 就绪 → 启动」链
+     *
+     * Handles the run toggle: stop when running, otherwise run the chain
+     * "raise FGS → await PRoot readiness → start".
+     *
+     * Koin 缺失或依赖未注册时静默降级（只更新小组件），不抛出——
+     * 广播接收器抛异常只会在 logcat 留噪音，用户侧毫无反馈
+     *
+     * With Koin missing or dependencies unregistered it degrades silently
+     * (only refreshing the widget) instead of throwing — a receiver exception
+     * would leave nothing but logcat noise for the user.
+     */
     private fun handleToggle(context: Context) {
         val koin = GlobalContext.getOrNull()
         val runController = runCatching { koin?.get<AzurPilotRunController>() }.getOrNull()
@@ -87,7 +113,10 @@ class AzurPilotWidgetActionReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        /** 一键启停动作 / The toggle-runner action. */
         const val ACTION_TOGGLE_RUNNER = "com.azurpilot.ghio.action.WIDGET_TOGGLE_RUNNER"
+
+        /** 刷新全部小组件动作 / The refresh-all-widgets action. */
         const val ACTION_REFRESH = "com.azurpilot.ghio.action.WIDGET_REFRESH"
     }
 }

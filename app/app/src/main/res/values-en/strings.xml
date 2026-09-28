@@ -98,14 +98,25 @@
     <string name="settings_section_schedule">Scheduled tasks</string>
     <string name="settings_section_other">Other</string>
     <string name="settings_theme">Theme</string>
+    <string name="settings_cat_display">Display &amp; language</string>
+    <string name="settings_cat_display_desc">Theme and language</string>
+    <string name="settings_cat_screen">Virtual display</string>
+    <string name="settings_cat_screen_desc">Virtual display refresh rate</string>
+    <string name="settings_cat_logs">Logs</string>
+    <string name="settings_cat_logs_desc">View and export run logs</string>
+    <string name="settings_cat_keep_alive">Keep-Alive</string>
+    <string name="settings_cat_keep_alive_desc">Anti-kill strategies and status</string>
+    <string name="settings_cat_advanced">Runtime &amp; security</string>
+    <string name="settings_cat_advanced_desc">Privileged backend and lock protection</string>
+    <string name="settings_cat_widget">Widgets</string>
+    <string name="settings_cat_widget_desc">Add widgets to the home screen</string>
+    <string name="settings_cat_runtime">Runtime</string>
+    <string name="settings_cat_runtime_desc">Version and download mirror</string>
+    <string name="settings_cat_about">About</string>
+    <string name="settings_cat_about_desc">Version, licenses and components</string>
     <string name="settings_follow_system">System default</string>
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
-    <string name="settings_ui_style">Style</string>
-    <string name="settings_ui_style_auto">Auto</string>
-    <string name="settings_ui_style_md3">MD3</string>
-    <string name="settings_ui_style_miuix">Miuix</string>
-    <string name="settings_ui_style_hint">Auto picks by device: Xiaomi, Redmi and POCO prefer the Miuix style, others use MD3.</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_hint">Switching language reloads the project; unavailable while running</string>
     <string name="settings_run_mode">Run mode</string>
@@ -951,15 +962,14 @@
     <string name="widget_pin_success">Requested system to add widget to home screen</string>
     <string name="widget_pin_unsupported">Current launcher does not support pinning widgets; please add manually from home screen</string>
 
-    <!-- Sensitive Operation Lock Protection -->
-    <string name="settings_sensitive_auth_title">Lock Screen Protection</string>
-    <string name="settings_sensitive_auth_desc">Require system lock (PIN/fingerprint/face) when accessing Settings and Virtual Display; bypassed if no screen lock is set.</string>
-    <string name="settings_sensitive_auth_no_lock_hint">(No screen lock set on device, authentication bypassed)</string>
-    <string name="auth_prompt_title_settings">Authenticate to access Settings</string>
-    <string name="auth_prompt_title_screen">Authenticate to access Virtual Display</string>
-    <string name="auth_prompt_title_disable">Disable Sensitive Operation Protection</string>
-    <string name="auth_prompt_subtitle">Confirm your screen lock or biometrics to continue</string>
-    <string name="auth_gate_locked_title">Page Locked</string>
-    <string name="auth_gate_locked_desc">This page is protected by system lock. Please authenticate to continue.</string>
-    <string name="auth_gate_unlock_button">Authenticate to Unlock</string>
+    <!-- App Lock Protection -->
+    <string name="settings_app_lock_title">App Lock Protection</string>
+    <string name="settings_app_lock_desc">Require system lock (PIN/fingerprint/face) on launch and resume; bypassed if no screen lock is set.</string>
+    <string name="settings_app_lock_no_lock_hint">(No screen lock set on device, currently bypassed)</string>
+    <string name="auth_prompt_title_app">Unlock to access AzurPilot</string>
+    <string name="auth_prompt_title_disable">Disable App Lock</string>
+    <string name="auth_prompt_subtitle">Use screen lock or biometrics to verify</string>
+    <string name="app_lock_title">App Locked</string>
+    <string name="app_lock_desc">App lock protection is active. Please verify your identity to continue.</string>
+    <string name="app_lock_unlock_button">Verify and Unlock</string>
 </resources>

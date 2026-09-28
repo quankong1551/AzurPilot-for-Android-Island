@@ -18,10 +18,21 @@ import androidx.compose.ui.Modifier
 import com.azurpilot.ghio.theme.AppTokens
 
 /**
- * 内容宽度单选组
+ * 渲染单选 chip 组
  *
  * 用 M3 的 [FilterChip] 平铺：选项多、标签长短不一时 FlowRow 能逐颗换行，
  * 换成等分的 SegmentedButton 长标签会把整行挤变形
+ *
+ * Renders a single-choice chip group.
+ *
+ * Lays out M3 [FilterChip]s in a flow: with many options and labels of uneven
+ * length, FlowRow wraps chip by chip, whereas equally divided SegmentedButtons
+ * would squeeze the whole row out of shape.
+ *
+ * @param options 选项列表：first 为回传值、second 为展示标签 / options where first
+ *   is the value passed to [onSelect] and second is the displayed label
+ * @param selected 当前选中值 / currently selected value
+ * @param onSelect 点选回调，回传所选值 / invoked with the picked value on tap
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

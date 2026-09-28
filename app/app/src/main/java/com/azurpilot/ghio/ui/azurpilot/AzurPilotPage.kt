@@ -74,6 +74,22 @@ import org.koin.compose.koinInject
  *
  * 进程的启停**不在这里**：宿主只保留一条控制面（主页控制面板 / 悬浮窗走 `/android/…`），
  * 多一条控制面会和它在设备上抢。这里管的是内容面（总览 / 配置 / 日志 / 统计 / 部署设置）。
+ *
+ * The AzurPilot page: a native re-implementation of the runtime's WebUI.
+ *
+ * The WebUI front end itself renders live from the definitions shipped by
+ * `schema.get`, so rendering the same definitions here keeps the feature set
+ * aligned — menus, tasks, parameters, and translations all come from the
+ * runtime; the app side hard-codes none of them.
+ *
+ * Process start/stop is **not** here: the host keeps a single control plane
+ * (the home control panel / floating window drive it through `/android/…`),
+ * and a second one would fight it for the device. This page owns the content
+ * plane (overview / config / logs / statistics / deploy settings).
+ *
+ * @param active 页面当前是否可见；仅可见时才补环境拉起并保留截图帧订阅 / whether the
+ *   page is currently visible; the environment warm-up and the screenshot-frame
+ *   subscription only stay alive while it is
  */
 @Composable
 fun AzurPilotPage(
@@ -129,6 +145,16 @@ fun AzurPilotPage(
  * 网关还没连上时的接管屏
  *
  * 「未就绪」与「环境正在起」要分开说：准备链要几分钟，只显示一句「未就绪」会让人以为坏了。
+ *
+ * The takeover screen shown while the gateway is not connected yet.
+ *
+ * "Not ready" and "environment coming up" must be told apart: the preparation
+ * chain takes minutes, and a bare "not ready" would read as something broken.
+ *
+ * @param reachable 运行时 HTTP 端口是否可达 / whether the runtime's HTTP port is
+ *   reachable
+ * @param phase PRoot 会话阶段 / the PRoot session phase
+ * @param detail 失败阶段的详情文案 / the failure-phase detail text
  */
 @Composable
 private fun RuntimeGate(reachable: Boolean, phase: ProotPhase, detail: String) {
@@ -156,6 +182,20 @@ private fun RuntimeGate(reachable: Boolean, phase: ProotPhase, detail: String) {
     }
 }
 
+/**
+ * 主控制台骨架：顶栏 + 分区标签 + 实例选择条 + [NavHost]
+ *
+ * 分区（总览 / 配置 / 日志 / 统计 / 设置）是平级标签；任务配置与各管理页作为详情路由推进，
+ * 顶栏随之换成返回键并显示详情标题。任务配置页会借 [ApTopBarAction] 在顶栏放找回搜索的入口。
+ *
+ * The main console skeleton: top bar + section tabs + instance chip row +
+ * [NavHost].
+ *
+ * Sections (overview / config / logs / statistics / settings) are peer tabs;
+ * the task-config page and the management pages push as detail routes, and the
+ * top bar swaps to a back button showing the detail title. The task-config
+ * page borrows [ApTopBarAction] to keep a search-recovery entry in the bar.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AzurPilotContent(repository: AzurPilotRepository) {
@@ -306,6 +346,7 @@ private fun AzurPilotContent(repository: AzurPilotRepository) {
     }
 }
 
+/** 详情路由的顶栏标题；普通分区标题由 [AzurPilotSection.labelRes] 提供 / The top-bar title for detail routes; section titles come from [AzurPilotSection.labelRes]. */
 @Composable
 private fun detailTitle(route: String): String = when {
     route.startsWith("ap/task/") -> stringResource(R.string.ap_title_task_config)
@@ -321,6 +362,18 @@ private fun detailTitle(route: String): String = when {
  *
  * 常显而不是藏进顶栏菜单：实例是这一页的**上下文**，所有分区的内容都随它变。
  * 藏起来会出现「看了半天才发现看的是另一个实例」。
+ *
+ * The instance selection chip row.
+ *
+ * Always visible rather than tucked into a top-bar menu: the instance is the
+ * page's **context** — every section's content changes with it. Hiding it
+ * leads to "reading a whole screen before noticing it was another instance".
+ *
+ * @param instances 实例名列表 / the instance names
+ * @param selected 当前选中的实例名；无实例时为 null / the selected instance name;
+ *   null when no instance exists
+ * @param onSelect 选中某实例 / invoked when an instance is selected
+ * @param onManage 打开实例管理页 / invoked to open the instance-management page
  */
 @Composable
 private fun InstanceChipRow(

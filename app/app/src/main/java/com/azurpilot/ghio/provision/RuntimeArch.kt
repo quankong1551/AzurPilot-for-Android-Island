@@ -18,7 +18,10 @@ import android.os.Build
  * matrix in `.github/workflows/rootfs.yml` at the same time.
  */
 object RuntimeArch {
+    /** ARM64 设备（rootfs 主架构）/ ARM64 devices (the rootfs's primary arch). */
     const val ARM64 = "arm64-v8a"
+
+    /** x86_64 设备 / x86_64 devices. */
     const val X86_64 = "x86_64"
 
     /** proot 不做指令翻译，只支持这些架构的原生执行 / proot performs no instruction translation; only these ABIs run natively. */

@@ -36,13 +36,29 @@ import com.azurpilot.ghio.MainActivity
 import com.azurpilot.ghio.R
 
 /**
- * 4x2 全功能桌面控制面板小组件 / 4x2 Full-featured AppWidget control panel (MD3)
+ * 4x2 全功能桌面控制面板小组件
  *
  * 遵循 Material Design 3 规范与系统壁纸动态取色 (Material You)。
  * 展示应用实例状态、当前运行任务、支持一键启停和刷新。
+ *
+ * 整块 RemoteViews 由 shape drawable 提供圆角与着色：MIUI 12.5（API 30）上
+ * RemoteViews 用不了 `?attr` 矢量着色，Glance 的 cornerRadius 修饰符在
+ * API 31 以下也不生效——所以所有圆角、底色、图标 tint 全部落成 drawable 资源
+ *
+ * The 4x2 full-featured AppWidget control panel.
+ *
+ * Follows Material Design 3 with the system wallpaper's dynamic color
+ * (Material You). Shows the app instance status and the current task, with
+ * one-tap start/stop and refresh.
+ *
+ * The whole RemoteViews surface gets its corners and tints from shape
+ * drawables: on MIUI 12.5 (API 30) RemoteViews cannot use `?attr` vector
+ * tints, and Glance's cornerRadius modifier is a no-op below API 31 — so
+ * every corner, background, and icon tint lands in drawable resources.
  */
 class AzurPilotControlWidget : GlanceAppWidget() {
 
+    /** 组装并发布 RemoteViews 内容；状态经 [AzurPilotWidgetUpdater.currentState] 同步读取 / Assembles and publishes the RemoteViews content; the state is read synchronously via [AzurPilotWidgetUpdater.currentState]. */
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
             GlanceTheme {
@@ -73,7 +89,6 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                         modifier = GlanceModifier.fillMaxSize(),
                         verticalAlignment = Alignment.Vertical.CenterVertically
                     ) {
-                        // 1. 顶栏：应用图标 + 标题 + 配置 Pill 标签 + 刷新按钮
                         Row(
                             modifier = GlanceModifier.fillMaxWidth(),
                             verticalAlignment = Alignment.Vertical.CenterVertically
@@ -109,7 +124,6 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                                 )
                             }
                             Spacer(modifier = GlanceModifier.defaultWeight())
-                            // 刷新按钮 (IconButton)
                             Box(
                                 modifier = GlanceModifier
                                     .size(28.dp)
@@ -129,7 +143,6 @@ class AzurPilotControlWidget : GlanceAppWidget() {
 
                         Spacer(modifier = GlanceModifier.height(8.dp))
 
-                        // 2. 状态与任务卡片：MD3 内侧微容器（14dp 圆角 shape）
                         Box(
                             modifier = GlanceModifier
                                 .fillMaxWidth()
@@ -141,7 +154,6 @@ class AzurPilotControlWidget : GlanceAppWidget() {
                                 modifier = GlanceModifier.fillMaxSize(),
                                 verticalAlignment = Alignment.Vertical.CenterVertically
                             ) {
-                                // 状态行：动态圆点 + 状态描述
                                 Row(
                                     modifier = GlanceModifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.Vertical.CenterVertically
@@ -164,7 +176,6 @@ class AzurPilotControlWidget : GlanceAppWidget() {
 
                                 Spacer(modifier = GlanceModifier.height(4.dp))
 
-                                // 任务行：任务图标 + 当前任务文本
                                 Row(
                                     modifier = GlanceModifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.Vertical.CenterVertically
@@ -190,7 +201,7 @@ class AzurPilotControlWidget : GlanceAppWidget() {
 
                         Spacer(modifier = GlanceModifier.height(8.dp))
 
-                        // 3. 底部大号控制按钮：启动/停止/处理中
+                        // 底部按钮三态互斥：busy 时整个按钮不可点，防止并发启停
                         val buttonBackground = when {
                             state.busy -> R.drawable.widget_btn_muted
                             state.runnerAlive -> R.drawable.widget_btn_error
@@ -254,6 +265,8 @@ class AzurPilotControlWidget : GlanceAppWidget() {
 
 /**
  * 接收器，连接系统 AppWidget 框架与 Glance 视图
+ *
+ * The receiver bridging the system AppWidget framework and the Glance view.
  */
 class AzurPilotControlWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = AzurPilotControlWidget()

@@ -20,21 +20,46 @@ import kotlinx.coroutines.launch
  * 离屏则用 [ActivityUtils.repinAppToDisplay] 拉回；状态经 RemoteService.watchdogState() 暴露给 app。
  *
  * 与 参考实现 的差异：目标包不是外部告知，而是 getTopPackageOnDisplay 自取；
- * 判活与 onDisplay 合成一步（屏上有 app 即活）。全程 runCatching 宽松，不抛不误伤
+ * 判活与 onDisplay 合成一步（屏上有 app 即活）。全程 runCatching 宽松，不抛不误伤。
+ *
+ * 线程模型：单协程跑在 AppDispatchers.IO limitedParallelism(1) 上，[POLL_INTERVAL_MS] 一拍；
+ * [state] 供 app 侧经 binder 查询，[targetPackage] volatile，binder 线程可读。
+ *
+ * Watches the target app on the virtual display: the target is inferred from the top package
+ * on the [VirtualDisplayManager] display id, and an app that left the display is pulled back
+ * via [ActivityUtils.repinAppToDisplay]; the state is exposed to the app through
+ * RemoteService.watchdogState().
+ *
+ * Differences from the reference implementation: the target package is not told externally but
+ * self-acquired via getTopPackageOnDisplay, and liveness plus on-display checks are fused into
+ * one step (an app seen on the display is alive). Everything runs leniently under runCatching —
+ * never throws, never misreports.
+ *
+ * Threading: a single coroutine on AppDispatchers.IO limitedParallelism(1) ticks every
+ * [POLL_INTERVAL_MS]; [state] is queried by the app over binder and [targetPackage] is
+ * volatile, readable from binder threads.
  */
 object AppWatchdog {
 
+    /** 未在盯防（无屏或尚未取到目标）/ Not watching (no display, or no target acquired yet) */
     const val STATE_IDLE = 0
+
+    /** 目标在虚拟屏上正常运行 / Target is running normally on the virtual display */
     const val STATE_WATCHING = 1
 
-    /** 窗口离开虚拟屏且拉回失败，进程还活着 */
+    /** 窗口离开虚拟屏且拉回失败，进程还活着 / The window left the virtual display and repin failed; the process is still alive */
     const val STATE_DISPLAY_DRIFT = 2
 
-    /** pidof 查不到进程 */
+    /** pidof 查不到进程 / pidof finds no process */
     const val STATE_APP_DIED = 3
 
+    /** 轮询周期 / Poll period */
     private const val POLL_INTERVAL_MS = 5000L
+
+    /** 离屏宽限期：短暂离屏不立即拉回，先给系统自己回正的机会 / Off-screen grace: a brief absence is not yanked back immediately, giving the system a chance to settle on its own */
     private const val REPIN_GRACE_MS = 5000L
+
+    /** 拉回重试上限，超限上报 DISPLAY_DRIFT / Repin attempt cap; exceeding it raises DISPLAY_DRIFT */
     private const val MAX_REPIN_ATTEMPTS = 3
 
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchers.IO.limitedParallelism(1))
@@ -43,7 +68,13 @@ object AppWatchdog {
     val state: StateFlow<Int> = _state.asStateFlow()
 
     private var job: Job? = null
-    /** 运行期反推出来的目标包名；收尾要关它，而 app 侧不维护包名表 */
+
+    /**
+     * 运行期反推出来的目标包名；收尾要关它，而 app 侧不维护包名表
+     *
+     * Target package inferred at runtime; teardown must stop it, and the app side keeps no
+     * package table of its own.
+     */
     @Volatile
     var targetPackage: String? = null
         private set
@@ -52,6 +83,12 @@ object AppWatchdog {
     private var driftNotified = false
     private var diedNotified = false
 
+    /**
+     * 开始盯防：清空上一轮目标与漂移计数后起轮询协程；重复调用会先停旧的
+     *
+     * Starts watching: clears the previous round's target and drift counters, then starts the
+     * polling coroutine; a repeated call stops the old loop first.
+     */
     fun startWatching() {
         stopWatching()
         targetPackage = null
@@ -69,12 +106,22 @@ object AppWatchdog {
         }
     }
 
+    /**
+     * 停止轮询并回到 IDLE；**保留** [targetPackage]——收尾强停目标（stopTargetApp）仍要用它
+     *
+     * Stops polling and returns to IDLE; **keeps** [targetPackage] — teardown still needs it
+     * to force-stop the target (stopTargetApp).
+     */
     fun stopWatching() {
         job?.cancel()
         job = null
         _state.value = STATE_IDLE
     }
 
+    /**
+     * 单拍决策树：屏上取到顶层包 → 记目标、清漂移计数；屏空则先判活
+     * （被杀与漂移是两回事），进程还活着的离屏才进入宽限→拉回→超限上报的漂移流程
+     */
     private fun tick() {
         val displayId = VirtualDisplayManager.getDisplayId()
         if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
@@ -141,8 +188,13 @@ object AppWatchdog {
         }
     }
 
+    /** 进程在 / process alive */
     private const val ALIVE_YES = 0
+
+    /** 确认死亡 / confirmed dead */
     private const val ALIVE_NO = 1
+
+    /** 判不出，宁漏报不误报 / undeterminable; better to under-report than misreport */
     private const val ALIVE_UNKNOWN = 2
 
     /**
@@ -150,6 +202,15 @@ object AppWatchdog {
      *
      * 只有"退出码 1 且两个流都空"才算确认死亡——ROM 换了 pidof 实现、或权限被挡时，
      * 输出形态五花八门，一律当判不出，宁可漏报也不要把还活着的应用报成死了
+     *
+     * Liveness via pidof (same as the reference implementation): this object runs inside the
+     * privileged process, so a direct exec under the shell identity works.
+     *
+     * Only "exit code 1 with both streams empty" counts as confirmed death — when a ROM ships a
+     * different pidof implementation or the exec is blocked, the output shape varies wildly and
+     * is treated as undeterminable; better to under-report than to report a live app as dead.
+     *
+     * @return [ALIVE_YES] / [ALIVE_NO] / [ALIVE_UNKNOWN]
      */
     private fun isAlive(packageName: String): Int = runCatching {
         val process = Runtime.getRuntime().exec(arrayOf("pidof", packageName))

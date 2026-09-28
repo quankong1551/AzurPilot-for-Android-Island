@@ -1,7 +1,7 @@
 package com.azurpilot.ghio.update
 
 /**
- * Release 资源地址与下载源解析；仅本项目的固定 GitHub Release 允许走镜像。
+ * 解析 Release 资源地址与下载源；仅本项目的固定 GitHub Release 允许走镜像。
  *
  * 镜像均为 ghproxy 形态：`前缀 + 完整 GitHub URL`（如
  * `https://ghproxy.net/https://github.com/…`）。镜像站时效性强，内置列表只是
@@ -44,7 +44,7 @@ internal object ReleaseUrls {
     )
 
     /**
-     * 自定义前缀规范化：去空白、补尾斜杠；非法输入一律回落直连，不让解析环节抛异常。
+     * 规范化自定义前缀：去空白、补尾斜杠；非法输入一律回落直连，不让解析环节抛异常。
      *
      * Sanitizes a custom prefix: trims whitespace, appends the trailing slash,
      * and falls back to direct on any malformed input so URL assembly never throws.
@@ -68,7 +68,7 @@ internal object ReleaseUrls {
     }
 
     /**
-     * 给 Release 资源地址套上前缀；前缀为空即直连。
+     * 把镜像前缀拼到 Release 资源地址上；前缀为空即直连。
      *
      * Applies a prefix to a release asset URL; an empty prefix means direct.
      */

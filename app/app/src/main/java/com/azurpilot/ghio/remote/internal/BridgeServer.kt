@@ -28,6 +28,23 @@ import kotlin.math.roundToInt
  * 监听 127.0.0.1:22301，协议为行分隔 JSON 请求/响应 + screencap 响应行后紧跟裸字节帧，
  * 端点 ping/screencap/click/swipe/shell。协议形状与 AzurPilot 侧冻结客户端
  * 上游 patch 里的桥方法脚本 逐字节兼容：每回复（含错误帧）echo 请求 id。
+ *
+ * 线程模型：accept 循环一个线程，每客户端一个守护线程；帧读取与触摸注入共用
+ * [DEVICE_LOCK] 串行（shell 端点除外）。start() 在 RemoteServiceImpl 构造期调用，
+ * 失败记日志不抛。
+ *
+ * The AzurPilot bridge server: a privileged-process Kotlin rewrite of the m0 Python agent
+ * (m0-archive/spike/m0/agent/main.py).
+ *
+ * Listens on 127.0.0.1:22301 with a line-delimited JSON request/response protocol; a screencap
+ * response line is immediately followed by the raw byte frame. Endpoints: ping, screencap,
+ * click, swipe, shell. The protocol shape is byte-for-byte compatible with the frozen client
+ * bridge scripts in the AzurPilot-side upstream patch: every reply (error frames included)
+ * echoes the request id.
+ *
+ * Threading: one accept-loop thread plus one daemon thread per client. Frame reads and touch
+ * injections are serialized by [DEVICE_LOCK] (the shell endpoint excepted). start() is called
+ * from the RemoteServiceImpl constructor; failures are logged, never thrown.
  */
 object BridgeServer {
 
@@ -35,10 +52,10 @@ object BridgeServer {
     private const val LISTEN_HOST = "127.0.0.1"
     private const val LISTEN_PORT = 22301
 
-    /** 请求行上限，防呆（m0 MAX_LINE 同款） */
+    /** 请求行上限，防呆（m0 MAX_LINE 同款）/ Request-line cap, sanity guard (same as m0's MAX_LINE) */
     private const val MAX_LINE = 64 * 1024
 
-    /** shell 端点 stdout/stderr 单向上限：响应是单行 JSON，转义后膨胀，客户端行上限 256KB */
+    /** shell 端点 stdout/stderr 单向上限：响应是单行 JSON，转义后膨胀，客户端行上限 256KB / Per-stream stdout/stderr cap for the shell endpoint: the response is a single JSON line and escaping inflates it; the client's line cap is 256 KB */
     private const val SHELL_OUT_CAP = 64 * 1024
     private const val SHELL_PATH_PREFIX = "/system/bin:/system_ext/bin:/vendor/bin:"
     private const val DEFAULT_SHELL_TIMEOUT_SEC = 30.0
@@ -50,13 +67,25 @@ object BridgeServer {
      * 但 input 窗注册滞后 ~1s，此间 WAIT_FOR_FINISH 注入原生返 false（debug.md 同款）。
      * AzurPilot 单击失败即 ScriptError 死调度器，故在有界预算内重试把瞬态竞态对客户端隐身；
      * 真空 VD（游戏崩溃/未启动）仍报错，只是晚 ~3s。
+     *
+     * Retry budget for touch-down injection: after the game is brought onto the VD via
+     * am start, SurfaceFlinger has already produced frames (visible to screencap), but input
+     * window registration lags ~1 s, during which WAIT_FOR_FINISH injection returns false from
+     * native (same as debug.md). A single click failure kills AzurPilot's scheduler with a
+     * ScriptError, so retrying within a bounded budget hides the transient race from the
+     * client; a truly empty VD (game crashed / not started) still errors, just ~3 s later.
      */
     private const val DOWN_RETRY_BUDGET_MS = 3000L
     private const val DOWN_RETRY_INTERVAL_MS = 200L
     private const val DEFAULT_SWIPE_MS = 500L
     private const val JOIN_AFTER_KILL_MS = 1000L
 
-    /** 帧读取与触摸注入的全局串行锁：m0 实测并发抢设备通道会堵死，shell 不进这把锁 */
+    /**
+     * 帧读取与触摸注入的全局串行锁：m0 实测并发抢设备通道会堵死，shell 不进这把锁
+     *
+     * Global lock serializing frame reads and touch injection: m0 measured concurrent
+     * device-channel access wedging; the shell endpoint does not take this lock.
+     */
     val DEVICE_LOCK = ReentrantLock()
 
     @Volatile
@@ -66,7 +95,12 @@ object BridgeServer {
     private var startedAtMs = 0L
     private val clientCounter = AtomicInteger(0)
 
-    /** 幂等；bind 失败记日志不抛——构造期调用方是 RemoteServiceImpl.init，抛了 binder 回不去 */
+    /**
+     * 幂等；bind 失败记日志不抛——构造期调用方是 RemoteServiceImpl.init，抛了 binder 回不去
+     *
+     * Idempotent; a bind failure is logged, not thrown — the constructor-time caller is
+     * RemoteServiceImpl.init, and a throw there never makes it back over the binder.
+     */
     @Synchronized
     fun start() {
         if (serverSocket != null) return
@@ -88,6 +122,11 @@ object BridgeServer {
         Ln.i("$TAG: listening on $LISTEN_HOST:$LISTEN_PORT")
     }
 
+    /**
+     * 停止监听并关闭 server socket（accept 阻塞因此解除）；幂等
+     *
+     * Stops listening and closes the server socket (waking the blocked accept); idempotent.
+     */
     @Synchronized
     fun stop() {
         val socket = serverSocket ?: return
@@ -97,6 +136,7 @@ object BridgeServer {
         Ln.i("$TAG: stopped")
     }
 
+    /** 是否在监听 / Whether the server socket is open */
     fun isRunning(): Boolean = serverSocket != null
 
     private fun acceptLoop(socket: ServerSocket) {
@@ -182,6 +222,7 @@ object BridgeServer {
         }
     }
 
+    /** screencap 端点：响应行后紧跟裸字节帧 / The screencap endpoint: a bare byte frame follows the response line */
     private fun handleScreencap(conn: Conn, reply: (JSONObject) -> Unit) {
         DEVICE_LOCK.withLock {
             if (!NativeBridgeLib.LOADED) {
@@ -212,7 +253,12 @@ object BridgeServer {
         }
     }
 
-    /** 有界重试的 down：见 DOWN_RETRY_BUDGET_MS 注释。失败事件未投递无悬挂状态，可安全重试。 */
+    /**
+     * 有界重试的 down：见 [DOWN_RETRY_BUDGET_MS] 注释。失败事件未投递无悬挂状态，可安全重试。
+     *
+     * Touch-down with a bounded retry: see the [DOWN_RETRY_BUDGET_MS] note. A failed down
+     * delivers no event and leaves no dangling state, so retrying is safe.
+     */
     private fun downWithRetry(x: Int, y: Int, displayId: Int): Boolean {
         val deadline = SystemClock.uptimeMillis() + DOWN_RETRY_BUDGET_MS
         var attempts = 0
@@ -296,6 +342,7 @@ object BridgeServer {
         }
     }
 
+    /** shell 端点：`sh -c` 执行命令，双流封顶收集，超时 destroyForcibly（上限见 [SHELL_OUT_CAP]）/ The shell endpoint: runs `sh -c`, caps both streams, destroyForcibly on timeout (cap in [SHELL_OUT_CAP]) */
     private fun handleShell(request: JSONObject, reply: (JSONObject) -> Unit) {
         val cmd = request.getString("cmd")
         val timeoutSec = request.optDouble("timeout", DEFAULT_SHELL_TIMEOUT_SEC)
@@ -358,13 +405,23 @@ object BridgeServer {
      * socket 之上的缓冲读：行 + 裸字节写在同一条流上混用不丢数据（m0 Conn 语义）。
      * 5 端点里没有上行裸帧（ocr 已剔除），故只需行读；BufferedInputStream 垫底，
      * 后续若加读帧端点，字节流位置天然衔接。
+     *
+     * Buffered reading over the socket: lines and raw bytes interleave on the same stream
+     * without loss (m0 Conn semantics). None of the 5 endpoints reads an upstream raw frame
+     * (ocr was dropped), so only line reads are needed; BufferedInputStream underneath keeps
+     * the byte position naturally aligned should a frame-reading endpoint be added later.
      */
     private class Conn(private val socket: Socket) {
 
         private val input = BufferedInputStream(socket.getInputStream(), BUFFER_SIZE)
         private val output = BufferedOutputStream(socket.getOutputStream(), BUFFER_SIZE)
 
-        /** 读一行（不含 \n）；EOF 返回 null；超上限抛 IOException 由连接层断开 */
+        /**
+         * 读一行（不含 \n）；EOF 返回 null；超上限抛 IOException 由连接层断开
+         *
+         * Reads one line (without \n); null on EOF; an over-limit line throws IOException and
+         * the connection layer disconnects.
+         */
         fun readLine(): String? {
             val line = ByteArrayOutputStream()
             while (true) {

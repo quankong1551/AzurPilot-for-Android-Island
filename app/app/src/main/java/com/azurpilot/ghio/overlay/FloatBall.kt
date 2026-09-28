@@ -35,8 +35,32 @@ import com.azurpilot.ghio.theme.AzurPilotTheme
 /**
  * 常驻悬浮球：环境活着期间的唯一入口
  *
+ * 呈现在 WindowManager 悬浮窗（SYSTEM_ALERT_WINDOW）内的 Compose 内容，盖在其他应用
+ * 画面上；[running] 区分运行中（播放图标 + 呼吸动画）与空闲（对勾 + 静止），点击回调
+ * 由 [OverlayController] 接管用于展开控制面板
+ *
  * 尺寸压到 32dp：它盖在其他应用画面上，再大就开始碍事了
  * 环境活着时做呼吸动画——静止的小圆点在满屏画面里根本注意不到
+ *
+ * The resident floating ball: the sole entry point while the environment is
+ * alive.
+ *
+ * Compose content rendered inside a WindowManager overlay window
+ * (SYSTEM_ALERT_WINDOW) drawn over other apps' screens; [running] separates
+ * the running state (play icon + breathing animation) from the idle one (check
+ * icon + still), and taps are handled by [OverlayController] to expand the
+ * control panel.
+ *
+ * The size is squeezed down to 32dp: it sits on top of other apps' screens, so
+ * anything bigger starts getting in the way.
+ * It breathes while the environment is alive — a static dot is invisible
+ * against a full-screen game frame.
+ *
+ * @param running 运行环境是否存活 / Whether the run environment is alive
+ * @param onClick 点击回调，展开/收起控制面板 / Tap callback to expand or collapse
+ *   the control panel
+ * @param modifier 外部布局修饰符，控制悬浮窗内的摆放 / Outer layout modifier
+ *   positioning the ball inside its window
  */
 @Composable
 fun FloatBall(
@@ -88,5 +112,5 @@ fun FloatBall(
     }
 }
 
-/** 悬浮球的直径；它盖在别人画面上，属一次性视觉尺寸，不进 Spacing */
+/** 悬浮球的直径；它盖在别人画面上，属一次性视觉尺寸，不进 Spacing / The ball's diameter; a one-off visual size since it overlays other apps' screens, so it stays out of Spacing. */
 private val BALL_SIZE = 32.dp

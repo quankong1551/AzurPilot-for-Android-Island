@@ -76,23 +76,53 @@ import java.time.format.DateTimeFormatter
  *
  * 这一层的取值目标只有两个：把整屏压到最黑（省电、防烧屏），以及让误触做不成任何事
  * 所以配色是写死的纯黑加白色低透明度，不吃 colorScheme
+ *
+ * The screensaver keeps a visual system of its own and reuses no `App*`
+ * components.
+ *
+ * This layer optimizes for exactly two goals: press the whole screen to black
+ * (power saving, burn-in protection) and make accidental touches accomplish
+ * nothing. Hence the hard-coded pure black with low-alpha white, ignoring the
+ * colorScheme.
  */
 private object ScreenSaverDimens {
-    /** 时钟；M3 的 displayLarge 只有 34sp，隔着一米看不清 */
+    /** 时钟；M3 的 displayLarge 只有 34sp，隔着一米看不清 / The clock size; M3's displayLarge is only 34sp, illegible from a meter away. */
     val ClockFontSize: TextUnit = 72.sp
 
-    /** 解锁条：轨道、滑块与轨道内边距 */
+    /** 解锁条：轨道、滑块与轨道内边距 / The unlock bar: track, thumb, and track padding. */
     val TrackHeight: Dp = 60.dp
     val ThumbDiameter: Dp = 48.dp
     val TrackPadding: Dp = 6.dp
 
-    /** 解锁条离底的距离；再低会压到手势条上 */
+    /** 解锁条离底的距离；再低会压到手势条上 / The unlock bar's bottom inset; any lower and it lands on the gesture bar. */
     val BarBottomInset: Dp = 56.dp
 
-    /** 解锁条左右留白，同时也是它水平漂移的余量上限 */
+    /** 解锁条左右留白，同时也是它水平漂移的余量上限 / The bar's horizontal insets, which also cap its horizontal drift. */
     val BarSideInset: Dp = 32.dp
 }
 
+/**
+ * 屏保主视图：时钟 / 电量 / 最新日志 + 滑动解锁条
+ *
+ * 全部内容按 [DRIFT_INTERVAL_MS] 一拍做防烧屏随机漂移（解锁条上大下小的独立漂移
+ * 幅度）；黑底白字、低透明度，整块屏幕压到最暗。主线程组合，由
+ * [ScreenSaverOverlayManager] 挂在系统悬浮窗里
+ *
+ * The screensaver's main view: clock / battery / latest log plus the
+ * slide-to-unlock bar.
+ *
+ * Everything drifts randomly for burn-in protection on one
+ * [DRIFT_INTERVAL_MS] beat (the bar drifts with its own larger-up,
+ * smaller-down amplitude); black background, white text, low alpha — the
+ * whole screen pressed to near-black. Composed on the main thread, mounted
+ * inside the system overlay window by [ScreenSaverOverlayManager].
+ *
+ * @param latestLog 最新一条日志；null 时展示「空闲」兜底文案 / The latest log
+ *   line; the "idle" fallback shows when null
+ * @param onUnlock 解锁成功回调，由宿主收起屏保 / The unlock callback; the host
+ *   dismisses the screensaver
+ * @param modifier 外部修饰符 / Outer modifier
+ */
 @Composable
 fun ScreenSaverView(
     latestLog: StateFlow<String?>,
@@ -185,6 +215,16 @@ fun ScreenSaverView(
  * 只认横向拖拽的解锁条
  *
  * 不做成按钮：屏保盖着的时候口袋里的一次误触就该什么都不发生
+ *
+ * The slide-to-unlock bar, responding to horizontal drags only.
+ *
+ * Deliberately not a button: while the screensaver covers the screen, a stray
+ * pocket touch should accomplish exactly nothing.
+ *
+ * @param onUnlock 拖满或快扫达标后回调 / Invoked after the drag passes the
+ *   distance or velocity threshold
+ * @param modifier 外部修饰符，负责定位与宽度 / Outer modifier owning placement
+ *   and width
  */
 @Composable
 private fun SlideToUnlockBar(
@@ -304,9 +344,23 @@ private fun SlideToUnlockBar(
     }
 }
 
+/**
+ * 电池快照：电量百分比与充电态
+ *
+ * A battery snapshot: the level percentage and the charging state.
+ *
+ * @property level 电量百分比（0–100） / Battery percentage (0–100)
+ * @property isCharging 是否在充电（含「已充满」） / Whether charging is active
+ *   (full counts as charging)
+ */
 data class BatteryState(val level: Int = 100, val isCharging: Boolean = false)
 
-/** 电量没有可订阅的 API，只有这条粘性广播 */
+/**
+ * 订阅电量；电量没有可订阅的 API，只有这条粘性广播
+ *
+ * Subscribes to the battery state; there is no subscribable API for the
+ * level, only this sticky broadcast.
+ */
 @Composable
 private fun rememberBatteryState(): BatteryState {
     val context = LocalContext.current
@@ -329,7 +383,13 @@ private fun rememberBatteryState(): BatteryState {
     return state
 }
 
-/** scale 拿不到时返回 null：算出来的百分比会是负数，不如不更新 */
+/**
+ * 从电量广播提取快照；scale 拿不到时返回 null：算出来的百分比会是负数，不如不更新
+ *
+ * Extracts a snapshot from the battery broadcast; returns null when the scale
+ * is unavailable — the computed percentage would be negative, better to skip
+ * the update than show it.
+ */
 private fun Intent.toBatteryState(): BatteryState? {
     val level = getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
     val scale = getIntExtra(BatteryManager.EXTRA_SCALE, -1)
@@ -342,11 +402,17 @@ private fun Intent.toBatteryState(): BatteryState? {
     )
 }
 
-/** 时钟刷新与防烧屏漂移共用这一拍；再密就是白耗电 */
+/** 时钟刷新与防烧屏漂移共用这一拍；再密就是白耗电 / The shared beat for the clock refresh and the burn-in drift; anything denser is wasted power. */
 private const val DRIFT_INTERVAL_MS = 30_000L
+
+/** 扫光扫过轨道一轮的时长 / The duration of one shimmer sweep across the track. */
 private const val SHIMMER_DURATION_MS = 2_400
+
+/** 松手后滑块吸附动画时长 / The snap animation duration after the thumb is released. */
 private const val SNAP_DURATION_MS = 120
 
-/** 拖过七成、或快速轻扫都算解锁——只认前者会让快扫的用户以为条卡住了 */
+/** 拖过七成、或快速轻扫都算解锁——只认前者会让快扫的用户以为条卡住了 / A drag past 70% or a fast flick both unlock — distance alone would leave fast flickers thinking the bar is stuck. */
 private const val UNLOCK_RATIO = 0.75f
+
+/** 快扫判定的速度阈值（px/s） / The velocity threshold (px/s) for the flick unlock. */
 private const val UNLOCK_VELOCITY = 1_000f

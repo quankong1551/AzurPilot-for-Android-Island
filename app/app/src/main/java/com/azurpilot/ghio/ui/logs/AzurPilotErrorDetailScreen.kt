@@ -52,8 +52,15 @@ import org.koin.androidx.compose.koinViewModel
 import java.io.File
 
 /**
- * 一个 AzurPilot 错误现场的详情（二级页面）：log.txt 用共用的尾部加载查看器，
+ * 渲染一个 AzurPilot 错误现场的详情（二级页面）：log.txt 用共用的尾部加载查看器，
  * 下方一排 PNG 截图缩略图，点开全屏（fit-center，不做捏合缩放）
+ *
+ * Renders one AzurPilot error scene in detail (second-level page): log.txt goes
+ * through the shared tail-loading viewer, with a row of PNG screenshot thumbnails
+ * below; tapping one opens it fullscreen (fit-center, no pinch zoom).
+ *
+ * @param dirName 现场目录名（毫秒时间戳，路由参数已解码）/ scene directory name
+ *   (millisecond timestamp, route argument already decoded)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -184,7 +191,13 @@ private fun AzurPilotErrorFullscreen(image: File, onDismiss: () -> Unit) {
     }
 }
 
-/** 按目标尺寸采样解码；原图直接进内存是 1080p PNG 的数倍，缩略图必须 inSampleSize */
+/**
+ * 按目标尺寸采样解码；原图直接进内存是 1080p PNG 的数倍，缩略图必须 inSampleSize
+ *
+ * Decodes an image sampled down to the target size; loading an original into
+ * memory costs several times a 1080p PNG, so thumbnails must go through
+ * inSampleSize.
+ */
 @Composable
 private fun rememberDecodedBitmap(file: File, maxDimension: Int) = produceState<ImageBitmap?>(
     initialValue = null,
@@ -207,6 +220,14 @@ private fun rememberDecodedBitmap(file: File, maxDimension: Int) = produceState<
     }
 }
 
+/**
+ * 缩略图取 96dp 边长，解码上限 192px（2x 屏再留一倍余量，Crop 后仍清晰）；
+ * 全屏图解码上限 1920px——已盖过主流手机屏的宽高，再大只费内存
+ *
+ * Thumbnails are 96dp square with a 192px decode cap (headroom for 2x screens,
+ * still sharp after Crop); the fullscreen decode caps at 1920px — beyond
+ * mainstream phone screens, larger only burns memory.
+ */
 private val THUMB_SIZE_DP = 96.dp
 private const val THUMB_SIZE_PX = 192
 private const val FULLSCREEN_MAX_PX = 1920

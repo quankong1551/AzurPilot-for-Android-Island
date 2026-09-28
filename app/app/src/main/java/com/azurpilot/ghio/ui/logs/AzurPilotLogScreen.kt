@@ -36,10 +36,22 @@ import com.azurpilot.ghio.theme.AppTokens
 import org.koin.androidx.compose.koinViewModel
 
 /**
- * AzurPilot 日志列表（二级页面）：直读内部存储的 `rootfs/opt/run/log`，不走 wrapper HTTP
+ * 渲染 AzurPilot 日志列表（二级页面）：直读内部存储的 `rootfs/opt/azurpilot/log`，不走 wrapper HTTP
  *
  * 两个分区：「错误记录」是 AzurPilot 出错时落的时间戳现场（log.txt + 截图），
  * 「按天日志」是整天 append 的 txt
+ *
+ * Renders the AzurPilot log list (second-level page): reads the on-device
+ * `rootfs/opt/azurpilot/log` directly, no wrapper HTTP in between.
+ *
+ * Two sections: "error records" are the timestamped scenes dropped when AzurPilot
+ * fails (log.txt + screenshots); "daily logs" are txt files appended across the
+ * day.
+ *
+ * @param onOpenDaily 点开按天日志时回传文件名 / invoked with the file name when a
+ *   daily log is tapped
+ * @param onOpenError 点开错误现场时回传目录名 / invoked with the directory name when
+ *   an error scene is tapped
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,7 +137,12 @@ fun AzurPilotLogScreen(
     }
 }
 
-/** 分区标题：与列表行的首列文字对齐，读的人才能把标题和它下面那批连起来 */
+/**
+ * 渲染分区标题：与列表行的首列文字对齐，读的人才能把标题和它下面那批连起来
+ *
+ * Renders a section header: aligned with the rows' first text column so the
+ * heading visually binds to the batch below it.
+ */
 @Composable
 private fun AzurPilotLogSectionHeader(title: String) {
     Text(

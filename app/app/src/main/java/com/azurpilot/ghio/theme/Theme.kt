@@ -18,11 +18,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * MD3 的 colorScheme 只定义 primary / secondary / tertiary / error 四族，没有 success、warning
- * 这类业务语义角色。按 MD3 的自定义颜色角色（custom color role）约定补上，随明暗切换。
+ * 补齐 MD3 的 colorScheme 没有的业务语义色角色
  *
- * 与内置角色一样成对给出：色是"容器"，[onSuccess] 是压在它上面的前景——
- * 少了这一半，深色档下的浅绿底就只能配上纯白前景，对比度掉到读不出
+ * MD3 的 colorScheme 只定义 primary / secondary / tertiary / error 四族，没有
+ * success、warning 这类业务语义角色。按 MD3 的自定义颜色角色（custom color
+ * role）约定补上，随明暗切换。
+ *
+ * 与内置角色一样成对给出：色是「容器」，[onSuccess] 是压在它上面的前景——
+ * 少了这一半，深色档下的浅绿底就只能配上纯白前景，对比度掉到读不出。
+ *
+ * Adds the business-semantic color roles the MD3 colorScheme lacks.
+ *
+ * The MD3 colorScheme defines only the primary/secondary/tertiary/error
+ * families, with no business-semantic roles such as success or warning. These
+ * follow the MD3 custom color role convention and switch with dark/light.
+ *
+ * Like the built-in roles they come in pairs: the color is the "container" and
+ * [onSuccess] is the foreground pressed onto it — without that half, the light
+ * green container in dark mode would be stuck with pure-white foreground and
+ * the contrast would sink below readable.
  */
 data class AppPalette(
     val success: Color,
@@ -42,9 +56,18 @@ private val DarkPalette = AppPalette(
     warning = Color(0xFFFFB86B),
 )
 
+/**
+ * 携带 [AppPalette] 的 CompositionLocal；未显式 provide 时默认浅色档
+ * The CompositionLocal carrying [AppPalette]; defaults to the light palette
+ * when not explicitly provided.
+ */
 val LocalAppPalette = staticCompositionLocalOf { LightPalette }
 
-/** 主题扩展读取入口；Screen 不直接碰 CompositionLocal */
+/**
+ * 主题扩展读取入口；Screen 不直接碰 CompositionLocal
+ * The read entry for the theme extensions; Screens never touch the
+ * CompositionLocal directly.
+ */
 object AzurPilotTheme {
     val palette: AppPalette
         @Composable
@@ -53,10 +76,16 @@ object AzurPilotTheme {
 }
 
 /**
- * 明暗两套色板
+ * 解析当前明暗档对应的 ColorScheme
  *
- * Android 12 起默认取系统动态色（Material You），其余版本回落到 MD3 基线色板——
- * 两条路都是 MD3 规范内的方案，不再维护自定义色盘
+ * Android 12 起默认取系统动态色（Material You），其余版本回落到 MD3 基线
+ * 色板——两条路都是 MD3 规范内的方案，不再维护自定义色盘。
+ *
+ * Resolves the ColorScheme for the current dark/light setting.
+ *
+ * From Android 12 on, the system dynamic color (Material You) is the default;
+ * older versions fall back to the MD3 baseline palette — both paths are within
+ * the MD3 spec, and no custom palette is maintained.
  */
 @Composable
 private fun colorSchemeOf(darkTheme: Boolean, dynamicColor: Boolean): ColorScheme {
@@ -73,8 +102,16 @@ private fun colorSchemeOf(darkTheme: Boolean, dynamicColor: Boolean): ColorSchem
 /**
  * 全 App 唯一的主题入口
  *
- * 色板、形状、字阶、动效一律走 MD3 默认 token（`MaterialTheme` 的默认 `Shapes` / `Typography` /
- * 内置动效方案），组件不再按自定义圆角与字阶覆写——需要不同观感时换 M3 的组件变体
+ * 色板、形状、字阶、动效一律走 MD3 默认 token（`MaterialTheme` 的默认
+ * `Shapes` / `Typography` / 内置动效方案），组件不再按自定义圆角与字阶覆写
+ * ——需要不同观感时换 M3 的组件变体。
+ *
+ * The app's single theme entry.
+ *
+ * Palette, shapes, type scale, and motion all use the MD3 default tokens (the
+ * default `Shapes` / `Typography` / built-in motion schemes of
+ * `MaterialTheme`); components no longer override with custom radii or type —
+ * when a different look is needed, switch to an M3 component variant.
  */
 @Composable
 fun AzurPilotTheme(

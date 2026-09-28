@@ -23,10 +23,25 @@ import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.components.MirrorSourcePicker
 
 /**
- * 首启 rootfs 部署页：未完成时整屏接管（AppRoot 的门）
+ * 渲染首启 rootfs 部署页：未完成时整屏接管（AppRoot 的门）
  *
  * 「等」之外只有两件事：下载源可选（直连 / 镜像，切换即重下），失败给重试；
  * 跳过只留给开发包
+ *
+ * Renders the first-run rootfs provisioning page: takes over the whole screen
+ * until done (AppRoot's gate).
+ *
+ * Beyond waiting there are only two actions: the download source is selectable
+ * (direct / mirror, switching restarts the download) and failures get a retry;
+ * skipping is reserved for dev builds.
+ *
+ * @param state 部署进度；[ProvisionState.Ready] 时本页不再渲染 / provisioning
+ *   progress; nothing renders once [ProvisionState.Ready]
+ * @param onSkip 跳过回调；null 不显示逃生门（正式包）/ skip callback; null hides
+ *   the escape hatch (release builds)
+ * @param mirrorId 当前下载源 / current download source
+ * @param onMirrorChange 换源回调，切源即重下 / source-change callback; switching
+ *   restarts the download
  */
 @Composable
 fun ProvisionScreen(

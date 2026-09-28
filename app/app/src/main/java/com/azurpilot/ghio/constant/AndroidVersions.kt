@@ -2,6 +2,18 @@ package com.azurpilot.ghio.constant
 
 import android.os.Build
 
+/**
+ * 集中列出各 Android 版本对应的 API 级别，供 `Build.VERSION.SDK_INT` 比较取用
+ *
+ * 每项与 `Build.VERSION_CODES` 同名对应，值即官方 API 级别；成员名自说明，
+ * 不再逐项注释。
+ *
+ * Lists the API level of each Android release for use in
+ * `Build.VERSION.SDK_INT` comparisons.
+ *
+ * Each entry mirrors its `Build.VERSION_CODES` twin and holds the official API
+ * level; member names are self-describing, so no per-entry notes.
+ */
 object AndroidVersions {
     const val API_21_ANDROID_5_0 = Build.VERSION_CODES.LOLLIPOP
     const val API_22_ANDROID_5_1 = Build.VERSION_CODES.LOLLIPOP_MR1

@@ -42,9 +42,18 @@ import com.azurpilot.ghio.ui.components.AppPromptDialog
 import org.koin.androidx.compose.koinViewModel
 
 /**
- * 启动器日志的文件列表（二级页面）：`log/` 目录递归（app.log 系列 / session.log / crash）
+ * 渲染启动器日志的文件列表（二级页面）：`log/` 目录递归（app.log 系列 / session.log / crash）
  *
  * 与运行历史同一形态的两级页；版面对齐 参考实现 的 `ErrorLogView`
+ *
+ * Renders the launcher log file list (second-level page): recursive walk of the
+ * `log/` directory (app.log family / session.log / crash).
+ *
+ * Same two-level shape as the run history; the layout follows the reference
+ * implementation's `ErrorLogView`.
+ *
+ * @param onOpen 点开某行时回传日志文件名（相对 `log/` 目录） / invoked with the log
+ *   file name (relative to `log/`) when a row is tapped
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

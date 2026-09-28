@@ -66,13 +66,27 @@ import org.koin.compose.koinInject
 /**
  * `setFixedSize` 必须延后一拍（m0 PreviewSurface 同款处理）：
  * surfaceCreated 里同步调会被 attach 流程吞掉，画面会按错误比例贴上来
+ *
+ * `setFixedSize` must wait one beat (same treatment as the m0 PreviewSurface):
+ * calling it synchronously in surfaceCreated gets swallowed by the attach flow
+ * and the frame is pasted at the wrong aspect ratio.
  */
 private const val FIXED_SIZE_DELAY_MS = 50L
 
-/** 操作说明的停留时长：够读完一句，又不至于在操作区赖着不走 */
+/**
+ * 操作说明的停留时长：够读完一句，又不至于在操作区赖着不走
+ *
+ * How long the usage hint stays: long enough to read one sentence, short enough
+ * not to loiter over the touch area.
+ */
 private const val HINT_VISIBLE_MS = 4000L
 
-/** 虚拟屏宽高比；画面容器与触摸换算共用一份，别两处各算各的 */
+/**
+ * 虚拟屏宽高比；画面容器与触摸换算共用一份，别两处各算各的
+ *
+ * Virtual-display aspect ratio; the frame container and the touch mapping share
+ * this one value — never compute it twice.
+ */
 private val VIDEO_ASPECT =
     DefaultDisplayConfig.WIDTH.toFloat() / DefaultDisplayConfig.HEIGHT
 
@@ -81,10 +95,22 @@ private val VIDEO_ASPECT =
  *
  * 140dp 是按"画面对少"倒推的上限：横屏可用宽 790dp 上下，画面按高度撑满要 571dp，
  * 余下 190dp 全给侧栏也够——标签在 124dp 内折行，画面尺寸一点不减
+ *
+ * Width of the vertical tool-slot column.
+ *
+ * 140dp is a ceiling derived from "least frame loss": landscape offers ~790dp of
+ * width, the height-fitted frame needs 571dp, and giving the whole remaining
+ * ~190dp to the side rail suffices — labels wrap within 124dp while the frame
+ * keeps its full size.
  */
 private val ToolColumnWidth = 140.dp
 
-/** 虚拟屏上的手动操作；坐标由 UI 换算到虚拟屏坐标系后随动作一起上报 */
+/**
+ * 虚拟屏上的手动操作；坐标由 UI 换算到虚拟屏坐标系后随动作一起上报
+ *
+ * Manual touch actions on the virtual display; the UI maps coordinates into the
+ * virtual-display space and reports them together with the action.
+ */
 private enum class PreviewTouchAction { Down, Move, Up }
 
 /**
@@ -98,6 +124,27 @@ private enum class PreviewTouchAction { Down, Move, Up }
  * 而这一页的正文就是画面本身——当前所在页由导航栏的选中态交代，够了
  *
  * 两个工具槽留在本页而不是主页：它们打的就是这块虚拟屏，入口要挨着画面才连得上
+ *
+ * Renders the virtual-display tab: live frame + direct touch input + the two tool
+ * slots (semi-auto click / event story).
+ *
+ * Entering the page rotates to landscape (the virtual display itself is
+ * landscape; portrait would show a narrow stripe) and leaving restores the
+ * user's original orientation setting. The frame flows through the native
+ * bridge_preview channel (AIDL setMonitorSurface, zero-copy); touches are mapped
+ * back through the contain scaling into virtual-display coordinates and
+ * injected, with hits landing on the letterbox discarded.
+ *
+ * No TopAppBar in the layout: landscape leaves only ~390dp vertically and a top
+ * bar would eat 64dp of frame height, while the body of this page is the frame
+ * itself — the current page is already conveyed by the nav bar selection.
+ *
+ * The two tool slots stay on this page rather than the main page: they drive
+ * this very virtual display, so the entries belong next to the frame.
+ *
+ * @param active 是否为 pager 当前页；兼作 SurfaceView 的创建开关与横屏切换的扳机 /
+ *   whether this is the pager's current page; doubles as the SurfaceView creation
+ *   switch and the landscape-rotation trigger
  */
 @Composable
 fun ScreenPage(
@@ -282,6 +329,11 @@ fun ScreenPage(
  * 空屏态：屏是活的，但上面什么都没有
  *
  * 与其给一块纯黑让人猜"是不是坏了"，不如直说在等什么
+ *
+ * Renders the idle state: the display is alive but nothing is on it.
+ *
+ * Rather than a slab of black that makes people guess "is it broken", it states
+ * outright what is being waited for.
  */
 @Composable
 private fun PreviewIdleCard(modifier: Modifier = Modifier) {
@@ -324,6 +376,13 @@ private fun PreviewIdleCard(modifier: Modifier = Modifier) {
  *
  * 独立成件是为了离开 Row 的作用域——页面根容器现在是 Row，直接写会命中
  * `RowScope.AnimatedVisibility` 那个重载
+ *
+ * Renders the usage-hint pill: backed by a solid same-theme layer, because the
+ * frame content is arbitrary and bare text pressed onto it is unreadable.
+ *
+ * Standalone on purpose to escape the Row scope — the page root is now a Row,
+ * and writing it inline would resolve to the `RowScope.AnimatedVisibility`
+ * overload.
  */
 @Composable
 private fun PreviewHintPill(visible: Boolean, modifier: Modifier = Modifier) {
@@ -355,6 +414,13 @@ private fun PreviewHintPill(visible: Boolean, modifier: Modifier = Modifier) {
  *
  * 本修饰符就挂在画面那块 Box 上（contain 由 aspectRatio 在外层已经做完），
  * 所以 size 即画面尺寸，不必再减一遍留白
+ *
+ * Maps finger positions into virtual-display coordinates before reporting (same
+ * approach as the m0 previewTouchInput).
+ *
+ * The modifier sits on the frame Box itself (contain is already done by
+ * aspectRatio outside), so `size` is the frame size and no letterbox needs
+ * subtracting.
  */
 private fun Modifier.previewTouchInput(
     onTouch: (x: Int, y: Int, action: PreviewTouchAction) -> Unit,
@@ -388,7 +454,12 @@ private fun Modifier.previewTouchInput(
     }
 }
 
-/** Compose 的 LocalContext 可能是 ContextWrapper，逐层剥到 Activity */
+/**
+ * 逐层剥开 ContextWrapper 找到 Activity；Compose 的 LocalContext 可能是包装类
+ *
+ * Unwraps ContextWrapper layer by layer down to the Activity; Compose's
+ * LocalContext may be a wrapper.
+ */
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()

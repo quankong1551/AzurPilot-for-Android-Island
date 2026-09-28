@@ -15,6 +15,20 @@ import com.azurpilot.ghio.third.wrappers.ServiceManager
  *
  * 全程在特权进程里做而不是 app 侧分几步 IPC：息屏之后 app 侧的协程会被系统挂起，
  * 分步做会卡在中间
+ *
+ * 线程：跑在调用方的 binder 线程上，全程阻塞（轮询 + sleep 最长十几秒）。
+ *
+ * Wakes the screen, unlocks, and locks it back to sleep; runs entirely inside the privileged
+ * process.
+ *
+ * Ported from the reference implementation's same-named object. **Numeric PIN only**: pattern
+ * and password would require simulating very different input panels, which cannot be injected.
+ *
+ * Done in one privileged call instead of step-by-step IPC from the app side: after the screen
+ * goes off the system may suspend the app-side coroutines, wedging the sequence halfway.
+ *
+ * Threading: runs on the caller's binder thread and blocks throughout (polling plus sleeps, up
+ * to a dozen-plus seconds).
  */
 object WakeUnlockController {
 
@@ -23,14 +37,27 @@ object WakeUnlockController {
     private const val SCREEN_ON_TIMEOUT_MS = 5_000L
     private const val KEYGUARD_GONE_TIMEOUT_MS = 5_000L
 
-    /** bouncer 弹出期间 isKeyguardLocked 仍为 true，先等它稳下来再注入 */
+    /** bouncer 弹出期间 isKeyguardLocked 仍为 true，先等它稳下来再注入 / While the bouncer is up isKeyguardLocked still reports true; wait for it to settle before injecting */
     private const val BOUNCER_SETTLE_MS = 1_200L
+
+    /** 轮询步长 / Poll step */
     private const val POLL_INTERVAL_MS = 100L
+
+    /** 数字键间隔，模拟人手输入节奏 / Gap between digit keys, mimicking human input pacing */
     private const val DIGIT_GAP_MS = 50L
+
+    /** 上锁后等系统稳定再自测解锁 / Settle wait after locking before the self-test unlock */
     private const val LOCK_SETTLE_MS = 500L
+
+    /** 等息屏完成的窗口 / Window waited for the screen-off to complete */
     private const val SCREEN_OFF_TIMEOUT_MS = 3_000L
 
-    /** 设置页自测：先上锁息屏，等系统稳定再解一次，让用户当场看到 PIN 对不对 */
+    /**
+     * 设置页自测：先上锁息屏，等系统稳定再解一次，让用户当场看到 PIN 对不对
+     *
+     * Settings-page self-test: locks and sleeps first, waits for the system to settle, then
+     * unlocks once so the user sees immediately whether the PIN is right.
+     */
     fun testUnlock(credential: String): Int {
         val lockCode = lockAndSleep()
         if (lockCode != WakeUnlockResult.OK) return lockCode
@@ -39,6 +66,20 @@ object WakeUnlockController {
         return unlock(credential)
     }
 
+    /**
+     * 上锁并息屏
+     *
+     * lockNow 后 keyguard 迟迟不出现且非 secure → 视为没设锁屏（NO_KEYGUARD）；
+     * goToSleep 不可用不视为失败（keyguard 已锁即达标）。
+     *
+     * Locks the keyguard and puts the screen to sleep.
+     *
+     * If the keyguard never appears after lockNow and the lock is not secure, no lock screen is
+     * configured (NO_KEYGUARD); an unavailable goToSleep is not a failure (a locked keyguard
+     * already meets the goal).
+     *
+     * @return [WakeUnlockResult] 码 / a [WakeUnlockResult] code
+     */
     fun lockAndSleep(): Int {
         val pm = ServiceManager.getPowerManager()
         val wm = ServiceManager.getWindowManager()
@@ -47,7 +88,7 @@ object WakeUnlockController {
             Ln.w("$TAG: lockNow unavailable")
             return WakeUnlockResult.UNSUPPORTED
         }
-        if (!pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked == true }) {
+        if (!pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked() == true }) {
             // 锁屏方式设为「无」时 lockNow 之后 keyguard 永远不出现；滑动与密码锁屏都会出现。
             // 超时且非 secure 即视为没设锁屏，这种情况也不必验证息屏
             if (wm.isKeyguardSecure(0) != true) {
@@ -67,7 +108,21 @@ object WakeUnlockController {
         return WakeUnlockResult.OK
     }
 
-    /** [credential] 是纯数字 PIN；无凭证锁屏传空串 */
+    /**
+     * 亮屏并解锁；[credential] 是纯数字 PIN，无凭证锁屏传空串
+     *
+     * 流程：唤醒 → 等 keyguard 状态 → dismissKeyguard → secure 时注入 PIN + ENTER。
+     * PIN 输错**不重试**：连续错会触发系统锁定冷却，越试越进不去。
+     *
+     * Wakes and unlocks; [credential] is a numeric PIN, empty for a credential-less lock
+     * screen.
+     *
+     * Flow: wake → keyguard state poll → dismissKeyguard → PIN + ENTER injection when secure.
+     * A wrong PIN is **never retried**: repeated failures trigger the system's lockout
+     * cooldown, making things worse with every attempt.
+     *
+     * @return [WakeUnlockResult] 码 / a [WakeUnlockResult] code
+     */
     fun unlock(credential: String): Int {
         val pm = ServiceManager.getPowerManager()
         val wm = ServiceManager.getWindowManager()
@@ -83,7 +138,7 @@ object WakeUnlockController {
             }
         }
 
-        val locked = wm.isKeyguardLocked
+        val locked = wm.isKeyguardLocked()
         if (locked == null) {
             Ln.w("$TAG: isKeyguardLocked unavailable")
             return WakeUnlockResult.UNSUPPORTED
@@ -102,7 +157,7 @@ object WakeUnlockController {
         }
 
         if (!secure) {
-            return if (pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked == false }) {
+            return if (pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked() == false }) {
                 Ln.i("$TAG: unlocked (insecure keyguard)")
                 WakeUnlockResult.OK
             } else {
@@ -133,7 +188,7 @@ object WakeUnlockController {
         InputControlUtils.keyDown(KeyEvent.KEYCODE_ENTER, 0)
         InputControlUtils.keyUp(KeyEvent.KEYCODE_ENTER, 0)
 
-        return if (pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked == false }) {
+        return if (pollUntil(KEYGUARD_GONE_TIMEOUT_MS) { wm.isKeyguardLocked() == false }) {
             Ln.i("$TAG: unlocked (PIN accepted)")
             WakeUnlockResult.OK
         } else {
@@ -143,6 +198,7 @@ object WakeUnlockController {
         }
     }
 
+    /** 以 100ms 步进轮询到超时，最后一拍再判一次 / Polls in 100 ms steps until the deadline, with one final check */
     private inline fun pollUntil(timeoutMs: Long, cond: () -> Boolean): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {

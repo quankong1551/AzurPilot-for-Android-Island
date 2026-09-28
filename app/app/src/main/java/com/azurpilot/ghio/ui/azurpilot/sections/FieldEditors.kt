@@ -60,10 +60,19 @@ import com.azurpilot.ghio.theme.AppTokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** 一个参数的保存状态，用来在行尾给一行小字 */
+/**
+ * 一个参数的保存状态，用来在行尾给一行小字
+ *
+ * A single argument's save status, shown as a small line at the row's end.
+ */
 enum class ApFieldStatus { Idle, Saving, Saved, Failed }
 
-/** 参数值的文本形式；嵌套结构给 pretty JSON，避免显示成 `{a=1}` 那种 toString */
+/**
+ * 参数值的文本形式；嵌套结构给 pretty JSON，避免显示成 `{a=1}` 那种 toString
+ *
+ * The text form of an argument value; nested structures get pretty JSON
+ * instead of a `{a=1}`-style toString.
+ */
 fun fieldTextOf(value: ApValue): String = value.prettyText()
 
 /**
@@ -72,6 +81,21 @@ fun fieldTextOf(value: ApValue): String = value.prettyText()
  * [display] 是输入框该显示的文本；null 表示维持用户输入。
  * 清空数字/时间字段回落默认值时，网关存的是默认值而输入框如果还空着，
  * 看起来就像「没保存上」——WebUI 用 `text: String(fallback)` 解决，这里同理。
+ *
+ * The outcome of local validation: a null [payload] means the input is not
+ * submittable yet.
+ *
+ * [display] is what the field should show; null keeps the user's input. When
+ * clearing a numeric/datetime field falls back to the default, the gateway
+ * stores the default while the box would stay empty — looking like the save
+ * never happened. The WebUI solves it with `text: String(fallback)`; ditto
+ * here.
+ *
+ * @property payload 可提交的值；null 表示本地校验未通过 / the submittable value;
+ *   null when local validation failed
+ * @property display 输入框该显示的文本；null 维持用户输入 / the text the field
+ *   should show; null keeps the user's input
+ * @property error 预留的错误文案 / the reserved error text
  */
 data class PreparedField(val payload: ApValue, val display: String?, val error: String?)
 
@@ -80,6 +104,16 @@ data class PreparedField(val payload: ApValue, val display: String?, val error: 
  *
  * 与网关的校验规则对齐（类型、整数性、区间、正则、日期格式），这样**本地就能拦下**明显不合法
  * 的输入，不必等一次往返再显示红字。
+ *
+ * Converts a field's text into a submittable value.
+ *
+ * Aligned with the gateway's validation rules (type, integrality, range,
+ * regex, date format) so obviously invalid input is **rejected locally**
+ * instead of waiting a round trip to show red text.
+ *
+ * @param field 参数定义 / the argument definition
+ * @param text 输入框文本 / the field's text
+ * @return 校验与转换结果 / the validation and conversion result
  */
 fun prepareFieldValue(field: AzurPilotField, text: String): PreparedField {
     val trimmed = text.trim()
@@ -117,6 +151,7 @@ fun prepareFieldValue(field: AzurPilotField, text: String): PreparedField {
     return PreparedField(payload, null, null)
 }
 
+/** 日期时间字段接受的格式 / The format accepted by datetime fields. */
 private val DATETIME = Regex("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}""")
 
 /**
@@ -125,6 +160,30 @@ private val DATETIME = Regex("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}""")
  * 控件按 schema 的定义挑：布尔→开关，有候选→下拉，多选→勾选组，其余→文本。
  * 开关与下拉这类**离散选择**改完立刻提交；文本类**防抖后提交**——手机上逐字符发请求既费流量，
  * 也会让中间态（`1`、`1.`）撞上服务端校验。
+ *
+ * One argument row.
+ *
+ * The control is picked by the schema's definition: boolean → switch, options
+ * → dropdown, multiselect → checkbox group, everything else → text.
+ * **Discrete choices** like switches and dropdowns commit immediately; text
+ * fields **commit after a debounce** — per-character requests on a phone burn
+ * traffic and let intermediate states (`1`, `1.`) trip server validation.
+ *
+ * @param schema schema 定义 / the schema definition
+ * @param group 分组名 / the group name
+ * @param argument 参数名 / the argument name
+ * @param field 参数元信息 / the argument's metadata
+ * @param value 当前值 / the current value
+ * @param status 保存状态 / the save status
+ * @param statusError 保存失败时网关给的原文——「参数必须在 0 到 100 之间：Main.Campaign.X」
+ *   正是用户要的下一步 / the gateway's raw message on save failure — "argument
+ *   must be between 0 and 100: Main.Campaign.X" is exactly the user's next
+ *   step
+ * @param onChange 提交新值 / commits a new value
+ * @param onRetry 失败后重试提交 / retries the failed commit
+ * @param onRunNow 「立刻运行」入口；仅调度时间参数提供 / the run-now entry,
+ *   offered only for the scheduler-time argument
+ * @param onCheckScript 受限 Lua 的预检入口 / the restricted-Lua precheck entry
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -135,7 +194,6 @@ fun ApFieldRow(
     field: AzurPilotField,
     value: ApValue,
     status: ApFieldStatus,
-    /** 保存失败时网关给的原文——「参数必须在 0 到 100 之间：Main.Campaign.X」正是用户要的下一步 */
     statusError: String? = null,
     onChange: (ApValue) -> Unit,
     onRetry: () -> Unit,
@@ -220,8 +278,14 @@ fun ApFieldRow(
     }
 }
 
+/** 帮助文案里的 HTML 标签，展示前直接剥掉 / HTML tags inside help text, stripped before display. */
 private val HELP_TAG = Regex("<[^>]*>")
 
+/**
+ * 行尾的保存状态指示
+ *
+ * The save-status indicator at the row's end.
+ */
 @Composable
 private fun StatusIndicator(status: ApFieldStatus) {
     // 保存中 → 已保存 → 无 是同一处的三种态，交叉淡入才不会在行尾闪一下
@@ -266,6 +330,16 @@ private fun StatusIndicator(status: ApFieldStatus) {
  *
  * 只给一个「重试」按钮等于让用户猜哪里错了：网关的校验消息（区间、正则、日期格式、类型）
  * 就是修好这件事所需的全部信息，必须原样显示出来。
+ *
+ * The reason a save failed.
+ *
+ * A lone "retry" button makes users guess what went wrong: the gateway's
+ * validation message (range, regex, date format, type) is exactly the
+ * information needed to fix it and must be shown verbatim.
+ *
+ * @param error 网关的校验消息；null 表示原因不明 / the gateway's validation
+ *   message; null when the cause is unknown
+ * @param onRetry 重试提交 / retries the commit
  */
 @Composable
 private fun FailedNotice(error: String?, onRetry: () -> Unit) {
@@ -293,7 +367,12 @@ private fun FailedNotice(error: String?, onRetry: () -> Unit) {
     }
 }
 
-/** 只读值：嵌套结构给等宽 pretty JSON，截断到固定行数 */
+/**
+ * 只读值：嵌套结构给等宽 pretty JSON，截断到固定行数
+ *
+ * A read-only value: nested structures get monospace pretty JSON, truncated to
+ * a fixed line count.
+ */
 @Composable
 private fun ReadOnlyValue(text: String) {
     Text(
@@ -305,7 +384,12 @@ private fun ReadOnlyValue(text: String) {
     )
 }
 
-/** 存储区：只读展示 + 清空（网关只接受清成 `{}`） */
+/**
+ * 存储区：只读展示 + 清空（网关只接受清成 `{}`）
+ *
+ * A storage area: read-only display plus a clear action (the gateway only
+ * accepts clearing it to `{}`).
+ */
 @Composable
 private fun StorageControl(value: ApValue, enabled: Boolean, onClear: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -328,7 +412,13 @@ private fun StorageControl(value: ApValue, enabled: Boolean, onClear: () -> Unit
     }
 }
 
-/** 单选下拉：候选取自 schema，显示名走翻译；当前值不在候选里时也照样显示出来 */
+/**
+ * 单选下拉：候选取自 schema，显示名走翻译；当前值不在候选里时也照样显示出来
+ *
+ * A single-select dropdown: candidates come from the schema, display names go
+ * through translation, and a current value outside the candidates still shows
+ * up instead of leaving the box empty.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OptionSelect(
@@ -371,7 +461,12 @@ private fun OptionSelect(
     }
 }
 
-/** 多选：勾选即提交整个列表（网关要求元素与候选"类型与值都相同"且不重复） */
+/**
+ * 多选：勾选即提交整个列表（网关要求元素与候选"类型与值都相同"且不重复）
+ *
+ * A multi-select: each toggle commits the whole list (the gateway requires
+ * elements to be "same type and value" as a candidate, without duplicates).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MultiSelect(
@@ -405,7 +500,11 @@ private fun MultiSelect(
     }
 }
 
-/** 文本类控件：防抖提交 + 本地预校验 */
+/**
+ * 文本类控件：防抖提交 + 本地预校验
+ *
+ * The text-family control: debounced commit plus local pre-validation.
+ */
 @Composable
 private fun TextControl(
     field: AzurPilotField,
@@ -519,11 +618,20 @@ private fun TextControl(
     }
 }
 
+/** 只读字段不提供脚本检查按钮 / Read-only fields get no script-check button. */
 private fun readOnlyHint(field: AzurPilotField): Boolean = field.readOnly
 
+/** 文本提交的防抖时长（毫秒） / The text-commit debounce, in milliseconds. */
 private const val DEBOUNCE_MS = 600L
 
-/** 未连接的提示条：网关掉线时说明为什么内容不刷新 */
+/**
+ * 未连接的提示条：网关掉线时说明为什么内容不刷新
+ *
+ * The offline banner: explains why content stops refreshing when the gateway
+ * drops.
+ *
+ * @param modifier 应用于提示条的修饰符 / the modifier applied to the banner
+ */
 @Composable
 fun ApOfflineNotice(modifier: Modifier = Modifier) {
     Row(

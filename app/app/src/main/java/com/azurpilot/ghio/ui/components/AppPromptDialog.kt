@@ -12,13 +12,26 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.window.DialogProperties
 
 /**
- * 三按钮提示弹窗：确认 / 中间出口 / 关闭
+ * 渲染三按钮提示弹窗：确认 / 中间出口 / 关闭
  *
  * [neutralText] 用于「换条路走」这类出口（如 Shizuku 引导里的切 Root），
  * M3 的 AlertDialog 只有 confirm 与 dismiss 两槽，中间出口挤在 dismiss 槽里
  *
  * [destructive] 给「删掉就没了」这类确认用：M3 里破坏性动作靠 error 角色标出来，
  * 不上色就和普通「确定」长得一模一样，误点的代价却不是一个量级
+ *
+ * Renders a three-button prompt dialog: confirm / neutral exit / dismiss.
+ *
+ * [neutralText] hosts an alternate way out (such as switching to Root in the
+ * Shizuku guide); M3's AlertDialog only offers confirm and dismiss slots, so the
+ * middle exit shares the dismiss slot. [destructive] marks confirmations whose
+ * outcome cannot be undone: M3 signals destructive actions through the error role,
+ * and without the tint they look exactly like a plain "OK" while the cost of a
+ * mis-tap is in a different league.
+ *
+ * @param dismissOnOutsideClick false 时返回键与点外部都关不掉弹窗，强制走按钮 /
+ *   when false, neither back nor an outside tap dismisses; the user must pick a
+ *   button
  */
 @Composable
 fun AppPromptDialog(

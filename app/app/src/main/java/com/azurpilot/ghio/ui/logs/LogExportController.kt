@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
- * 导出日志：sheet 显隐、SAF 选位置、分享 Intent、重复点击保护
+ * 拉起日志导出：sheet 显隐、SAF 选位置、分享 Intent、重复点击保护
  *
  * [kind] 为空 = 不显示。两类导出（AzurPilot / 启动器）共用这一个 sheet，标题与产物按类型走
  *
@@ -42,6 +42,22 @@ import org.koin.compose.koinInject
  * 跟着 sheet 的显隐一起装卸的话，回调回来时注册已经没了
  *
  * 反馈经 [onMessage] 交给调用方：提示该显示在哪（snackbar / toast）由承载它的那一层决定
+ *
+ * Hosts log export: sheet visibility, SAF location picking, the share Intent, and
+ * double-tap protection.
+ *
+ * A null [kind] = not shown. Both export kinds (AzurPilot / launcher) share this
+ * one sheet; title and artifact follow the kind. Must hang unconditionally at the
+ * caller's composition top level — the `rememberLauncherForActivityResult`
+ * registration has to stay stable; mounted and unmounted together with the sheet,
+ * it would already be gone by the time the callback returns. Feedback flows
+ * through [onMessage]: where the message shows (snackbar / toast) is up to the
+ * layer hosting it.
+ *
+ * @param kind 当前要导出的类别，null 收起 sheet / kind to export, null hides the
+ *   sheet
+ * @param onMessage 结果反馈回调（成功/失败文案） / result feedback callback
+ *   (success/failure copy)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

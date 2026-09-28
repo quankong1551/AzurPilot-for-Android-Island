@@ -43,6 +43,27 @@ import kotlin.coroutines.resume
  * - 请求 `{"v":1,"type":"request","id":..,"method":..,"params":{..}}`
  * - 响应 `{"v":1,"type":"response","id":..,"ok":true,"result":{..}}`，失败为 `ok:false` + `error{code,message}`
  * - 事件 `{"v":1,"type":"event","topic":"overview|instances|logs|preview|statistics|session","seq":n,"data":{..}}`
+ *
+ * The AzurPilot `/api/v1/ws` gateway client.
+ *
+ * This is the very long-lived connection the WebUI frontend uses: request/
+ * response envelopes, topic pushes and `seq` numbering. The native UI never
+ * touches HTTP static assets, but all business capability comes from here —
+ * so this class has to express the protocol's full semantics, not just "did it
+ * arrive".
+ *
+ * **Authentication rides on "local direct connections are password-free"**:
+ * the gateway's `is_local_client()` only requires the source address and the
+ * Host header to be loopback with **no Origin header** — OkHttp's WebSocket
+ * naturally sends none, so it is admitted directly, without the WebUI
+ * password. If a `session` event reports `authRequired` (the gateway has
+ * tightened its policy), [login] provides the sign-in path.
+ *
+ * Envelope (`module/api/protocol.py`):
+ * - request `{"v":1,"type":"request","id":..,"method":..,"params":{..}}`
+ * - response `{"v":1,"type":"response","id":..,"ok":true,"result":{..}}`; on failure
+ *   `ok:false` + `error{code,message}`
+ * - event `{"v":1,"type":"event","topic":"overview|instances|logs|preview|statistics|session","seq":n,"data":{..}}`
  */
 class AzurPilotGateway(private val scope: CoroutineScope) {
 
@@ -51,14 +72,31 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
      *
      * `raw` 不一定是对象——`instances.list` / `instances.importable` 按协议返回的是**裸数组**，
      * 只认对象的话这两个接口的返回值会被整段丢掉。所以原样留着，由调用方按 [obj] / [array] 取。
+     *
+     * The result of one call. `Offline` and `Err` are separate: the former is
+     * retryable, the latter retried only yields the same error.
+     *
+     * `raw` is not necessarily an object — `instances.list` /
+     * `instances.importable` return **bare arrays** by protocol, and accepting
+     * only objects would drop those two endpoints' payloads wholesale. It is
+     * kept verbatim; callers pick it up via [obj] / [array].
      */
     sealed interface Reply {
+        /**
+         * 成功态。`CompletableDeferred` 不接受 null 作为完成值，所以成功态本身带上结果一起传。
+         *
+         * Success. `CompletableDeferred` accepts no null completion value, so
+         * the success state carries the payload along with it.
+         */
         data class Ok(val raw: ApValue) : Reply {
             val obj: JSONObject get() = raw as? JSONObject ?: EMPTY_OBJECT
             val array: JSONArray? get() = raw as? JSONArray
         }
 
+        /** 网关回的业务错误 / A business error returned by the gateway. */
         data class Err(val code: String, val message: String) : Reply
+
+        /** 连接不在（未连上/已断/发送失败）：可重试 / No connection (never opened, lost, or send failed): retryable. */
         object Offline : Reply
 
         companion object {
@@ -74,12 +112,24 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         .build()
 
     private val _connected = MutableStateFlow(false)
+
+    /** 与网关的长连接是否存活；唯一事实源在 [awaitSession] / Whether the gateway WebSocket is alive; the single source of truth is [awaitSession]. */
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
-    /** 网关要求先登录；本机直连时为 false */
+    /**
+     * 网关要求先登录；本机直连时为 false
+     *
+     * The gateway demands a login first; false for local direct connections.
+     */
     private val _authRequired = MutableStateFlow(false)
     val authRequired: StateFlow<Boolean> = _authRequired.asStateFlow()
 
+    /**
+     * 网关事件流（`session` 主题除外，那条在握手时就地消费）
+     *
+     * The gateway event stream (the `session` topic excluded — it is consumed
+     * in place during the handshake).
+     */
     private val _events = MutableSharedFlow<JSONObject>(
         replay = 0,
         extraBufferCapacity = EVENT_BUFFER,
@@ -87,6 +137,7 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
     )
     val events: SharedFlow<JSONObject> = _events.asSharedFlow()
 
+    /** 在途请求 id → 完成器 / In-flight request id → completion handle. */
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Reply.Ok>>()
 
     @Volatile
@@ -94,10 +145,21 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
 
     private var loop: Job? = null
 
-    /** 当前订阅；断线重连后用它原样恢复，界面不需要感知重连 */
+    /**
+     * 当前订阅；断线重连后用它原样恢复，界面不需要感知重连
+     *
+     * The current subscription; restored verbatim after a reconnect, so the UI
+     * need not know a reconnect happened.
+     */
     @Volatile
     private var subscription: Pair<String?, List<String>> = null to emptyList()
 
+    /**
+     * 启动重连循环；幂等，已在跑直接返回
+     *
+     * Starts the reconnect loop; idempotent, returns at once when already
+     * running. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun start() {
         if (loop?.isActive == true) return
         loop = scope.launch(AppDispatchers.IO) {
@@ -117,6 +179,12 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         }
     }
 
+    /**
+     * 停止重连循环并关闭连接；所有在途请求立刻作废
+     *
+     * Stops the reconnect loop and closes the connection; every in-flight
+     * request is dropped at once.
+     */
     fun stop() {
         loop?.cancel()
         loop = null
@@ -130,6 +198,12 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
      * 订阅主题；`instance` 为 null 时只订 `instances` 这类与实例无关的主题
      *
      * 网关侧订阅会被整体替换（不是叠加），所以这里保存完整的一份用于重连恢复。
+     *
+     * Subscribes to topics; a null `instance` subscribes only to
+     * instance-independent topics such as `instances`.
+     *
+     * The gateway-side subscription is replaced wholesale (not merged), so the
+     * full copy is kept here for reconnect restoration.
      */
     suspend fun subscribe(instance: String?, topics: List<String>): Reply {
         subscription = instance to topics
@@ -140,7 +214,7 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         return call("events.subscribe", params)
     }
 
-    /** 供网关收紧免密策略时使用：本机直连当前不需要 */
+    /** 供网关收紧免密策略时使用：本机直连当前不需要 / For when the gateway tightens its password-free policy; not needed for local direct connections today. */
     suspend fun login(password: String): Reply = call("auth.login", JSONObject().put("password", password))
 
     /**
@@ -148,6 +222,18 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
      *
      * [timeoutMs] 默认取协议的 45s——`scheduler.stop` 要等最多 30s 才敢回话，超时设小了会
      * 把「正在停」误判成失败。
+     *
+     * Sends one request and awaits its response.
+     *
+     * [timeoutMs] defaults to the protocol's 45 s — `scheduler.stop` may take
+     * up to 30 s before it dares to answer, and a smaller timeout would
+     * misreport "stopping" as a failure.
+     *
+     * @param method 协议方法名 / the protocol method name
+     * @param params 请求参数 / request parameters
+     * @param timeoutMs 等响应的时限 / how long to wait for the response
+     * @return [Reply.Ok] / [Reply.Err] / [Reply.Offline] 之一 / one of
+     *   [Reply.Ok], [Reply.Err], [Reply.Offline]
      */
     suspend fun call(
         method: String,
@@ -185,11 +271,11 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         }
     }
 
-    /** 只关心「拿到没有」的调用点用这个；错误码与数组结果都折成 null */
+    /** 只关心「拿到没有」的调用点用这个；错误码与数组结果都折成 null / For call sites that only care about "did it arrive"; error codes and array results collapse to null. */
     suspend fun request(method: String, params: JSONObject = JSONObject()): JSONObject? =
         (call(method, params) as? Reply.Ok)?.obj
 
-    /** 结果本身是值的调用（裸数组）走这个 */
+    /** 结果本身是值的调用（裸数组）走这个 / For calls whose result is the value itself (bare arrays). */
     suspend fun callRaw(method: String, params: JSONObject = JSONObject()): ApValue =
         (call(method, params) as? Reply.Ok)?.raw
 
@@ -198,6 +284,14 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
      *
      * 返回 true 表示「连上过」（用来重置退避），false 表示连都没连上（用来加倍退避）。
      * 连接存续期间这个挂起就是「保持」——`_connected` 是唯一的连接态来源。
+     *
+     * Opens a connection and **suspends until that connection ends**; returns
+     * whether a session was ever established in the meantime.
+     *
+     * A true return means "connected at some point" (used to reset the
+     * backoff); false means it never connected (used to double the backoff).
+     * For as long as the connection lives this suspension is the "stay" —
+     * `_connected` is the single source of connection state.
      */
     private suspend fun awaitSession(): Boolean = suspendCancellableCoroutine { cont ->
         var opened = false
@@ -250,6 +344,7 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         }
     }
 
+    /** 按信封 `type` 分发：响应唤醒等待者，事件进流；session 主题就地消费 / Dispatches by envelope `type`: responses wake waiters, events enter the stream; the session topic is consumed in place. */
     private fun handleMessage(text: String) {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return
         when (json.optString("type")) {
@@ -286,8 +381,8 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
         pending.clear()
     }
 
-    /** `CompletableDeferred` 不接受 null 作为完成值，所以成功态本身带上结果一起传 */
     companion object {
+        /** 网关 WS 地址 / The gateway WebSocket URL. */
         const val WS_URL = "ws://127.0.0.1:${ProotHost.WEBUI_PORT}/api/v1/ws"
         private const val NORMAL_CLOSE = 1000
         private const val CONNECT_TIMEOUT_MS = 3_000L
@@ -300,7 +395,12 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
     }
 }
 
-/** 网关回的业务错误；[code] 是协议里的错误码，[message] 是可直接展示的中文文案 */
+/**
+ * 网关回的业务错误；[code] 是协议里的错误码，[message] 是可直接展示的中文文案
+ *
+ * A business error returned by the gateway; [code] is the protocol error code
+ * and [message] is display-ready text.
+ */
 class AzurPilotException(val code: String, override val message: String) : Exception(message)
 
 /**
@@ -308,6 +408,12 @@ class AzurPilotException(val code: String, override val message: String) : Excep
  *
  * 走 `Result` 的调用点需要「错误文案能显示出来」，而 [AzurPilotGateway.Reply.Err] 里已经带着
  * 可直接展示的中文了——这里只做转换，不再拼文案。
+ *
+ * Folds the failure states into a `Result`.
+ *
+ * Call sites on `Result` need "an error message that can be shown", and
+ * [AzurPilotGateway.Reply.Err] already carries display-ready text — this is a
+ * pure conversion, no message crafting.
  */
 fun AzurPilotGateway.Reply.asFailure(): Result<Nothing> = when (this) {
     is AzurPilotGateway.Reply.Err -> Result.failure(AzurPilotException(code, message))

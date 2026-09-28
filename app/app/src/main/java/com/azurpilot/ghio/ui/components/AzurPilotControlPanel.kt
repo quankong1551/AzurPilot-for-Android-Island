@@ -56,15 +56,35 @@ import com.azurpilot.ghio.theme.AzurPilotTheme
 import org.koin.compose.koinInject
 
 /**
- * AzurPilot 控制面板（共享组合件）：环境/调度器状态行 + 日志板 + 调度器启停
+ * 渲染 AzurPilot 控制面板（共享组合件）：环境/调度器状态行 + 日志板 + 调度器启停
  *
  * 悬浮窗（OverlayPanel）与主页（HangarScreen）共用同一份。
  * 进程启停只此一处（wrapper 薄 HTTP）；AzurPilot 页只做内容面，不再开第二条启停路径
  * （见 AzurPilotRunController 头注）
- * [showTools]：悬浮窗要工具区；主页的工具按钮已并进运行配置行（ConfigToolRow），传 false
- * [showLog]：主页把日志单独渲染在启停按钮下方（要控高度），传 false；悬浮窗保持默认
- * [logBoardHeight]：日志板的固定高。null = 吃掉剩余空间（宿主是定高容器时用）；
- * 给定值 = 按这个高摆（宿主自己可滚时用，否则日志会被挤成一条线）
+ *
+ * Renders the AzurPilot control panel (shared composite): environment/scheduler
+ * status rows + log board + runner start/stop.
+ *
+ * Shared verbatim by the overlay window (OverlayPanel) and the main page
+ * (HangarScreen). Process start/stop lives only here (thin HTTP wrapper); the
+ * AzurPilot page is content-only and must not open a second start/stop path (see
+ * the AzurPilotRunController header note).
+ *
+ * @param showTools 悬浮窗要工具区；主页的工具按钮已并进运行配置行（ConfigToolRow），
+ *   传 false / the overlay wants the tool section; the main page has folded its
+ *   tool buttons into the run-config row (ConfigToolRow), pass false
+ * @param showGateway 主页传 true：额外显示 /api/v1/ws 来的「调度总览」与「自启」；
+ *   悬浮窗空间紧张，保持关闭 / pass true on the main page to also show the
+ *   scheduler overview and auto-start toggle from /api/v1/ws; keep it off in the
+ *   space-tight overlay
+ * @param showLog 主页把日志单独渲染在启停按钮下方（要控高度），传 false；悬浮窗保持
+ *   默认 / the main page renders the log separately under the start/stop button
+ *   (needs height control), pass false; the overlay keeps the default
+ * @param logBoardHeight 日志板的固定高。null = 吃掉剩余空间（宿主是定高容器时用）；
+ *   给定值 = 按这个高摆（宿主自己可滚时用，否则日志会被挤成一条线） / fixed height
+ *   of the log board. null = take the remaining space (host is a fixed-height
+ *   container); a value = lay out at that height (host scrolls itself, otherwise
+ *   the log collapses to a single line)
  */
 @Composable
 fun AzurPilotControlPanel(
@@ -76,7 +96,6 @@ fun AzurPilotControlPanel(
     onToolStop: () -> Unit,
     modifier: Modifier = Modifier,
     showTools: Boolean = true,
-    /** 主页传 true：额外显示 /api/v1/ws 来的「调度总览」与「自启」；悬浮窗空间紧张，保持关闭 */
     showGateway: Boolean = false,
     showLog: Boolean = true,
     logBoardHeight: Dp? = null,
@@ -214,13 +233,25 @@ fun AzurPilotControlPanel(
 }
 
 /**
- * 日志板：主页与悬浮窗共用的展示件，新日志自动沉底；无内容时给占位提示
+ * 渲染日志板：主页与悬浮窗共用的展示件，新日志自动沉底；无内容时给占位提示
  *
  * 底色取"井"（低一档容器 + 描边）而不是与卡片同档：两个宿主的底色不同
  * （主页是 surface、悬浮窗面板是 surfaceContainerHighest），同档取色必然有一边
  * 与底同色而看不出边界；低一档加描边在两边都读得出来
  *
  * 正文用 bodySmall 等宽档：一行日志要能一眼扫完级别与正文
+ *
+ * Renders the log board: a display shared by the main page and the overlay; new
+ * lines auto-scroll to the bottom; shows a placeholder when empty.
+ *
+ * The background picks the "well" recipe (one tier lower container + border)
+ * instead of matching the card tier: the two hosts sit on different backgrounds
+ * (surface on the main page, surfaceContainerHighest on the overlay panel), so a
+ * same-tier color would blend into one of them and lose its boundary; one tier
+ * lower plus a border reads on both.
+ *
+ * Body text uses the bodySmall monospace tier: a log line must show level and
+ * text in one glance.
  */
 @Composable
 fun AzurPilotLogBoard(lines: List<String>, linesCount: Int, modifier: Modifier = Modifier) {
@@ -252,7 +283,11 @@ fun AzurPilotLogBoard(lines: List<String>, linesCount: Int, modifier: Modifier =
     }
 }
 
-/** 状态行的健康度，只用来给指示点取色 */
+/**
+ * 状态行的健康度，只用来给指示点取色
+ *
+ * Health level of a status row; exists only to color the indicator dot.
+ */
 private enum class StatusLevel { Ok, Inactive, Error }
 
 @Composable
@@ -263,12 +298,21 @@ private fun statusDotColor(level: StatusLevel): Color = when (level) {
 }
 
 /**
- * 一条状态：指示点 + 一句话
+ * 渲染一条状态：指示点 + 一句话
  *
  * 点是给"扫"的，文案是给"读"的——四行同色同号的裸字看不出哪条是坏的
  *
  * 点按首行的行高一格居中，而不是整行居中：状态文案会换行（"Runtime 准备中 · 拉起 proot 会话"），
  * 整行居中会把点推到两行之间，看起来哪行都不属于
+ *
+ * Renders one status line: indicator dot + one sentence.
+ *
+ * The dot is for scanning, the text for reading — four bare lines of the same
+ * color and bullet hide which one is broken.
+ *
+ * The dot centers within the first line's height instead of the whole row: status
+ * text wraps ("Runtime preparing · starting proot session"), and full-row
+ * centering pushes the dot between the two lines, belonging to neither.
  */
 @Composable
 private fun AzurPilotStatusRow(level: StatusLevel, labelRes: Int, value: String) {
@@ -301,9 +345,15 @@ private fun AzurPilotStatusRow(level: StatusLevel, labelRes: Int, value: String)
 }
 
 /**
- * 调度器状态一句话。wrapper 不可达时必须区分「环境准备中（带阶段明细）」与真正的「未就绪」——
+ * 返回调度器状态一句话。wrapper 不可达时必须区分「环境准备中（带阶段明细）」与真正的「未就绪」——
  * 准备链全程 2~5 分钟且 release 日志静默，这句是唯一可见的进度面。
  * 控制面板与底部控制卡都用，故独立成件
+ *
+ * Returns the one-line scheduler status. When the wrapper is unreachable it must
+ * tell "environment preparing (with phase detail)" apart from a true "not ready"
+ * — the preparation chain runs 2-5 minutes and release logs stay silent, so this
+ * line is the only visible progress surface. Both the control panel and the
+ * bottom control card use it, hence a standalone piece.
  */
 @Composable
 fun azurPilotRunStatusText(
@@ -323,7 +373,12 @@ fun azurPilotRunStatusText(
     else -> stringResource(R.string.overlay_azurpilot_stopped)
 }
 
-/** 指示点与 [azurPilotRunStatusText] 同源：文案说「失败」时点是红的，说「运行中」时点是绿的 */
+/**
+ * 返回指示点级别，与 [azurPilotRunStatusText] 同源：文案说「失败」时点是红的，说「运行中」时点是绿的
+ *
+ * Returns the dot level, kept in step with [azurPilotRunStatusText]: red when the
+ * text says "failed", green when it says "running".
+ */
 private fun azurPilotStatusLevel(run: AzurPilotRunState, phase: ProotPhase): StatusLevel = when {
     !run.reachable && phase == ProotPhase.FAILED -> StatusLevel.Error
     run.runnerAlive -> StatusLevel.Ok
@@ -331,11 +386,20 @@ private fun azurPilotStatusLevel(run: AzurPilotRunState, phase: ProotPhase): Sta
 }
 
 /**
- * 工具区：半自动点击 / 活动剧情——与虚拟屏页同款槽位按钮（[ToolSlotButton]）
+ * 渲染工具区：半自动点击 / 活动剧情——与虚拟屏页同款槽位按钮（[ToolSlotButton]）
  *
  * 某工具在跑时对应槽位变「停止」（槽位即归属），另一槽保持可点=换工具；
  * 与调度器的互斥（启工具自动停 runner、启 runner 自动停工具）由 wrapper 集中执行，
  * 可用性只沿用面板既有的 wrapper 可达/忙碌判断，不拿 runnerAlive/toolAlive 互相禁用
+ *
+ * Renders the tool section: semi-auto click / event story — same slot buttons as
+ * the virtual-display page ([ToolSlotButton]).
+ *
+ * While a tool runs, its slot turns into "Stop" (the slot owns the tool) and the
+ * other stays tappable = switch tools; the mutual exclusion with the scheduler
+ * (starting a tool stops the runner and vice versa) is enforced centrally by the
+ * wrapper, so availability simply reuses the panel's existing wrapper
+ * reachable/busy checks instead of disabling via runnerAlive/toolAlive.
  */
 @Composable
 private fun AzurPilotToolSection(
@@ -354,10 +418,16 @@ private fun AzurPilotToolSection(
 }
 
 /**
- * 工具槽的清单：标签、状态里对应的 toolName、以及各自的图标
+ * 工具槽的定义：标签与运行状态里对应的 toolName
  *
  * 两个工具在多处出现（虚拟屏页的竖排、悬浮窗的横排），字段只在这里写一份
  * ——按钮形制与互斥规则是共享的，重复定义迟早会漂
+ *
+ * Definition of one tool slot: the label and the matching toolName in run state.
+ *
+ * Both tools appear in several places (vertical on the virtual-display page,
+ * horizontal in the overlay); the fields are written here exactly once — button
+ * shape and exclusion rules are shared, and duplicated definitions always drift.
  */
 private data class ToolSlot(val labelRes: Int, val toolName: String)
 
@@ -366,7 +436,12 @@ private val ToolSlots = listOf(
     ToolSlot(R.string.tool_event_story, AzurPilotRunState.TOOL_EVENT_STORY),
 )
 
-/** 一个工具槽：按 [ToolSlot.toolName] 认领当前在跑的是不是自己 */
+/**
+ * 渲染一个工具槽：按 [ToolSlot.toolName] 认领当前在跑的是不是自己
+ *
+ * Renders one tool slot: claims the currently running tool as its own by matching
+ * [ToolSlot.toolName].
+ */
 @Composable
 private fun ToolSlotAction(
     slot: ToolSlot,
@@ -385,7 +460,12 @@ private fun ToolSlotAction(
     )
 }
 
-/** 工具槽横排：悬浮窗工具区用（面板宽度只够平铺，竖排会把日志板挤没） */
+/**
+ * 渲染工具槽横排：悬浮窗工具区用（面板宽度只够平铺，竖排会把日志板挤没）
+ *
+ * Renders the tool slots in a row: for the overlay tool section (the panel is
+ * just wide enough to tile them; a column would squeeze out the log board).
+ */
 @Composable
 fun ToolSlotRow(
     run: AzurPilotRunState,
@@ -415,6 +495,15 @@ fun ToolSlotRow(
  * 这个位子不是随便挑的：虚拟屏是 16:9，手机横屏接近 20:9，画面按高度撑满后左右天然
  * 空出近 190dp。把入口放进这段留白，画面尺寸一点不减——压在画面下沿的那一版要吃掉
  * 78dp 的竖向高度，正是这一页最稀缺的一维
+ *
+ * Renders the tool slots in a column: for the virtual-display page, dropped into
+ * the whitespace right of the frame.
+ *
+ * The spot is not arbitrary: the virtual display is 16:9 while a phone in
+ * landscape is nearly 20:9, so a height-fitted frame naturally leaves ~190dp on
+ * each side. Placing the entries in that whitespace costs the frame nothing —
+ * the variant pressed under the frame's bottom edge eats 78dp of vertical
+ * height, the scarcest dimension on this page.
  */
 @Composable
 fun ToolSlotColumn(
@@ -447,6 +536,19 @@ fun ToolSlotColumn(
  *
  * 标签居中且允许换行：两处宿主都窄（悬浮窗半栏 ~147dp、虚拟屏侧栏 ~124dp），
  * 日文的工具名一行放不下，居中的两行比贴左的单行省略号好读
+ *
+ * Renders the shared tool slot button: used by the virtual-display page (vertical,
+ * right of the frame) and the overlay tool section ([AzurPilotToolSection]).
+ *
+ * Tonal rather than filled: when a page shows the primary "start grinding" action
+ * next to two tool entries, three identical filled buttons compete for the same
+ * visual weight and the hierarchy collapses. A running slot turns into "Stop"
+ * (the slot owns the tool).
+ *
+ * The label is centered and allowed to wrap: both hosts are narrow (overlay
+ * half-column ~147dp, virtual-display side rail ~124dp) and Japanese tool names
+ * do not fit one line; a centered two-liner reads better than a left-aligned
+ * ellipsis.
  */
 @Composable
 fun ToolSlotButton(
@@ -482,9 +584,15 @@ fun ToolSlotButton(
 }
 
 /**
- * 调度总览：来自 `/api/v1/ws` 的 `overview` 主题（与日志板同源不同接口）
+ * 渲染调度总览：来自 `/api/v1/ws` 的 `overview` 主题（与日志板同源不同接口）
  *
  * 控制面板只给「下一个要跑什么」这一件事——完整任务表在 AzurPilot 页的总览里。
+ *
+ * Renders the scheduler overview: the `overview` topic from `/api/v1/ws` (same
+ * source as the log board, different endpoint).
+ *
+ * The panel conveys exactly one thing — what runs next; the full task table lives
+ * in the AzurPilot page's overview.
  */
 @Composable
 private fun AzurPilotSchedulerOverview(tasks: List<AzurPilotTask>) {

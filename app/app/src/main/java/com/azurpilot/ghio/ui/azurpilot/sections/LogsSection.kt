@@ -60,7 +60,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 级别筛选的候选；`Critical` 与 `Error` 合成一档，视觉上都是「要处理的」 */
+/**
+ * 级别筛选的候选；`Critical` 与 `Error` 合成一档，视觉上都是「要处理的」
+ *
+ * The level-filter candidates; `Critical` and `Error` merge into one tier —
+ * visually both mean "needs attention".
+ */
 private val LOG_LEVELS = listOf("DEBUG", "INFO", "WARNING", "ERROR")
 
 /**
@@ -68,6 +73,16 @@ private val LOG_LEVELS = listOf("DEBUG", "INFO", "WARNING", "ERROR")
  *
  * 服务端的环形缓冲只有 400 条，客户端留到 1000 条——重连后 `logs.get` 会把窗口补齐，
  * 所以本地这一份是「服务端窗口 + 本次会话已见」的并集，不会因为网关裁剪而丢已读内容。
+ *
+ * The Logs section: live increments come from the `logs` topic; level
+ * filtering and search happen locally.
+ *
+ * The server's ring buffer holds only 400 entries while the client keeps up to
+ * 1000 — after a reconnect `logs.get` back-fills the window, so the local copy
+ * is the union of "the server's window + what this session has seen" and never
+ * loses read content to gateway trimming.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun LogsSection(repository: AzurPilotRepository) {

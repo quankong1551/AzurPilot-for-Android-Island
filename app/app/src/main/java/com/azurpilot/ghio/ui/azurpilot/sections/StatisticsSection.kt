@@ -75,7 +75,10 @@ import com.azurpilot.ghio.ui.azurpilot.prettyCell
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
 
+/** 「近 N 天」的候选档位 / The choices offered for the "last N days" filter. */
 private val DAY_CHOICES = listOf(1, 7, 30, 90, 365)
+
+/** 委托 / 舰船分类的聚合粒度候选 / The aggregation-period candidates for the commission / ships categories. */
 private val PERIOD_CHOICES = listOf("day", "week", "month")
 
 /**
@@ -83,6 +86,16 @@ private val PERIOD_CHOICES = listOf("day", "week", "month")
  *
  * 图表用 Canvas 自绘：项目里没有图表库，而这里只需要折线——为一条折线引入 ECharts 级别的
  * 依赖不划算。表格给横向滚动，列多的时候不挤成一团。
+ *
+ * The Statistics section: 7 categories with the same accounting as the WebUI
+ * (the same `statistics.report` parameters).
+ *
+ * Charts are hand-drawn on a Canvas: the project has no chart library and only
+ * needs line charts — pulling in an ECharts-scale dependency for one polyline
+ * is not worth it. Tables scroll horizontally so many columns never squeeze
+ * into an unreadable crush.
+ *
+ * @param repository 网关仓库 / the gateway repository
  */
 @Composable
 fun StatisticsSection(repository: AzurPilotRepository) {
@@ -232,9 +245,15 @@ fun StatisticsSection(repository: AzurPilotRepository) {
     }
 }
 
-/** 统计区的四种互斥状态；用枚举而不是散落的布尔组合，转场才能只盯一个值 */
+/**
+ * 统计区的四种互斥状态；用枚举而不是散落的布尔组合，转场才能只盯一个值
+ *
+ * The four mutually exclusive stages of the statistics area; an enum instead
+ * of scattered booleans so the transition can key on a single value.
+ */
 private enum class StatsStage { NoInstance, Loading, Error, Content }
 
+/** 指标摘要：两列数字卡 / The metrics summary: a two-column grid of metric cards. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MetricsGrid(report: AzurPilotStatisticsReport) {
@@ -260,7 +279,29 @@ private fun MetricsGrid(report: AzurPilotStatisticsReport) {
     }
 }
 
-/** 每个分类各自的控制项；没有可调项的分类就不显示这一行 */
+/**
+ * 每个分类各自的控制项；没有可调项的分类就不显示这一行
+ *
+ * The per-category controls; a category with nothing to tune shows no row at
+ * all.
+ *
+ * @param category 当前分类 / the current category
+ * @param days 当前「近 N 天」 / the current "last N days" choice
+ * @param onDays 改选天数 / picks a day count
+ * @param period 当前聚合粒度 / the current aggregation period
+ * @param onPeriod 改选粒度 / picks a period
+ * @param scope 当前口径（科研：系列 / 消耗品） / the current scope (research:
+ *   series / consumable)
+ * @param onScope 改选口径 / picks a scope
+ * @param series 当前选择的研究期数 / the current research period selection
+ * @param onSeries 改选期数 / picks a research period
+ * @param task 当前筛选的任务；null 表示全部 / the task filter; null means all
+ * @param taskOptions 任务筛选候选（战利品分类） / the task-filter candidates
+ *   (loot category)
+ * @param onTask 改选任务 / picks a task
+ * @param onRefresh 手动刷新入口；仅战利品分类提供 / the manual refresh entry,
+ *   offered only for the loot category
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CategoryControls(
@@ -384,7 +425,15 @@ private fun CategoryControls(
     }
 }
 
-/** 折线图：多条序列共用一套纵轴，颜色按固定次序取（同一份数据每次画出来一致） */
+/**
+ * 折线图：多条序列共用一套纵轴，颜色按固定次序取（同一份数据每次画出来一致）
+ *
+ * The line chart: all series share one vertical axis, and colors come from a
+ * fixed order so the same data always renders identically.
+ *
+ * @param series 要画的序列，空点序列已被过滤 / the series to draw; empty ones
+ *   are filtered out by the caller
+ */
 @Composable
 private fun ApLineChart(series: List<AzurPilotStatSeries>) {
     val colors = chartPalette()
@@ -459,6 +508,7 @@ private fun ApLineChart(series: List<AzurPilotStatSeries>) {
     }
 }
 
+/** 图例：色点 + 序列名，与曲线取色一致 / The chart legend: color dot + series name, matching the line colors. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FlowRowChips(series: List<AzurPilotStatSeries>, colors: List<Color>) {
@@ -484,6 +534,7 @@ private fun FlowRowChips(series: List<AzurPilotStatSeries>, colors: List<Color>)
     }
 }
 
+/** 曲线取色的固定次序，按序列下标循环使用 / The fixed color order for chart lines, cycled by series index. */
 @Composable
 private fun chartPalette(): List<Color> = listOf(
     MaterialTheme.colorScheme.primary,
@@ -498,6 +549,14 @@ private fun chartPalette(): List<Color> = listOf(
  * 明细表：横向滚动 + 竖向滚动
  *
  * 列数由服务端定（最多 9 列），手机宽度放不下，横滚比压成小字可读。
+ *
+ * A detail table: horizontal plus vertical scrolling.
+ *
+ * The column count is decided by the server (up to 9); a phone's width cannot
+ * fit that, and horizontal scrolling reads better than shrinking the type.
+ *
+ * @param table 表格数据 / the table data
+ * @param modifier 应用于卡片的修饰符 / the modifier applied to the card
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -560,8 +619,10 @@ private fun StatTableCard(table: AzurPilotStatTable, modifier: Modifier = Modifi
     }
 }
 
+/** 单元格固定宽度：列对齐靠它，不靠内容测量 / The fixed cell width: columns align by it, not by content measurement. */
 private val CELL_WIDTH = 108.dp
 
+/** 分类 → 标签资源 / Maps a category to its tab-label resource. */
 private fun statCategoryLabel(category: AzurPilotStatCategory): Int = when (category) {
     AzurPilotStatCategory.Resources -> R.string.ap_stats_cat_resources
     AzurPilotStatCategory.Action -> R.string.ap_stats_cat_action
@@ -572,7 +633,12 @@ private fun statCategoryLabel(category: AzurPilotStatCategory): Int = when (cate
     AzurPilotStatCategory.Research -> R.string.ap_stats_cat_research
 }
 
-/** 统计数字统一不给小数尾巴；小数只在真的存在时保留一位 */
+/**
+ * 统计数字统一不给小数尾巴；小数只在真的存在时保留一位
+ *
+ * Statistics numbers never carry a dangling decimal tail; a fraction keeps one
+ * decimal only when it actually exists.
+ */
 internal fun formatNumber(value: Double): String =
     if (value == value.toLong().toDouble()) {
         value.toLong().toString()

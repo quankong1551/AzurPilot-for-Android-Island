@@ -60,9 +60,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.azurpilot.ghio.auth.SensitiveAuthManager
-import com.azurpilot.ghio.auth.SensitiveTarget
-import com.azurpilot.ghio.ui.components.SensitiveAuthGate
+import com.azurpilot.ghio.auth.AppLockManager
+import com.azurpilot.ghio.ui.components.AppLockGate
 import androidx.navigation.NavType
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,12 +99,31 @@ import com.azurpilot.ghio.ui.logs.AppLogDetailScreen
 import com.azurpilot.ghio.ui.logs.AppLogScreen
 import com.azurpilot.ghio.ui.logs.LogExportController
 import com.azurpilot.ghio.ui.settings.SettingsScreen
+import com.azurpilot.ghio.ui.settings.AdvancedSettingsPage
+import com.azurpilot.ghio.ui.settings.AboutSettingsPage
+import com.azurpilot.ghio.ui.settings.DisplaySettingsPage
+import com.azurpilot.ghio.ui.settings.KeepAliveSettingsPage
+import com.azurpilot.ghio.ui.settings.LogsSettingsPage
+import com.azurpilot.ghio.ui.settings.RuntimeSettingsPage
+import com.azurpilot.ghio.ui.settings.VirtualDisplaySettingsPage
+import com.azurpilot.ghio.ui.settings.WidgetSettingsPage
 import com.azurpilot.ghio.ui.setup.ProvisionScreen
 import com.azurpilot.ghio.update.AppUpdateManager
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
+/**
+ * 底部导航的主 tab 枚举：携带标签资源与选中/未选中两态图标
+ *
+ * 声明顺序即 pager 页序；取值依次对应主页、AzurPilot、设置与虚拟屏四张主页面。
+ *
+ * The bottom navigation tabs: carries the label resource and the
+ * selected/unselected icon pair.
+ *
+ * Declaration order doubles as the pager page order; the values map to the Hangar,
+ * AzurPilot, Settings, and virtual-display main pages.
+ */
 private enum class TopDestination(
     @param:StringRes val labelRes: Int,
     val outlinedIcon: ImageVector,
@@ -121,9 +139,16 @@ private enum class TopDestination(
 }
 
 /**
- * 二级页面盖在主 tab 之上时这层的输入处理
+ * 拦截二级页面盖在主 tab 之上时落到这层的指针输入
  *
  * 主 tab 那层还活着只是被盖住，不截断命中测试就能隔着二级页横滑切页、点到底栏
+ *
+ * Consumes every pointer event reaching this modifier while a second-level page
+ * overlays the main tabs.
+ *
+ * The main-tab layer stays alive underneath, merely covered: without cutting off hit
+ * testing here, pager swipes and bottom-bar taps would act through the second-level
+ * page.
  */
 @Composable
 private fun Modifier.subPageOverlayInput(): Modifier = this
@@ -136,7 +161,36 @@ private fun Modifier.subPageOverlayInput(): Modifier = this
         }
     }
 
-/** Route：收集 state、承载两个主 tab 与二级页面的 NavHost；VM 为 Activity 作用域 */
+/**
+ * 拉起应用根 Composable：组装主题、应用锁、导航与全局对话框，是整个 UI 树的入口
+ *
+ * 自外向内分层：收集 [SettingsViewModel]/[PermissionManager]/[RootfsProvisioner]/
+ * [AppUpdateManager] 的状态流；[AzurPilotTheme] 供给双风格主题；[AppLockGate] 在应用锁
+ * 开启且未解锁时整屏接管；rootfs 未 Ready 时 [ProvisionScreen] 整屏接管；主 tab 由
+ * [HorizontalPager] 渲染，[NavHost] 只承载二级路由并盖在 pager 之上；运行时更新与
+ * App 更新对话框按优先级先后弹出。
+ *
+ * 全程在主线程组合；依赖均经 Koin 注入，VM 为 Activity 作用域；宿主 ON_STOP 时经
+ * [AppLockManager] 上锁；深色主题变化经 [onDarkThemeChanged] 通知宿主。
+ *
+ * Loads the application root composable: wires theme, app lock, navigation, and
+ * global dialogs; it is the entry point of the whole UI tree.
+ *
+ * Layered outside-in: collects the state flows of [SettingsViewModel],
+ * [PermissionManager], [RootfsProvisioner], and [AppUpdateManager]; [AzurPilotTheme]
+ * supplies the dual-style theme; [AppLockGate] takes over the full screen while the
+ * app lock is on and not unlocked; [ProvisionScreen] takes over until the rootfs is
+ * Ready; the main tabs render in a [HorizontalPager] while [NavHost] only hosts the
+ * second-level routes stacked above the pager; runtime-update and app-update dialogs
+ * appear in priority order.
+ *
+ * Composed on the main thread; dependencies are Koin-injected with Activity-scoped
+ * view models; locks via [AppLockManager] on host ON_STOP; dark-theme changes are
+ * reported to the host through [onDarkThemeChanged].
+ *
+ * @param onDarkThemeChanged 深色主题开关变化时回调宿主（用于同步窗口外观）/
+ *   invoked when the dark-theme flag changes, so the host can sync window appearance
+ */
 @Composable
 fun AppRoot(
     onDarkThemeChanged: (Boolean) -> Unit,
@@ -145,7 +199,7 @@ fun AppRoot(
     provisioner: RootfsProvisioner = koinInject(),
     appUpdateManager: AppUpdateManager = koinInject(),
     appSettings: AppSettingsManager = koinInject(),
-    sensitiveAuthManager: SensitiveAuthManager = koinInject(),
+    appLockManager: AppLockManager = koinInject(),
 ) {
     val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val readiness by permissionManager.readiness.collectAsStateWithLifecycle()
@@ -193,105 +247,117 @@ fun AppRoot(
     }
     LaunchedEffect(darkTheme) { onDarkThemeChanged(darkTheme) }
 
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
+
+    // 应用进入后台/熄屏时锁定应用
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                appLockManager.lock()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    val isUnlocked by appLockManager.isUnlocked.collectAsStateWithLifecycle()
+    val appLockEnabled by appSettings.appLockEnabled.collectAsStateWithLifecycle()
+    val isAppLocked = appLockEnabled && appLockManager.isDeviceSecure(context) && !isUnlocked
+
     AzurPilotTheme(darkTheme = darkTheme) {
-        if (provisionState is ProvisionState.Ready && runtimeAvailable &&
-            !runtimePromptDismissed && !applyingRuntimeUpdate && !prootStarted
-        ) {
-            AlertDialog(
-                onDismissRequest = { runtimePromptDismissed = true },
-                title = { Text(stringResource(R.string.runtime_update_title)) },
-                text = { Text(stringResource(R.string.runtime_update_message, installedRuntime.orEmpty(), runtimeCheck.latestVersion.orEmpty())) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        applyingRuntimeUpdate = true
-                        provisioner.applyUpdate()
-                    }) { Text(stringResource(R.string.runtime_update_now)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { runtimePromptDismissed = true }) {
-                        Text(stringResource(R.string.app_update_later))
-                    }
-                },
-            )
-        }
-        LaunchedEffect(provisionState, applyingRuntimeUpdate) {
-            if (applyingRuntimeUpdate && provisionState is ProvisionState.Ready &&
-                runtimeCheck.latestVersion == provisioner.installedVersion()
-            ) applyingRuntimeUpdate = false
-            if (applyingRuntimeUpdate && provisionState is ProvisionState.Ready && runtimeCheck.error != null) {
-                applyingRuntimeUpdate = false
-            }
-        }
-        appUpdateState.available?.takeUnless {
-            provisionState is ProvisionState.Ready && runtimeAvailable &&
-                !runtimePromptDismissed && !applyingRuntimeUpdate
-        }?.let { update ->
-            AlertDialog(
-                onDismissRequest = appUpdateManager::dismiss,
-                title = { Text(stringResource(R.string.app_update_title)) },
-                text = {
-                    Text(
-                        if (appUpdateState.downloading) stringResource(R.string.app_update_downloading)
-                        else if (appUpdateState.error != null) stringResource(R.string.app_update_error, appUpdateState.error!!)
-                        else stringResource(R.string.app_update_message, update.versionName),
+        AppLockGate(
+            isUnlocked = !isAppLocked,
+            onUnlockRequest = {
+                activity?.let { act ->
+                    appLockManager.authenticate(
+                        activity = act,
+                        title = context.getString(R.string.auth_prompt_title_app),
+                        subtitle = context.getString(R.string.auth_prompt_subtitle),
+                        onSuccess = {
+                            appLockManager.markUnlocked()
+                        },
                     )
-                },
-                confirmButton = {
-                    TextButton(
-                        enabled = !appUpdateState.downloading,
-                        onClick = appUpdateManager::downloadAndInstall,
-                    ) { Text(stringResource(R.string.app_update_install)) }
-                },
-                dismissButton = {
-                    TextButton(
-                        enabled = !appUpdateState.downloading,
-                        onClick = appUpdateManager::dismiss,
-                    ) { Text(stringResource(R.string.app_update_later)) }
-                },
-            )
-        }
-        // NavHost 只承载二级页面；主 tab 仍由下面的 HorizontalPager 渲染
-        val navController = rememberNavController()
-        val navBackStackEntry by navController.currentBackStackEntryAsState()
-        // 首帧 backStackEntry 还没就绪，那时必然停在 startDestination
-        val currentRoute = navBackStackEntry?.destination?.route
-        val onSubPage = currentRoute != null && currentRoute !in Routes.mainTabs
-        // AppCompat 切换语言会重建 Activity；显式保存目标页，避免恢复到中途页。
-        var selectedPage by rememberSaveable { mutableStateOf(TopDestination.Hangar.ordinal) }
-        val pagerState = rememberPagerState(initialPage = selectedPage, pageCount = { TopDestination.entries.size })
-        val context = LocalContext.current
-        val activity = context as? FragmentActivity
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (!isAppLocked && provisionState is ProvisionState.Ready && runtimeAvailable &&
+                !runtimePromptDismissed && !applyingRuntimeUpdate && !prootStarted
+            ) {
+                AlertDialog(
+                    onDismissRequest = { runtimePromptDismissed = true },
+                    title = { Text(stringResource(R.string.runtime_update_title)) },
+                    text = { Text(stringResource(R.string.runtime_update_message, installedRuntime.orEmpty(), runtimeCheck.latestVersion.orEmpty())) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            applyingRuntimeUpdate = true
+                            provisioner.applyUpdate()
+                        }) { Text(stringResource(R.string.runtime_update_now)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { runtimePromptDismissed = true }) {
+                            Text(stringResource(R.string.app_update_later))
+                        }
+                    },
+                )
+            }
+            LaunchedEffect(provisionState, applyingRuntimeUpdate) {
+                if (applyingRuntimeUpdate && provisionState is ProvisionState.Ready &&
+                    runtimeCheck.latestVersion == provisioner.installedVersion()
+                ) applyingRuntimeUpdate = false
+                if (applyingRuntimeUpdate && provisionState is ProvisionState.Ready && runtimeCheck.error != null) {
+                    applyingRuntimeUpdate = false
+                }
+            }
+            if (!isAppLocked) {
+                appUpdateState.available?.takeUnless {
+                    provisionState is ProvisionState.Ready && runtimeAvailable &&
+                        !runtimePromptDismissed && !applyingRuntimeUpdate
+                }?.let { update ->
+                    AlertDialog(
+                        onDismissRequest = appUpdateManager::dismiss,
+                        title = { Text(stringResource(R.string.app_update_title)) },
+                        text = {
+                            Text(
+                                if (appUpdateState.downloading) stringResource(R.string.app_update_downloading)
+                                else if (appUpdateState.error != null) stringResource(R.string.app_update_error, appUpdateState.error!!)
+                                else stringResource(R.string.app_update_message, update.versionName),
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = !appUpdateState.downloading,
+                                onClick = appUpdateManager::downloadAndInstall,
+                            ) { Text(stringResource(R.string.app_update_install)) }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                enabled = !appUpdateState.downloading,
+                                onClick = appUpdateManager::dismiss,
+                            ) { Text(stringResource(R.string.app_update_later)) }
+                        },
+                    )
+                }
+            }
+            // NavHost 只承载二级页面；主 tab 仍由下面的 HorizontalPager 渲染
+            val navController = rememberNavController()
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            // 首帧 backStackEntry 还没就绪，那时必然停在 startDestination
+            val currentRoute = navBackStackEntry?.destination?.route
+            val onSubPage = currentRoute != null && currentRoute !in Routes.mainTabs
+            // AppCompat 切换语言会重建 Activity；显式保存目标页，避免恢复到中途页。
+            var selectedPage by rememberSaveable { mutableStateOf(TopDestination.Hangar.ordinal) }
+            val pagerState = rememberPagerState(initialPage = selectedPage, pageCount = { TopDestination.entries.size })
 
-        // 应用进入后台/熄屏时重置所有敏感操作的解锁状态
-        val lifecycleOwner = LocalLifecycleOwner.current
-        DisposableEffect(lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP) {
-                    sensitiveAuthManager.lockAll()
-                }
+            LaunchedEffect(pagerState) {
+                pagerState.scrollToPage(selectedPage)
+                snapshotFlow { pagerState.settledPage }.collect { selectedPage = it }
             }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-            }
-        }
-        val unlockedTarget by sensitiveAuthManager.unlockedTarget.collectAsStateWithLifecycle()
-
-        LaunchedEffect(pagerState) {
-            pagerState.scrollToPage(selectedPage)
-            snapshotFlow { pagerState.settledPage }.collect { page ->
-                selectedPage = page
-                val currentDest = TopDestination.entries.getOrNull(page)
-                if (currentDest != TopDestination.Settings) {
-                    sensitiveAuthManager.onLeaveTarget(SensitiveTarget.SETTINGS)
-                }
-                if (currentDest != TopDestination.Screen) {
-                    sensitiveAuthManager.onLeaveTarget(SensitiveTarget.SCREEN)
-                }
-            }
-        }
-        val scope = rememberCoroutineScope()
-        val snackbarHostState = remember { SnackbarHostState() }
+            val scope = rememberCoroutineScope()
+            val snackbarHostState = remember { SnackbarHostState() }
         var exportKind by remember { mutableStateOf<LogExportKind?>(null) }
 
         val hostState: HostState = koinInject()
@@ -304,6 +370,15 @@ fun AppRoot(
          * 进出虚拟屏页要换屏幕方向，而转动会让 pager 的像素偏移与旋转后的新页宽对不上：
          * 动画跨旋转会停在"两页各露一半"的画面上（实测：画的是第 2、3 页的拼接，currentPage 却是 3）。
          * 涉及虚拟屏页的两条边直接落位，其余切换照常走动画
+         *
+         * Switches the pager to page [index].
+         *
+         * Entering or leaving the virtual-display page rotates the screen, and the
+         * rotation desynchronizes the pager's pixel offset from the rotated page
+         * width: an animation crossing a rotation stalls on a "half of each page"
+         * frame (observed: pages 2 and 3 rendered stitched while currentPage read 3).
+         * The two edges touching the virtual-display page therefore jump instantly;
+         * all other switches animate as usual.
          */
         fun goToPage(index: Int) {
             selectedPage = index
@@ -315,35 +390,6 @@ fun AppRoot(
                 } else {
                     pagerState.animateScrollToPage(index)
                 }
-            }
-        }
-
-        fun onTabSelected(index: Int) {
-            val destination = TopDestination.entries.getOrNull(index) ?: return
-            val target = when (destination) {
-                TopDestination.Settings -> SensitiveTarget.SETTINGS
-                TopDestination.Screen -> SensitiveTarget.SCREEN
-                else -> null
-            }
-            if (target != null && !sensitiveAuthManager.isUnlocked(context, target)) {
-                activity?.let { act ->
-                    val title = context.getString(
-                        if (target == SensitiveTarget.SETTINGS) R.string.auth_prompt_title_settings
-                        else R.string.auth_prompt_title_screen
-                    )
-                    val subtitle = context.getString(R.string.auth_prompt_subtitle)
-                    sensitiveAuthManager.authenticate(
-                        activity = act,
-                        title = title,
-                        subtitle = subtitle,
-                        onSuccess = {
-                            sensitiveAuthManager.markUnlocked(target)
-                            goToPage(index)
-                        },
-                    )
-                } ?: goToPage(index)
-            } else {
-                goToPage(index)
             }
         }
 
@@ -403,7 +449,7 @@ fun AppRoot(
                             val selected = pagerState.currentPage == index
                             NavigationBarItem(
                                 selected = selected,
-                                onClick = { onTabSelected(index) },
+                                onClick = { goToPage(index) },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) destination.filledIcon else destination.outlinedIcon,
@@ -431,7 +477,7 @@ fun AppRoot(
                             val selected = pagerState.currentPage == index
                             NavigationRailItem(
                                 selected = selected,
-                                onClick = { onTabSelected(index) },
+                                onClick = { goToPage(index) },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) destination.filledIcon else destination.outlinedIcon,
@@ -445,13 +491,8 @@ fun AppRoot(
                 }
                 HorizontalPager(
                     state = pagerState,
-                    // AzurPilot 页内网页手势不与切页冲突；敏感页面受保护时禁用横滑直接滑入，需点击导航项进行系统锁鉴权
-                    userScrollEnabled = when (TopDestination.entries[pagerState.currentPage]) {
-                        TopDestination.AzurPilot -> false
-                        TopDestination.Settings -> !sensitiveAuthManager.isAuthRequired(context)
-                        TopDestination.Screen -> false
-                        TopDestination.Hangar -> true
-                    },
+                    // AzurPilot 页内网页手势不与切页冲突；其余页面允许手势滑动
+                    userScrollEnabled = TopDestination.entries[pagerState.currentPage] != TopDestination.AzurPilot,
                     beyondViewportPageCount = 1,
                     modifier = Modifier.weight(1f),
                 ) { page ->
@@ -461,30 +502,10 @@ fun AppRoot(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        TopDestination.Screen -> {
-                            val isScreenUnlocked = sensitiveAuthManager.isUnlocked(context, SensitiveTarget.SCREEN)
-                            SensitiveAuthGate(
-                                isUnlocked = isScreenUnlocked,
-                                onUnlockRequest = {
-                                    activity?.let { act ->
-                                        sensitiveAuthManager.authenticate(
-                                            activity = act,
-                                            title = context.getString(R.string.auth_prompt_title_screen),
-                                            subtitle = context.getString(R.string.auth_prompt_subtitle),
-                                            onSuccess = {
-                                                sensitiveAuthManager.markUnlocked(SensitiveTarget.SCREEN)
-                                            },
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            ) {
-                                ScreenPage(
-                                    active = pagerState.currentPage == TopDestination.Screen.ordinal && isScreenUnlocked,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
+                        TopDestination.Screen -> ScreenPage(
+                            active = pagerState.currentPage == TopDestination.Screen.ordinal,
+                            modifier = Modifier.fillMaxSize(),
+                        )
 
                         TopDestination.AzurPilot -> AzurPilotPage(
                             // 从主页直接动画切到设置时，currentPage 会短暂经过中间的 AzurPilot 页；
@@ -493,35 +514,11 @@ fun AppRoot(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        TopDestination.Settings -> {
-                            val isSettingsUnlocked = sensitiveAuthManager.isUnlocked(context, SensitiveTarget.SETTINGS)
-                            SensitiveAuthGate(
-                                isUnlocked = isSettingsUnlocked,
-                                onUnlockRequest = {
-                                    activity?.let { act ->
-                                        sensitiveAuthManager.authenticate(
-                                            activity = act,
-                                            title = context.getString(R.string.auth_prompt_title_settings),
-                                            subtitle = context.getString(R.string.auth_prompt_subtitle),
-                                            onSuccess = {
-                                                sensitiveAuthManager.markUnlocked(SensitiveTarget.SETTINGS)
-                                            },
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            ) {
-                                SettingsScreen(
-                                    state = settingsState,
-                                    onIntent = settingsViewModel::onIntent,
-                                    onOpenAppLog = { navController.navigate(Routes.APP_LOG) },
-                                    onOpenRunnerLog = { navController.navigate(Routes.AZURPILOT_LOG) },
-                                    onExportRunnerLogs = { exportKind = LogExportKind.AZURPILOT },
-                                    onExportLauncherLogs = { exportKind = LogExportKind.LAUNCHER },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
+                        TopDestination.Settings -> SettingsScreen(
+                            state = settingsState,
+                            onOpenSection = { section -> navController.navigate(section.route) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                 }
             }
@@ -596,6 +593,51 @@ fun AppRoot(
                         onBack = { navController.popBackStack() },
                     )
                 }
+                // 设置二级页：主页只列分类入口，内容各归一类
+                composable(Routes.SETTINGS_DISPLAY) {
+                    DisplaySettingsPage(
+                        state = settingsState,
+                        onIntent = settingsViewModel::onIntent,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SETTINGS_VIRTUAL_DISPLAY) {
+                    VirtualDisplaySettingsPage(onBack = { navController.popBackStack() })
+                }
+                composable(Routes.SETTINGS_LOGS) {
+                    LogsSettingsPage(
+                        state = settingsState,
+                        onIntent = settingsViewModel::onIntent,
+                        onOpenAppLog = { navController.navigate(Routes.APP_LOG) },
+                        onOpenRunnerLog = { navController.navigate(Routes.AZURPILOT_LOG) },
+                        onExportRunnerLogs = { exportKind = LogExportKind.AZURPILOT },
+                        onExportLauncherLogs = { exportKind = LogExportKind.LAUNCHER },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SETTINGS_KEEP_ALIVE) {
+                    KeepAliveSettingsPage(
+                        state = settingsState,
+                        onIntent = settingsViewModel::onIntent,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SETTINGS_ADVANCED) {
+                    AdvancedSettingsPage(
+                        state = settingsState,
+                        onIntent = settingsViewModel::onIntent,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SETTINGS_WIDGET) {
+                    WidgetSettingsPage(onBack = { navController.popBackStack() })
+                }
+                composable(Routes.SETTINGS_RUNTIME) {
+                    RuntimeSettingsPage(onBack = { navController.popBackStack() })
+                }
+                composable(Routes.SETTINGS_ABOUT) {
+                    AboutSettingsPage(onBack = { navController.popBackStack() })
+                }
             }
         }
 
@@ -617,5 +659,6 @@ fun AppRoot(
             onDismiss = { exportKind = null },
             onMessage = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
         )
+        }
     }
 }

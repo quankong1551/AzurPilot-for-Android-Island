@@ -35,8 +35,9 @@ License: AGPL-3.0. Package: `com.azurpilot.ghio`.
 ## Build & verify
 
 ```bash
-# Fast compile check (preferred — unit tests have orphaned stubs that won't compile):
-cd app && ./gradlew compileDebugKotlin
+# Fast compile check (preferred — unit tests have orphaned stubs that won't compile).
+# -x skips the bundled-runtime verify task, which fails when rootfs.tar.xz is absent:
+cd app && ./gradlew compileDebugKotlin -x verifyBundledAzurPilotRuntime
 
 # Slim debug APK (no rootfs required):
 cd app && ./gradlew assembleDebug
@@ -87,9 +88,15 @@ Key subsystems:
 - Run `python app/scripts/check_i18n_strings.py` after touching any strings file.
 - The script only validates `values-en/` against `values/` (key parity, placeholder match, residual Chinese detection).
 
+### Comments
+- All comments follow [`doc/comment-style.md`](doc/comment-style.md): Google style guides
+  (Kotlin KDoc / Java Javadoc / C++ §7 / Python docstrings) plus the repo bilingual rule —
+  doc comments carry Chinese first then the English mirror, inline comments are Chinese
+  and explain why, not what.
+
 ### Documentation
 - `doc/` files are bilingual (Chinese section first, English section second), written in Google developer-doc style.
-- Core-chain Kotlin files carry bilingual KDoc.
+- All Kotlin files carry bilingual KDoc per [`doc/comment-style.md`](doc/comment-style.md).
 - User-facing copy must be ≤ ~100 Chinese characters, plain language, no jargon.
 
 ### Native code

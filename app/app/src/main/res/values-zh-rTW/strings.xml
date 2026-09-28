@@ -94,14 +94,25 @@
     <string name="settings_section_schedule">排程任務設定</string>
     <string name="settings_section_other">其他設定</string>
     <string name="settings_theme">主題</string>
+    <string name="settings_cat_display">顯示與語言</string>
+    <string name="settings_cat_display_desc">主題與語言</string>
+    <string name="settings_cat_screen">虛擬屏</string>
+    <string name="settings_cat_screen_desc">虛擬屏刷新率</string>
+    <string name="settings_cat_logs">日誌</string>
+    <string name="settings_cat_logs_desc">檢視與匯出執行日誌</string>
+    <string name="settings_cat_keep_alive">後台保活</string>
+    <string name="settings_cat_keep_alive_desc">防殺策略與執行狀態</string>
+    <string name="settings_cat_advanced">執行與安全</string>
+    <string name="settings_cat_advanced_desc">提權後端與鎖屏保護</string>
+    <string name="settings_cat_widget">小組件</string>
+    <string name="settings_cat_widget_desc">添加桌面小組件</string>
+    <string name="settings_cat_runtime">Runtime</string>
+    <string name="settings_cat_runtime_desc">版本與下載鏡像</string>
+    <string name="settings_cat_about">關於</string>
+    <string name="settings_cat_about_desc">版本、授權與開源元件</string>
     <string name="settings_follow_system">跟隨系統</string>
     <string name="settings_theme_light">淺色</string>
     <string name="settings_theme_dark">深色</string>
-    <string name="settings_ui_style">介面風格</string>
-    <string name="settings_ui_style_auto">自動</string>
-    <string name="settings_ui_style_md3">MD3</string>
-    <string name="settings_ui_style_miuix">Miuix</string>
-    <string name="settings_ui_style_hint">自動會依裝置選擇：小米、紅米、POCO 優先 Miuix 風格，其他裝置用 MD3。</string>
     <string name="settings_language">語言</string>
     <string name="settings_language_hint">切換語言會重新載入專案，執行期間無法切換</string>
     <string name="settings_run_mode">執行模式</string>
@@ -946,15 +957,14 @@
     <string name="widget_pin_success">已請求系統添加小組件到桌面</string>
     <string name="widget_pin_unsupported">當前桌面啟動器不支援自動添加，請長按桌面手動添加</string>
 
-    <!-- 敏感操作鎖定保護 -->
-    <string name="settings_sensitive_auth_title">敏感操作鎖定保護</string>
-    <string name="settings_sensitive_auth_desc">進入設定與虛擬屏時需驗證系統鎖（PIN 碼/指紋/臉部）；未設定螢幕鎖定時免密。</string>
-    <string name="settings_sensitive_auth_no_lock_hint">（系統未設定螢幕鎖定密碼，目前免密）</string>
-    <string name="auth_prompt_title_settings">驗證以造訪設定</string>
-    <string name="auth_prompt_title_screen">驗證以造訪虛擬屏</string>
-    <string name="auth_prompt_title_disable">關閉敏感操作保護</string>
-    <string name="auth_prompt_subtitle">請使用鎖定密碼或生物識別驗證身分</string>
-    <string name="auth_gate_locked_title">頁面已鎖定</string>
-    <string name="auth_gate_locked_desc">此頁面受系統鎖保護，請驗證身分後繼續操作。</string>
-    <string name="auth_gate_unlock_button">驗證身分並解鎖</string>
+    <!-- 應用程式鎖定保護 -->
+    <string name="settings_app_lock_title">應用程式鎖定保護</string>
+    <string name="settings_app_lock_desc">冷啟動及從後台切回時需驗證系統鎖（PIN 碼/指紋/面部）；未設定螢幕鎖定時免密。</string>
+    <string name="settings_app_lock_no_lock_hint">（系統未設定螢幕鎖定密碼，目前免密）</string>
+    <string name="auth_prompt_title_app">驗證以進入應用程式</string>
+    <string name="auth_prompt_title_disable">關閉應用程式鎖定保護</string>
+    <string name="auth_prompt_subtitle">請使用螢幕鎖定密碼或生物辨識驗證身分</string>
+    <string name="app_lock_title">應用程式已鎖定</string>
+    <string name="app_lock_desc">已開啟應用程式鎖定保護，請驗證身分後繼續使用。</string>
+    <string name="app_lock_unlock_button">驗證身分並解鎖</string>
 </resources>

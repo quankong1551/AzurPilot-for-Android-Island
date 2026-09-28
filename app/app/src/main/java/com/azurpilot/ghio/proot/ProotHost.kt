@@ -64,15 +64,19 @@ class ProotHost(
 ) {
 
     private val _state = MutableStateFlow(ProotSnapshot())
+
+    /** 会话状态；UI 与 [RunForegroundService] 的保活判据都读它 / The session state; read by the UI and [RunForegroundService]'s keep-alive criterion. */
     val state: StateFlow<ProotSnapshot> = _state.asStateFlow()
 
     private val startMutex = Mutex()
     private var session: Process? = null
     private var supervisorJob: kotlinx.coroutines.Job? = null
 
+    /** 「要求会话运行」的意图位；stop() 撤掉后 supervisor 不再重拉 / The "session wanted" intent flag; once stop() clears it the supervisor respawns no more. */
     @Volatile
     private var wantRunning = false
 
+    /** 是否处于「要求运行」状态 / Whether a running session has been requested. */
     val startRequested: Boolean get() = wantRunning
 
     private val rootfsDir: File get() = File(app.filesDir, "rootfs")
@@ -81,15 +85,23 @@ class ProotHost(
     private val sessionLog: File get() = File(AppPaths.LOG_DIR, "proot/session.log")
     private val nativeLibDir: String get() = app.applicationInfo.nativeLibraryDir
 
-    // ------------------------------------------------------------------ 对外入口
-
-    /** 幂等：已在跑/在起直接返回；失败后可重复调（手动重试同一入口） */
+    /**
+     * 请求启动会话；幂等，已在跑/在起直接返回
+     *
+     * 失败后可重复调（手动重试同一入口）。IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     fun ensureStarted() {
         wantRunning = true
         scope.launch(AppDispatchers.IO) { startLocked() }
     }
 
-    /** 停会话：关 stdin 让 wrapper 自尽，超时兜底 destroyForcibly */
+    /**
+     * 停会话：关 stdin 让 wrapper 自尽，超时兜底 destroyForcibly
+     *
+     * Stops the session: stdin closes so the wrapper kills itself, with a
+     * destroyForcibly fallback past the grace period. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     fun stop() {
         wantRunning = false
         scope.launch(AppDispatchers.IO) {
@@ -108,8 +120,17 @@ class ProotHost(
         }
     }
 
-    // ------------------------------------------------------------------ 启动链
-
+    /**
+     * 启动链：自愈清锁 → 播种实例配置 → 拉起会话 → 等服务就绪
+     *
+     * 调用方必须已持 [startMutex]；重复调用在会话存活时直接短路
+     *
+     * The start chain: self-heal cleanup → seed instance config → spawn the
+     * session → await services.
+     *
+     * Callers must already hold [startMutex]; repeat calls short-circuit while
+     * the session is alive. IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     private suspend fun startLocked() = startMutex.withLock {
         if (session?.isAlive == true) return@withLock
         if (!installDir.exists()) {
@@ -148,6 +169,13 @@ class ProotHost(
         }
     }
 
+    /**
+     * 启动前置体检：ABI 受支持、Python 在位、proot 双库齐
+     *
+     * Pre-start sanity check: a supported ABI, Python in place, both proot
+     * libraries present. 不过关时置 FAILED 并返回 false / Sets FAILED and
+     * returns false when any item fails.
+     */
     private fun sanityCheck(): Boolean {
         val primaryAbi = RuntimeArch.deviceAbi()
         if (primaryAbi == null) {
@@ -173,9 +201,12 @@ class ProotHost(
         return true
     }
 
-    // ------------------------------------------------------------------ 会话
-
-    /** 拉起长跑会话；调用方持有返回的 Process（stdin 保持敞开，见类头约定） */
+    /**
+     * 拉起长跑会话；调用方持有返回的 Process（stdin 保持敞开，见类头约定）
+     *
+     * Spawns the long-running session; the caller owns the returned Process
+     * (its stdin stays open — see the class doc's contract).
+     */
     private fun spawnSession(): Process {
         prootTmpDir.mkdirs()
         sessionLog.parentFile?.mkdirs()
@@ -196,7 +227,12 @@ class ProotHost(
         return proc
     }
 
-    /** proot 进程环境：与 Spike A 实证的同一套（nld 即 LD_LIBRARY_PATH） */
+    /**
+     * proot 进程环境：与 Spike A 实证的同一套（nld 即 LD_LIBRARY_PATH）
+     *
+     * The proot process environment: the same set Spike A validated
+     * ("nld" being LD_LIBRARY_PATH).
+     */
     private fun baseEnv(): Map<String, String> = mapOf(
         "LD_LIBRARY_PATH" to nativeLibDir,
         "PROOT_LOADER" to File(nativeLibDir, "libproot-loader.so").absolutePath,
@@ -213,7 +249,12 @@ class ProotHost(
         "AZURPILOT_ANDROID_TOKEN" to AndroidControlAuth.get(app),
     )
 
-    /** stdout/stderr 汇进 session 日志（带行级时间戳太贵，纯追加即可） */
+    /**
+     * stdout/stderr 汇进 session 日志（带行级时间戳太贵，纯追加即可）
+     *
+     * Drains stdout/stderr into the session log (per-line timestamps cost too
+     * much; plain appending suffices).
+     */
     private fun drainTo(stream: java.io.InputStream, tag: String) {
         Thread {
             runCatching {
@@ -230,10 +271,22 @@ class ProotHost(
         }.apply { isDaemon = true; name = "proot-drain-$tag" }.start()
     }
 
-    /** 崩溃/退出重拉：退避 3s 翻倍至 60s；wantRunning 撤了就不拉。
-     *  熔断：会话连续秒退（<QUICK_DEATH_MS）MAX_RAPID_DEATHS 次即放弃——典型诱因是
-     *  端口被同机旧装 App 的残留会话占用，此时 awaitServices 会被占位者喂成假 RUNNING，
-     *  不退熔断就是 3s 一轮的无限崩溃循环（21:16 真机事故） */
+    /**
+     * 崩溃/退出重拉：退避 3s 翻倍至 60s；wantRunning 撤了就不拉。
+     * 熔断：会话连续秒退（<QUICK_DEATH_MS）MAX_RAPID_DEATHS 次即放弃——典型诱因是
+     * 端口被同机旧装 App 的残留会话占用，此时 awaitServices 会被占位者喂成假 RUNNING，
+     * 不退熔断就是 3s 一轮的无限崩溃循环（21:16 真机事故）
+     *
+     * Respawns after a crash or exit: backoff starts at 3 s and doubles to
+     * 60 s; once wantRunning is cleared nothing respawns.
+     *
+     * Circuit breaker: after MAX_RAPID_DEATHS consecutive quick deaths
+     * (<QUICK_DEATH_MS) the supervisor gives up — the classic cause is the port
+     * held by a stale session of an older install of the app on the same
+     * device, where awaitServices gets fed a fake RUNNING by the squatter.
+     * Without the breaker that is an endless 3 s crash loop (a real-device
+     * incident at 21:16). IO 调度器上执行 / Runs on the IO dispatcher.
+     */
     private fun supervise(first: Process) {
         supervisorJob?.cancel()
         supervisorJob = scope.launch(AppDispatchers.IO) {
@@ -278,6 +331,14 @@ class ProotHost(
      *
      * RUNNING 的语义必须是「服务真的能答」：gui.py 进程活着但 uvicorn 还在 import 的几秒里，
      * 两个端口都是 connection refused，此时报 RUNNING 会让界面拿着一个连不上的地址去发请求
+     *
+     * Polls until both `/android/status` (the thin API, with the control
+     * token) and `/healthz` answer (1 s cadence).
+     *
+     * RUNNING must mean "the services truly answer": in the seconds where
+     * gui.py is alive but uvicorn is still importing, both ports refuse
+     * connections — reporting RUNNING then hands the UI an address it cannot
+     * connect to.
      */
     private suspend fun awaitServices(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
@@ -292,6 +353,7 @@ class ProotHost(
         return false
     }
 
+    /** 带口令的探活 GET；任何异常都按不可达处理 / A token-carrying probe GET; any exception counts as unreachable. */
     private fun httpOk(url: String): Boolean = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.setRequestProperty("X-AzurPilot-Android-Token", AndroidControlAuth.get(app))
@@ -301,15 +363,28 @@ class ProotHost(
         conn.responseCode == 200
     }.getOrDefault(false)
 
-    // ------------------------------------------------------------------ 一次性 proot 执行
-
+    /**
+     * 一次性 proot 执行的结果
+     *
+     * The result of a one-shot proot execution.
+     *
+     * @property exit 退出码；超时被杀时为 null / the exit code; null when killed
+     *   on timeout
+     * @property output 合并后的全部输出 / the merged full output
+     * @property timedOut 是否超时被强杀 / whether it was killed on timeout
+     */
     data class ExecResult(
         val exit: Int?,
         val output: String,
         val timedOut: Boolean,
     )
 
-    /** 带默认环境的 [runGuestRaw]（seed/assets_fix 用） */
+    /**
+     * 带默认环境的 [runGuestRaw]（seed/assets_fix 用）
+     *
+     * [runGuestRaw] with the default environment (used by seed/assets_fix);
+     * failures log and return null instead of throwing.
+     */
     private suspend fun runGuest(
         guestCmd: List<String>,
         timeoutMs: Long,
@@ -318,7 +393,13 @@ class ProotHost(
         .onFailure { Timber.w(it, "guest exec failed: %s", guestCmd.joinToString(" ")) }
         .getOrNull()
 
-    /** 一次性 proot 执行：合并 stderr，限时强杀；输出整体回收（更新脚本的 verdict 在里面） */
+    /**
+     * 一次性 proot 执行：合并 stderr，限时强杀；输出整体回收（更新脚本的 verdict 在里面）
+     *
+     * A one-shot proot execution: stderr merged, hard-killed past the limit;
+     * output is collected whole (the update script's verdict lives inside). IO
+     * 调度器上执行 / Runs on the IO dispatcher.
+     */
     private suspend fun runGuestRaw(
         guestCmd: List<String>,
         timeoutMs: Long,
@@ -347,9 +428,13 @@ class ProotHost(
         ExecResult(if (finished) proc.exitValue() else null, out.toString(), !finished)
     }
 
-    // ------------------------------------------------------------------ 自愈清理与 DNS
-
-    /** 自愈清锁：proot 临时目录整体重来 + git 锁 + reloadalas（会话不在跑时才可调） */
+    /**
+     * 自愈清锁：proot 临时目录整体重来 + git 锁 + reloadalas（会话不在跑时才可调）
+     *
+     * Self-heal cleanup: rebuild the proot temp dir from scratch, plus git
+     * locks and reloadalas (callable only while no session runs). IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
     private suspend fun cleanupStale() {
         runCatching {
             prootTmpDir.deleteRecursively()
@@ -371,6 +456,14 @@ class ProotHost(
      *
      * 放在这里做是因为 startLocked 每次启动必经、且早于 spawnSession——此刻没有
      * drain 线程在写，无竞争；截断会刷新 mtime，崩溃重拉循环里不会再重复截
+     *
+     * Truncates session.log: when its mtime is over 7 days old and its size
+     * exceeds the cap, only the last [SESSION_LOG_KEEP_BYTES] survive.
+     *
+     * It lives here because startLocked passes through on every start, before
+     * spawnSession — no drain thread is writing yet, so there is no race; the
+     * truncation refreshes the mtime, so a crash-respawn loop never truncates
+     * twice. IO 调度器上执行 / Runs on the IO dispatcher.
      */
     private suspend fun truncateSessionLogIfStale() {
         // 设置读盘是异步的：最多等一拍，等不到就本次跳过（下轮启动再判），不卡启动链
@@ -414,6 +507,11 @@ class ProotHost(
     /**
      * 写死 DNS：烘焙包里的 /etc/resolv.conf 是指向 /run/systemd 的悬空软链，
      * 设备上解析必挂（热更新需要网络）。写普通文件， mainland 默认 AliDNS
+     *
+     * Hardwrites DNS: in the baked image /etc/resolv.conf is a dangling symlink
+     * to /run/systemd and resolution always fails on device (the hot update
+     * needs the network). A regular file is written; mainland defaults to
+     * AliDNS.
      */
     private fun writeResolvConf() {
         runCatching {
@@ -423,11 +521,13 @@ class ProotHost(
         }.onFailure { Timber.w(it, "write resolv.conf failed") }
     }
 
-    // ------------------------------------------------------------------ 状态
-
+    /** 落盘时间戳的锁：SimpleDateFormat 非线程安全，所有 [host] 行经它串行化 / Guards the on-disk timestamps: SimpleDateFormat is not thread-safe, so every [host] line serializes through it. */
     private val sessionLogLock = Any()
+
+    /** 日志行时间戳格式；仅限 [sessionLogLock] 内使用 / The log line timestamp format; used only under [sessionLogLock]. */
     private val phaseTs = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
 
+    /** 推进状态机并同步落一行阶段日志 / Advances the state machine and appends one phase log line. */
     private fun setState(phase: ProotPhase, detail: String = "") {
         _state.update { it.copy(phase = phase, detail = detail) }
         logPhase(phase.name, detail)
@@ -436,6 +536,11 @@ class ProotHost(
     /**
      * 阶段迁移落盘 session.log：release 版 Timber 只落 W+，准备链 2~5 分钟全程静默
      * 曾致「App 假死」误判——session.log 本就是生命周期时间线，[host] 行与 [proot-out] 交错即全貌
+     *
+     * Persists phase transitions into session.log: release Timber keeps only W+,
+     * leaving the 2-5 minute preparation chain totally silent, which once caused
+     * a false "app hung" verdict — session.log is the lifecycle timeline itself,
+     * and interleaved [host] / [proot-out] lines tell the whole story.
      */
     private fun logPhase(tag: String, detail: String) {
         runCatching {
@@ -451,6 +556,7 @@ class ProotHost(
         }
     }
 
+    /** 置 FAILED 态： Timber 与 session.log 双落 / Enters the FAILED state, logged to both Timber and session.log. */
     private fun fail(reason: String) {
         Timber.e("ProotHost failed: %s", reason)
         _state.update { it.copy(phase = ProotPhase.FAILED, detail = reason) }
@@ -458,21 +564,41 @@ class ProotHost(
     }
 
     companion object {
-        /** 网关端口（deploy.yaml WebuiPort）：WS 网关、Android 薄接口与应用内原生界面都打它 */
+        /**
+         * 网关端口（deploy.yaml WebuiPort）：WS 网关、Android 薄接口与应用内原生界面都打它
+         *
+         * The gateway port (deploy.yaml WebuiPort): the WS gateway, the Android
+         * thin API and the in-app native UI all hit it.
+         */
         const val WEBUI_PORT = 25548
 
+        /** rootfs 内的安装根，proot `-w` 的 guest 工作目录 / The install root inside the rootfs, proot's guest `-w` directory. */
         private const val GUEST_INSTALL_ROOT = "/opt/azurpilot"
+
+        /** 等服务就绪的上限：冷启 import + 首次播种余量大 / The ceiling for awaiting services: generous for cold-start imports and a first seed. */
         private const val SERVICES_UP_MS = 90_000L
+
+        /** 一次性 guest 命令的执行上限（播种等） / The execution ceiling for one-shot guest commands (seeding and the like). */
         private const val SHORT_EXEC_MS = 60_000L
+
+        /** 关 stdin 后等 wrapper 自尽的宽限 / The grace period for the wrapper to exit after stdin closes. */
         private const val STOP_GRACE_MS = 8_000L
+
+        /** 重拉退避：3s 起步翻倍至 60s 封顶 / Respawn backoff: starts at 3 s, doubles, caps at 60 s. */
         private const val RESTART_BACKOFF_INIT_MS = 3_000L
         private const val RESTART_BACKOFF_MAX_MS = 60_000L
+
+        /** 存活短于此时长算「秒退」，计入熔断 / Living shorter than this counts as a quick death for the circuit breaker. */
         private const val QUICK_DEATH_MS = 10_000L
+
+        /** 连续秒退达到此次数即熔断放弃 / The circuit breaker trips after this many consecutive quick deaths. */
         private const val MAX_RAPID_DEATHS = 5
 
-        /** session.log 截尾：保留尾部 2MB；mtime 超 7 天才算过期 */
+        /** session.log 截尾：保留尾部 2MB；mtime 超 7 天才算过期 / session.log truncation: keep the last 2 MB; expired only past an mtime of 7 days. */
         private const val SESSION_LOG_KEEP_BYTES = 2L * 1024 * 1024
         private const val SESSION_LOG_STALE_MS = 7L * 24 * 60 * 60 * 1000
+
+        /** 等设置读盘的一拍上限，等不到本轮跳过截尾 / The beat to wait for settings to load; the truncation skips this round when it misses. */
         private const val SETTINGS_LOADED_WAIT_MS = 2_000L
     }
 }

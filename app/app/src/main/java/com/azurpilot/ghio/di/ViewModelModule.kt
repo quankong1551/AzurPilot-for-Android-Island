@@ -9,6 +9,13 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
 
+/**
+ * ViewModel 绑定：日志四屏（app 日志、日志尾随、AzurPilot 日志、错误详情）
+ * 与设置页
+ *
+ * ViewModel bindings: the four log screens (app log, log tail, AzurPilot log,
+ * error detail) and the settings screen.
+ */
 val viewModelModule = module {
     viewModelOf(::AppLogViewModel)
     viewModelOf(::LogTailViewModel)
