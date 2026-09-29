@@ -37,14 +37,15 @@ static jobject nativeGetFrameBufferBitmap(JNIEnv *env, jclass clazz) {
 
 // 将最新紧凑 BGR888 帧复制到 Java 字节数组。
 //
-// 读取引用会覆盖 Java 数组分配和一次复制，确保 frame.data 在 JNI 调用期间保持有效；复制后立即
-// 解锁，避免后续 Java 处理阻塞采集槽复用。
+// GetLockedPixels() 持有已发布槽位，直至本函数调用 UnlockPixels()。锁覆盖 Java 数组分配和
+// 一次复制，确保 frame.data 在 JNI 调用期间保持有效；复制后立即解锁，避免后续 Java 处理阻塞
+// 采集槽复用。
 //
 // Copies the latest packed BGR888 frame into a Java byte array.
 //
-// The read reference spans Java-array allocation and one copy, keeping frame.data valid during the
-// JNI calls. It is released immediately afterward so later Java processing cannot block reuse of
-// the capture slot.
+// GetLockedPixels() holds the published slot until this function calls UnlockPixels(). The lock spans
+// Java-array allocation and one copy, keeping frame.data valid during the JNI calls. It is released
+// immediately afterward so later Java processing cannot block reuse of the capture slot.
 static jbyteArray nativeGetFrameBufferBytes(JNIEnv *env, jclass clazz) {
     (void) clazz;
     FrameInfo frame = GetLockedPixels();
@@ -52,7 +53,7 @@ static jbyteArray nativeGetFrameBufferBytes(JNIEnv *env, jclass clazz) {
         UnlockPixels(frame);
         return nullptr;
     }
-    // 读取引用覆盖数组分配与复制，避免 frame.data 在 JNI 调用期间被采集线程复用。
+    // 锁必须覆盖 JNI 分配和复制，避免 frame.data 在调用期间被采集线程复用。
     jbyteArray bytes = env->NewByteArray(static_cast<jsize>(frame.length));
     if (bytes) {
         env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(frame.length),

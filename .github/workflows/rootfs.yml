@@ -39,7 +39,7 @@ permissions:
 
 concurrency:
   group: azurpilot-android-update
-  # rootfs 构建可能超过一小时；下一次整点任务不能取消正在构建的任务。
+  # 运行时构建可能超过一小时；后续计划任务不能取消正在进行的构建。
   cancel-in-progress: false
 
 jobs:
@@ -85,13 +85,15 @@ jobs:
             echo 'Release signing secrets are incomplete; cannot publish all APKs.' >&2
             exit 1
           fi
-          # 上游不变时，push 仍可能改动 Kotlin；启动昂贵任务前需与上一份发布版本对比两者。
+          # 上游不变时，推送仍可能改动 Android 或运行时产物输入；启动耗时任务前须与上次发布比较。
           should_build=true
-          kt_changed=true
+          artifact_inputs_changed=true
+          app_inputs_changed=true
           mkdir -p .tmp/previous-release
           previous_ap_commit=''
           previous_version_code=''
           previous_version_name=''
+          previous_host_commit=''
           app_commit=''
           if gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release download azurpilot-android-latest --repo "$GITHUB_REPOSITORY" \
@@ -100,9 +102,9 @@ jobs:
             app_commit="$(jq -r '.appCommit // empty' .tmp/previous-release/latest.json)"
             previous_version_code="$(jq -r '.versionCode // empty' .tmp/previous-release/latest.json)"
             previous_version_name="$(jq -r '.versionName // empty' .tmp/previous-release/latest.json)"
+            previous_host_commit="$(jq -r '.androidHostCommit // empty' .tmp/previous-release/latest.json)"
           fi
-          # 每次新 rootfs 都重建全部 APK；只有自上一份带版本 APK 以来未改 Kotlin 时才保留
-          # 既有包版本。
+          # 运行时变更也需重建完整 APK；只有 Android 工程变更才前进应用包版本。
           version_code="$(git log -1 --format=%ct HEAD)"
           version_count="$(git rev-list --count HEAD)"
           version_name="1.2.$(( version_count > 134 ? version_count - 134 : 0 ))"
@@ -110,8 +112,8 @@ jobs:
                 "$app_commit" =~ ^[0-9a-f]{40}$ ]] &&
               git cat-file -e "${app_commit}^{commit}" 2>/dev/null &&
               git merge-base --is-ancestor "$app_commit" HEAD; then
-            if [[ -z "$(git diff --name-only "$app_commit" HEAD -- '*.kt')" ]]; then
-              kt_changed=false
+            if git diff --quiet "$app_commit" HEAD -- app; then
+              app_inputs_changed=false
               version_code="$previous_version_code"
               version_name="$previous_version_name"
             else
@@ -124,16 +126,25 @@ jobs:
           else
             app_commit="$GITHUB_SHA"
           fi
-          if [[ "$INPUT_FORCE" != true && "$previous_ap_commit" == "$ref" && "$kt_changed" == false ]]; then
+          # 应用、运行时和当前构建流程都会影响发布产物；基线不可比较时宁可重建。
+          if [[ "$previous_host_commit" =~ ^[0-9a-f]{40}$ ]] &&
+              git cat-file -e "${previous_host_commit}^{commit}" 2>/dev/null &&
+              git merge-base --is-ancestor "$previous_host_commit" HEAD; then
+            if git diff --quiet "$previous_host_commit" HEAD -- app rootfs .github/workflows/rootfs.yml; then
+              artifact_inputs_changed=false
+            fi
+          fi
+          if [[ "$INPUT_FORCE" != true && "$previous_ap_commit" == "$ref" && "$artifact_inputs_changed" == false ]]; then
             should_build=false
           fi
-          echo "Upstream dev: $ref; published: ${previous_ap_commit:-none}; Kotlin changed: $kt_changed; build: $should_build"
+          echo "Upstream dev: $ref; published: ${previous_ap_commit:-none}; artifact inputs changed: $artifact_inputs_changed; APK inputs changed: $app_inputs_changed; build: $should_build"
           {
             echo '### AzurPilot build decision'
             echo "- Trigger: $EVENT_NAME"
             echo "- Upstream dev: \`$ref\`"
             echo "- Published commit: \`${previous_ap_commit:-none}\`"
-            echo "- Kotlin changed: **$kt_changed**"
+            echo "- Artifact inputs changed: **$artifact_inputs_changed**"
+            echo "- APK inputs changed: **$app_inputs_changed**"
             echo "- Build rootfs and APKs: **$should_build**"
             echo "- APK version: \`$version_name ($version_code)\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -150,9 +161,9 @@ jobs:
   build:
     needs: resolve
     if: ${{ needs.resolve.outputs.should_build == 'true' && inputs.reuse_rootfs_run_id == '' }}
-    # rootfs 必须在对应架构的原生 runner 上构建（chroot 执行目标架构用户态，proot/模拟器不掺和）：
-    # arm64-v8a 走 ubuntu-24.04-arm（Graviton 不支持 32 位，armv7 无原生 runner 也无需 qemu），
-    # x86_64 走 ubuntu-24.04。
+    # 运行时必须在相应架构的原生 runner 上构建（chroot 执行目标架构用户态，不经 proot 或模拟器）：
+    # arm64-v8a 使用 ubuntu-24.04-arm（Graviton 不支持 32 位，armv7 既无原生 runner 也不需 qemu），
+    # x86_64 使用 ubuntu-24.04。
     strategy:
       fail-fast: false
       matrix:
@@ -234,7 +245,7 @@ jobs:
           java-version: '17'
       - uses: actions/cache@v4
         with:
-          # Gradle 依赖与 build-cache 都在 GRADLE_USER_HOME 里，冷启动每次都要重下 AGP/Kotlin/Compose
+          # 依赖和构建缓存都在 GRADLE_USER_HOME，冷启动会重新下载 AGP、Kotlin 与 Compose。
           path: .tmp/gradle-home
           key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/gradle/libs.versions.toml', 'app/gradle/wrapper/gradle-wrapper.properties', 'app/**/*.gradle.kts', 'app/build-logic/**/*.kt') }}
           restore-keys: |
@@ -248,7 +259,7 @@ jobs:
         run: |
           test -n "$KEYSTORE_BASE64" || { echo 'AZURPILOT_ANDROID_KEYSTORE_BASE64 is missing' >&2; exit 1; }
           mkdir -p .tmp/signing
-          # macOS 的 base64 不认 -d，python3 两个镜像都自带
+          # macOS 的 base64 不支持 -d，两个镜像都自带 python3。
           printf '%s' "$KEYSTORE_BASE64" | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > .tmp/signing/azurpilot.jks
       - name: Bundle runtime and build APKs
         env:
@@ -272,7 +283,7 @@ jobs:
             # 7GB 的 M1 runner：默认 4GB 堆加 Kotlin 守护进程会互相挤爆
             gradle_args+=("-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1g" "-Pkotlin.daemon.jvmargs=-Xmx1536m")
           else
-            # x64 runner 有 16GB：gradle.properties 里的 4096m 偏保守
+            # x64 runner 有 16GB 内存：gradle.properties 里的 4096m 偏保守
             gradle_args+=("-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "-Pkotlin.daemon.jvmargs=-Xmx3g")
           fi
           if [[ "$SIGNING_READY" != true ]]; then
@@ -321,8 +332,8 @@ jobs:
           set -euo pipefail
           signer="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
           for apk in dist/azurpilot-full-arm64-v8a.apk dist/azurpilot-full-x86_64.apk dist/azurpilot-update.apk; do
-            # apksigner 按给定 Android API 范围报告适用的签名方案。
-            # APK 的 minSdk 为 28，默认校验只会显示 v3。
+            # 签名工具按给定 Android API 范围报告适用的签名方案。
+            # APK 的最低支持 API 为 28，默认校验只会显示 v3。
             for entry in 'v1 23 23' 'v2 24 27' 'v3 28 36'; do
               read -r scheme min_sdk max_sdk <<< "$entry"
               result="$("$signer" verify --verbose --min-sdk-version "$min_sdk" --max-sdk-version "$max_sdk" "$apk")"
@@ -388,7 +399,7 @@ jobs:
             APK_JSON="$(jq -n --arg url "$url" --arg sha256 "$sha" --argjson size "$size" '{url:$url,sha256:$sha256,size:$size}')"
           fi
           # 每个架构一份发布资产与清单条目。旧版 App 只读扁平 rootfs* 字段（历史上一直是
-          # arm64 包），继续指向 arm64 条目，保证旧包的 Runtime 更新不断供。
+          # arm64 包），继续指向 arm64 条目，保证旧包的运行时更新不断供。
           for abi in arm64-v8a x86_64; do
             key="$(echo "$abi" | tr 'a-z-' 'A-Z_')"
             cp ".tmp/publish-rootfs/$abi/rootfs.tar.xz" "rootfs-$abi.tar.xz"

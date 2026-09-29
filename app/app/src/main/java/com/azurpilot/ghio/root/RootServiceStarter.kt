@@ -25,8 +25,18 @@ import com.azurpilot.ghio.third.Ln
 object RootServiceStarter {
 
     private const val TAG = "RootServiceStarter"
-    /** 远端服务销毁事务码；与服务实现约定，必须保持稳定。 / Remote service destroy transaction code; fixed by the service implementation contract. */
-    private const val DESTROY_TRANSACTION_CODE = 16777115
+    /**
+     * [RemoteService.destroy] 的显式 AIDL transaction code。
+     *
+     * 生命周期死亡清理直接调用 [IBinder.transact]，绕过生成的 Stub；这里必须与
+     * `RemoteService.aidl` 中的 `destroy() = 16777114` 保持一致。
+     *
+     * Explicit AIDL transaction code for [RemoteService.destroy].
+     *
+     * Lifecycle-death cleanup calls [IBinder.transact] directly and bypasses the generated Stub, so
+     * this value must stay synchronized with `destroy() = 16777114` in `RemoteService.aidl`.
+     */
+    private const val DESTROY_TRANSACTION_CODE = 16777114
 
     // linkToDeath 会随 BinderProxy 被 GC 而失效，必须持有强引用直到进程退出。
     // linkToDeath can become ineffective when its BinderProxy is collected, so strong references

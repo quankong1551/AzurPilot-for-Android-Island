@@ -131,15 +131,25 @@ static void MarkBufferFree(FrameBuffer *buf) {
     }
 }
 
+// 发布已完成写入的槽位。
+//
+// 先发布 read 指针，再将状态标为可写。否则另一写入者可能在 read 指针切换前取得该槽并覆盖
+// 刚完成的帧。read 指针的 release 存储同时发布 BGR 数据、frame_count 和固定 index。
+//
+// Publishes a completed write slot.
+//
+// The read pointer is published before marking the slot writable. Otherwise another writer could
+// acquire the slot and overwrite the completed frame before the read pointer switches. The read
+// pointer's release store also publishes the BGR data, frame_count, and fixed index.
 static void CommitWriteBuffer(FrameBuffer *buf) {
     int idx = GetBufferIndex(buf);
     if (idx < 0) {
         return;
     }
-    g_buffer_states[idx].store(FRAME_STATE_FREE, std::memory_order_release);
     if (g_frame_buffers_initialized.load(std::memory_order_acquire)) {
         g_read_buffer.store(buf, std::memory_order_release);
     }
+    g_buffer_states[idx].store(FRAME_STATE_FREE, std::memory_order_release);
 }
 
 // 取得一个不等于当前读帧、也未被读取者持有的写槽。

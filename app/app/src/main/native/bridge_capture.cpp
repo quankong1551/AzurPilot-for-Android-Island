@@ -22,14 +22,16 @@
 
 // 当前采集器的单一所有者。
 //
-// reader 拥有 window 和 listener 注册；listener.context 借用 NativeCapturer 地址，因此 setup 与
-// release 必须由调用方串行，且 release 在销毁结构前解除 listener，禁止回调访问已释放上下文。
+// reader 管理 listener 注册，window 只在 reader 存活期间有效。listener.context 保留
+// NativeCapturer 地址以满足 NDK 回调契约，但当前回调只使用其 reader 参数；setup 与 release
+// 必须串行，且回调不得在释放后解引用 context。
 //
 // Single owner of the active capture resources.
 //
-// reader owns window and listener registration. listener.context borrows the NativeCapturer address,
-// so callers must serialize setup and release. Release removes the listener before destroying the
-// structure, preventing callbacks from accessing a freed context.
+// The reader manages listener registration, and the window is valid only while the reader lives.
+// listener.context retains the NativeCapturer address to satisfy the NDK callback contract, but the
+// current callback uses only its reader argument. Setup and release must be serialized, and a
+// callback must not dereference context after release.
 struct NativeCapturer {
     AImageReader *reader = nullptr;
     ANativeWindow *window = nullptr;
@@ -38,9 +40,13 @@ struct NativeCapturer {
     int height = 0;
 };
 
-// 仅在串行 setup/release 中替换 g_capturer；其余原子量可由回调线程安全更新诊断状态。
-// g_capturer is replaced only by serialized setup/release; the remaining atomics let callback
-// threads update diagnostics safely.
+// 仅在串行 setup/release 中替换 g_capturer；g_reader_ready 和其余原子量允许回调线程安全
+// 更新诊断状态。
+//
+// g_capturer is replaced only by serialized setup/release. g_reader_ready and the remaining atomics
+// let callback threads update diagnostics safely.
+static NativeCapturer *g_capturer = nullptr;
+static std::atomic<bool> g_reader_ready{false};
 static std::atomic<int64_t> g_callbacks{0}, g_acquired{0}, g_written{0};
 static std::atomic<int> g_acquire_status{0}, g_setup_status{0};
 

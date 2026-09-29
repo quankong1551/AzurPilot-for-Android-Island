@@ -110,8 +110,13 @@ static void flogf(const char *fmt, ...) {
     int n = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
     va_end(ap);
     if (n > 0) {
-        buf[n] = '\n';
-        write(g_log_fd, buf, (size_t) (n + 1));
+        size_t length = (size_t) n;
+        // vsnprintf 截断时返回期望长度，必须夹紧后才能作为 buf 下标和写入长度使用。
+        if (length > sizeof(buf) - 2) {
+            length = sizeof(buf) - 2;
+        }
+        buf[length] = '\n';
+        write(g_log_fd, buf, length + 1);
     }
 }
 

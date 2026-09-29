@@ -126,12 +126,14 @@ static int UpcallStartApp(JNIEnv *env, const char *packageName, int displayId, b
         return -1;
     }
 
-    /* 上游传进来的是 std::string::c_str()，理论上带 NUL；出过越界读就把长度打出来定位 */
+    // 上游传入 std::string::c_str() 理应带 NUL；限制日志长度可定位历史越界读而不无界扫描。
     LOGI("UpcallStartApp: env=%p len=%zu display=%d forceStop=%d",
          (void *) env, strnlen(packageName, 4096), displayId, (int) forceStop);
 
     jstring jPackageName = env->NewStringUTF(packageName);
-    if (!jPackageName || CheckJNIException(env, "NewStringUTF(packageName)")) {
+    // 空引用也必须检查并清除异常，不能因短路遗留 JNI pending exception。
+    const bool new_string_failed = CheckJNIException(env, "NewStringUTF(packageName)");
+    if (!jPackageName || new_string_failed) {
         return -1;
     }
     jboolean result = env->CallStaticBooleanMethod(g_driver_clz, g_start_app_method, jPackageName,

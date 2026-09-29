@@ -25,6 +25,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "SpikeA"
 
+/**
+ * 执行 PRoot 可执行性阶梯和 PhantomProcessKiller 观测的设备端 Spike Activity。
+ *
+ * UI 仅在主线程创建。耗时的 PRoot 与进程 I/O 在工作线程执行；[busy] 阻止同一 Activity
+ * 重叠运行。Activity 重建不会恢复已启动的实验。
+ *
+ * Runs on-device PRoot executability ladders and PhantomProcessKiller observations.
+ *
+ * Its UI is created only on the main thread. Lengthy PRoot and process I/O run on worker threads;
+ * [busy] prevents overlapping runs in one Activity. An Activity recreation does not resume an
+ * experiment that was already started.
+ */
 class MainActivity : Activity() {
 
     private lateinit var logView: TextView
@@ -34,7 +46,16 @@ class MainActivity : Activity() {
     private lateinit var nativeLibDir: String
     private val busy = AtomicBoolean(false)
 
-    /** "ladder" (Spike A) or "phantom" (Spike C: spawn N long-lived guest processes). */
+    /**
+     * 返回 Intent 请求的实验模式，未提供时使用阶梯模式。
+     *
+     * 只有 `phantom` 选择 PhantomProcessKiller 观测；其他值均按阶梯模式处理。
+     *
+     * Returns the experiment mode requested by the Intent, defaulting to ladder mode.
+     *
+     * Only `phantom` selects the PhantomProcessKiller observation; every other value is treated as
+     * ladder mode.
+     */
     private fun mode(): String = intent?.getStringExtra("mode") ?: "ladder"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,8 +106,16 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    // ---------------------------------------------------------------- logging
-
+    /**
+     * 将一行实验信息写入 logcat、持久化日志和屏幕日志。
+     *
+     * 调用方通常是工作线程；界面更新被切回主线程，以避免跨线程访问 [logView]。
+     *
+     * Writes one experiment line to logcat, the persistent log, and the on-screen log.
+     *
+     * Callers normally run on worker threads; the UI update returns to the main thread to avoid
+     * cross-thread access to [logView].
+     */
     private fun log(line: String) {
         Log.i(TAG, line)
         try {
@@ -103,18 +132,47 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * 读取文本文件的首行，并将读取失败编码为诊断文本。
+     *
+     * 设备事实采集不能因可选的 procfs 或 SELinux 节点不可读而中断整个阶梯。
+     *
+     * Reads the first line of a text file and encodes read failures as diagnostic text.
+     *
+     * Device-fact collection must not interrupt the whole ladder when optional procfs or SELinux
+     * nodes are unreadable.
+     */
     private fun readFirstLine(path: String): String = try {
         File(path).readLines().firstOrNull() ?: "(empty)"
     } catch (t: Throwable) {
         "ERR ${t.javaClass.simpleName}: ${t.message}"
     }
 
+    /**
+     * 返回安装后的 nativeLibraryDir 中一个库文件的绝对路径。
+     *
+     * Returns the absolute path of one library in the installed nativeLibraryDir.
+     */
     private fun nld(name: String) = File(nativeLibDir, name).absolutePath
 
+    /**
+     * 返回已部署 rootfs 中一个相对路径的绝对路径。
+     *
+     * Returns the absolute path of one relative path in the deployed rootfs.
+     */
     private fun guest(path: String) = File(rootfsDir, path).absolutePath
 
-    // ------------------------------------------------------------ exec plumbing
-
+    /**
+     * 保存一次子进程执行的已观测状态。
+     *
+     * [exit] 在启动失败或超时时为空；[exception] 仅记录启动失败，进程自身的 stderr 保留在
+     * [err] 中。
+     *
+     * Holds the observed state of one child-process execution.
+     *
+     * [exit] is null for a launch failure or timeout. [exception] records launch failures only;
+     * process stderr remains in [err].
+     */
     private class ExecResult(
         val exit: Int?,
         val out: String,
@@ -190,15 +248,17 @@ class MainActivity : Activity() {
 
     private val results = LinkedHashMap<String, String>()
 
-    // ------------------------------------------------------- phantom mode (Spike C)
-
     /**
-     * Spike C: spawn [count] long-lived guest processes through proot and report
-     * liveness periodically, so the host can watch PhantomProcessKiller trim them.
+     * 启动 Spike C 的 PhantomProcessKiller 观测。
      *
-     * Uses run-as-free self-observation: the guest writes its PIDs to
-     * <rootfs>/tmp/phantoms.pids, which this process reads back and probes with
-     * `Os.kill(pid, 0)` (same-uid, no extra permission needed).
+     * 工作线程通过 PRoot 生成多个长期存活的 guest 进程，并定期报告存活数。它在所有退出路径中
+     * 清除 [busy]，使正常结束、启动失败和异常后都可重新运行。
+     *
+     * Starts the Spike C PhantomProcessKiller observation.
+     *
+     * A worker thread creates multiple long-lived guest processes through PRoot and periodically
+     * reports their liveness. It clears [busy] on every exit path so normal completion, launch
+     * failure, and exceptions all permit another run.
      */
     private fun launchPhantom() {
         if (!busy.compareAndSet(false, true)) return
@@ -207,6 +267,8 @@ class MainActivity : Activity() {
                 runPhantom()
             } catch (t: Throwable) {
                 log("FATAL ${t.javaClass.name}: ${t.message}")
+            } finally {
+                busy.set(false)
             }
         }.start()
     }
@@ -234,7 +296,16 @@ class MainActivity : Activity() {
 
     private fun guestPidFile() = File(rootfsDir, "tmp/phantoms.pids")
 
-    /** Count guest PIDs still alive, from this (app) process' point of view. */
+    /**
+     * 从 app 进程的视角统计仍存活的 guest PID。
+     *
+     * `kill(pid, 0)` 只探测同 UID 进程，不发送信号；无法读取 PID 文件时返回诊断值而不打断观察。
+     *
+     * Counts guest PIDs still alive from the app process's point of view.
+     *
+     * `kill(pid, 0)` probes same-UID processes without sending a signal. An unreadable PID file
+     * returns a diagnostic value instead of interrupting the observation.
+     */
     private fun countGuestAlive(): String {
         val f = guestPidFile()
         if (!f.exists()) return "n/a"
@@ -249,7 +320,7 @@ class MainActivity : Activity() {
                 Os.kill(p, 0)
                 alive++
             } catch (t: Throwable) {
-                // ESRCH -> dead & reaped
+                // ESRCH 表示进程已退出并被回收；其他探测失败同样不能算作存活。
             }
         }
         return "$alive/${pids.size}"
@@ -266,8 +337,6 @@ class MainActivity : Activity() {
         log("================================================================================")
         provisionRootfs()
         val script = guestPhantomScript(n)
-        // -b /dev:/dev is required: busybox ash redirects each background job's stdin
-        // from /dev/null, and a freshly provisioned rootfs has no /dev node for it.
         val cmd = listOf(
             nld("libproot.so"), "-w", "/", "-r", rootfsDir.absolutePath, "-b", "/dev:/dev",
             "/bin/busybox", "sh", "-c", script,
@@ -282,7 +351,6 @@ class MainActivity : Activity() {
             pb.start()
         } catch (e: IOException) {
             log("[PHANTOM] EXEC-FAILED: ${e.javaClass.name}: ${e.message}")
-            busy.set(false)
             return
         }
         log("[PHANTOM] proot started (appPid=$myPid)")
@@ -326,8 +394,6 @@ class MainActivity : Activity() {
         stop.set(true)
         log("[PHANTOM] PROOT_EXIT=$exit after ${(SystemClock.elapsedRealtime() - start) / 1000}s")
     }
-
-    // ------------------------------------------------------------------ ladder
 
     private fun runLadder() {
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

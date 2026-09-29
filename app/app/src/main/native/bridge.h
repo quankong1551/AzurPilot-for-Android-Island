@@ -107,6 +107,16 @@ struct InputArgs {
     const char *text;
 };
 
+// 运行框架的触摸参数 ABI。
+//
+// contact 从运行框架 v5.12.3 起才保证由调用方初始化；旧版本会保留该位置但不写入。因此
+// DispatchInputMessage() 仅在 Kotlin 的版本门控已启用时读取它，否则统一使用 contact 0。
+//
+// Touch-argument ABI from the runtime framework.
+//
+// Runtime v5.12.3 is the first version guaranteed to initialize contact. Older versions retain the
+// field location but leave it unwritten. DispatchInputMessage() reads it only after Kotlin enables
+// the version gate; otherwise it always uses contact 0.
 struct TouchArgs {
     Position p;
     int contact;

@@ -91,7 +91,7 @@ jobs:
           echo 'Failed to push scheduled workflow activity after 3 attempts.' >&2
           exit 1
       - name: Dispatch Android update build
-        # GITHUB_TOKEN 的 push 不会触发 push 工作流，因此需显式派发构建。
+        # 仓库令牌推送的提交不会触发推送工作流，因此需显式派发构建。
         # 心跳提交失败不能阻止已经确认需要的更新构建。
         if: ${{ !cancelled() && steps.upstream.outcome == 'success' && steps.upstream.outputs.should_build == 'true' }}
         env:
