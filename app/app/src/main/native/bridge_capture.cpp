@@ -1,3 +1,13 @@
+// 基于 AImageReader 的特权显示采集端点。
+//
+// Kotlin 的 NativeBridgeLib.setupNativeCapturer() 取得这里创建的 Surface 并交给系统
+// 显示管线；AImageReader 回调线程将最新 RGBA 图像写进共享 BGR 帧缓冲，按需交给预览。
+//
+// AImageReader-backed capture endpoint for the privileged display bridge.
+// Kotlin's NativeBridgeLib.setupNativeCapturer() obtains the Surface created here and
+// gives it to the system display pipeline. The AImageReader callback thread writes the
+// latest RGBA image to the shared BGR frame buffer and optionally hands it to preview.
+
 #include "bridge_capture.h"
 
 #include "bridge_frame_buffer.h"
@@ -10,6 +20,16 @@
 #include <atomic>
 #include <sstream>
 
+// 当前采集器的单一所有者。
+//
+// reader 拥有 window 和 listener 注册；listener.context 借用 NativeCapturer 地址，因此 setup 与
+// release 必须由调用方串行，且 release 在销毁结构前解除 listener，禁止回调访问已释放上下文。
+//
+// Single owner of the active capture resources.
+//
+// reader owns window and listener registration. listener.context borrows the NativeCapturer address,
+// so callers must serialize setup and release. Release removes the listener before destroying the
+// structure, preventing callbacks from accessing a freed context.
 struct NativeCapturer {
     AImageReader *reader = nullptr;
     ANativeWindow *window = nullptr;
@@ -18,11 +38,14 @@ struct NativeCapturer {
     int height = 0;
 };
 
-static NativeCapturer *g_capturer = nullptr;
-static std::atomic<bool> g_reader_ready{false};
+// 仅在串行 setup/release 中替换 g_capturer；其余原子量可由回调线程安全更新诊断状态。
+// g_capturer is replaced only by serialized setup/release; the remaining atomics let callback
+// threads update diagnostics safely.
 static std::atomic<int64_t> g_callbacks{0}, g_acquired{0}, g_written{0};
 static std::atomic<int> g_acquire_status{0}, g_setup_status{0};
 
+// 返回 reader 初始化状态及图像回调、获取和写入的原子计数快照。
+// Returns a snapshot of reader setup state and atomic callback, acquisition, and write counts.
 std::string GetCaptureDiagnostics() {
     std::ostringstream state;
     state << "reader=" << g_reader_ready.load() << " setupStatus=" << g_setup_status.load()
@@ -32,6 +55,15 @@ std::string GetCaptureDiagnostics() {
     return state.str();
 }
 
+// 在 AImageReader 回调线程消费最新图像。
+//
+// acquireLatestImage() 刻意丢弃队列中的旧帧：自动化与预览只关心最新状态，保留旧图像会
+// 累积端到端延迟。未转交给预览线程的 image 必须在此线程删除。
+//
+// Consumes the newest image on the AImageReader callback thread.
+// acquireLatestImage() deliberately drops queued stale frames: automation and preview only
+// need current state, while retaining old images would accumulate end-to-end latency. An image
+// not handed to the preview thread must be deleted on this thread.
 static void onImageAvailable(void *context, AImageReader *reader) {
     (void) context;
     g_callbacks.fetch_add(1);
@@ -56,6 +88,15 @@ static void onImageAvailable(void *context, AImageReader *reader) {
     }
 }
 
+// 替换当前采集器并返回其 producer Surface。
+//
+// width 和 height 的单位为显示像素。调用方必须与 ReleaseNativeCapturer() 串行；任一步
+// AImageReader 配置失败都会清理已取得资源、释放帧缓冲并返回 null。
+//
+// Replaces the active capturer and returns its producer Surface.
+// width and height are display pixels. Callers must serialize this with
+// ReleaseNativeCapturer(); any AImageReader setup failure cleans up acquired resources,
+// releases frame buffers, and returns null.
 jobject SetupNativeCapturer(JNIEnv *env, int width, int height) {
     ReleaseNativeCapturer();
     g_callbacks.store(0);
@@ -113,6 +154,13 @@ jobject SetupNativeCapturer(JNIEnv *env, int width, int height) {
     return surface;
 }
 
+// 停止帧交付并释放当前采集器拥有的资源。
+//
+// 删除 AImageReader 前先解除 listener，防止回调在存储拆除过程中交付新图像。
+//
+// Stops frame delivery and releases resources owned by the active capturer.
+// The listener is removed before deleting AImageReader so callbacks cannot deliver new images
+// while backing storage is being torn down.
 void ReleaseNativeCapturer() {
     g_reader_ready.store(false);
     DrainPreviewQueue();

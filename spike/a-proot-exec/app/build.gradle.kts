@@ -22,8 +22,8 @@ android {
         debug {
             isMinifyEnabled = false
         }
-        // Spike-only: signed with the debug key so a non-debuggable (release) build
-        // can be installed to verify the lib*.so naming rule end-to-end.
+        // 仅供 Spike 使用：沿用 debug 签名安装不可调试的 release 包，验证 `lib*.so` 命名
+        // 规则在完整安装链路中的表现。
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("debug")
@@ -39,8 +39,8 @@ android {
         jvmTarget = "17"
     }
 
-    // Extract native libs to nativeLibraryDir at install time (exec-from-nld probe
-    // depends on real files there; targetSdk-35 W^X policy applies to data dir).
+    // 安装时将 native 库提取到 nativeLibraryDir；从该目录执行的探针依赖真实文件，且
+    // targetSdk 35 的 W^X 策略限制从数据目录执行。
     packaging {
         jniLibs {
             useLegacyPackaging = true

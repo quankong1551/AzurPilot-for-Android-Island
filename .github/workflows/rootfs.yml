@@ -85,8 +85,7 @@ jobs:
             echo 'Release signing secrets are incomplete; cannot publish all APKs.' >&2
             exit 1
           fi
-          # A push may change Kotlin without changing upstream. Check both against
-          # the last published release before starting the expensive jobs.
+          # 上游不变时，push 仍可能改动 Kotlin；启动昂贵任务前需与上一份发布版本对比两者。
           should_build=true
           kt_changed=true
           mkdir -p .tmp/previous-release
@@ -102,8 +101,8 @@ jobs:
             previous_version_code="$(jq -r '.versionCode // empty' .tmp/previous-release/latest.json)"
             previous_version_name="$(jq -r '.versionName // empty' .tmp/previous-release/latest.json)"
           fi
-          # Rebuild all APK variants with every new rootfs, but keep their package version
-          # unless a Kotlin source file changed since the last versioned APK.
+          # 每次新 rootfs 都重建全部 APK；只有自上一份带版本 APK 以来未改 Kotlin 时才保留
+          # 既有包版本。
           version_code="$(git log -1 --format=%ct HEAD)"
           version_count="$(git rev-list --count HEAD)"
           version_name="1.2.$(( version_count > 134 ? version_count - 134 : 0 ))"
@@ -117,7 +116,8 @@ jobs:
               version_name="$previous_version_name"
             else
               version_code="$((previous_version_code + 1))"
-              # 1.1.X 钉在基线计数（GitVersion.kt VERSION_BASELINE_REV），X 不随发布递增
+              # 版本格式为 1.2.<X>；X 由 GitVersion.kt 的 VERSION_SCHEME_START_COUNT
+              # 对提交数做基线平移，版本计算本身不因发布次数递增。
               version_name="$version_name"
               app_commit="$GITHUB_SHA"
             fi
@@ -321,8 +321,8 @@ jobs:
           set -euo pipefail
           signer="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
           for apk in dist/azurpilot-full-arm64-v8a.apk dist/azurpilot-full-x86_64.apk dist/azurpilot-update.apk; do
-            # apksigner reports the scheme used for the requested Android API range.
-            # The APK's minSdk is 28, so the default verification reports only v3.
+            # apksigner 按给定 Android API 范围报告适用的签名方案。
+            # APK 的 minSdk 为 28，默认校验只会显示 v3。
             for entry in 'v1 23 23' 'v2 24 27' 'v3 28 36'; do
               read -r scheme min_sdk max_sdk <<< "$entry"
               result="$("$signer" verify --verbose --min-sdk-version "$min_sdk" --max-sdk-version "$max_sdk" "$apk")"

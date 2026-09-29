@@ -46,11 +46,17 @@ extern "C" {
 // frame_ref is the opaque handle that must be handed back to UnlockPixels.
 
 struct FrameInfo {
+    // 帧的显示像素宽度 / Frame width in display pixels.
     uint32_t width;
+    // 帧的显示像素高度 / Frame height in display pixels.
     uint32_t height;
+    // 单行 BGR 字节数；恒为 width * 3 / BGR bytes per row; always width * 3.
     uint32_t stride;
+    // data 指向区域的总字节数 / Total bytes in the region pointed to by data.
     uint32_t length;
+    // 仅在持锁期间有效的 BGR888 数据 / BGR888 data valid only while locked.
     void *data;
+    // 必须原样交回 UnlockPixels() 的不透明引用 / Opaque reference returned to UnlockPixels().
     void *frame_ref;
 };
 
@@ -73,6 +79,7 @@ enum MethodType {
     KEY_UP = 10
 };
 
+// 表示触点在逻辑显示器内的像素坐标 / Pointer coordinates in logical-display pixels.
 struct Position {
     int x;
     int y;
@@ -117,19 +124,36 @@ union ArgUnion {
     KeyArgs key;
 };
 
+// 完整输入请求：display_id 是逻辑显示器 ID，method 选择 args 中的有效联合体成员。
+//
+// Complete input request: display_id is a logical display ID and method selects
+// the valid union member in args.
 struct MethodParam {
     int display_id;
     MethodType method;
     ArgUnion args;
 };
 
+// 锁定并返回最新发布帧；没有可读帧时 data 为 null。成功返回的值必须交给 UnlockPixels()。
+// Locks and returns the newest published frame; data is null when no frame is readable.
+// A successful result must be passed to UnlockPixels().
 BRIDGE_API FrameInfo GetLockedPixels(void);
+
+// 释放 GetLockedPixels() 取得的读取引用；空 frame_ref 是无操作。
+// Releases the read reference acquired by GetLockedPixels(); a null frame_ref is a no-op.
 BRIDGE_API int UnlockPixels(FrameInfo info);
+
+// 将框架输入协议分派为 Kotlin 上行调用；0 表示已处理或被有意忽略，-1 表示失败。
+// Dispatches a framework input message as a Kotlin upcall; 0 means handled or intentionally
+// ignored, while -1 signals failure.
 BRIDGE_API int DispatchInputMessage(MethodParam param);
 
 #ifdef __cplusplus
 }
 
+// 记录、描述并清除 JNI pending exception；返回值说明调用前是否存在异常。
+// Logs, describes, and clears a pending JNI exception; the return value reports whether one
+// existed.
 bool CheckJNIException(JNIEnv *env, const char *context);
 
 #endif

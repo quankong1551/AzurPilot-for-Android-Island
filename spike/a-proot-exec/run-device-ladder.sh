@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Spike A on-device ladder runner (AzurPilot, roadmap v3).
+# 在已授权 USB 调试设备上依次运行 Spike A 的 targetSdk 35/28 阶梯探针。
 #
-# Usage:  bash run-device-ladder.sh [device-serial]
-# Needs:  adb reachable device (USB-debug authorized), dist/*.apk already built.
-# Output: dist/logs/<tag>.logcat.txt + dist/logs/<tag>.spikea.log + dist/logs/device-facts.txt
+# 用法：bash run-device-ladder.sh [device-serial]
+# 前置：设备可由 adb 访问，且 dist/ 中的 APK 已构建。
+# 输出：dist/logs/<tag>.logcat.txt、dist/logs/<tag>.spikea.log 和 device-facts.txt。
+#
+# Runs the Spike A targetSdk 35/28 ladder probes sequentially on a USB-debug-authorized device.
+#
+# Usage: bash run-device-ladder.sh [device-serial]
+# Prerequisites: the device is reachable through adb and the APKs in dist/ are built.
+# Output: dist/logs/<tag>.logcat.txt, dist/logs/<tag>.spikea.log, and device-facts.txt.
 set -u
 
-# adb shell args must not be path-mangled by MSYS
+# 避免 MSYS 将传给设备 shell 的 POSIX 路径误改为 Windows 路径。
 export MSYS_NO_PATHCONV=1
 
 ADB="${ADB:-/c/Users/da270/AppData/Local/Android/Sdk/platform-tools/adb.exe}"
@@ -33,8 +39,7 @@ run_variant() {
   local tag="$1" apk="$2"
   echo ""
   echo "=== [$tag] install -r $apk ==="
-  # adb.exe is a Windows program: host-side file paths must be Windows-style
-  # (MSYS_NO_PATHCONV=1 is exported for run-as/logcat, so convert explicitly).
+  # adb.exe 接受 Windows 主机路径；为设备 shell 禁用 MSYS 转换后，安装路径需显式转换。
   "$ADB" -s "$SERIAL" install -r "$(cygpath -m "$apk")" || return 1
   "$ADB" -s "$SERIAL" shell am force-stop "$PKG"
   "$ADB" -s "$SERIAL" logcat -c

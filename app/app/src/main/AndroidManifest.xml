@@ -221,7 +221,7 @@
             android:multiprocess="false" />
 
         <!-- Root 后端的 binder 回投口：特权进程经 getContentProviderExternal 打到这里，
-             provider 内按 uid ∈ {0, 2000} 与一次性 token 校验（docs/privileged-runtime.md §3） -->
+             provider 内按 uid ∈ {0, 2000} 与一次性 token 校验（见 root/RootServiceBootstrapProvider.kt） -->
         <provider
             android:name=".root.RootServiceBootstrapProvider"
             android:authorities="${applicationId}.root.bootstrap"

@@ -5,135 +5,321 @@ import com.azurpilot.ghio.ITouchEventCallback;
 import com.azurpilot.ghio.IRunnerCallback;
 
 /**
- * 特权进程的服务面（docs/privileged-runtime.md §6）
+ * App 进程与特权服务之间的稳定 Binder 服务面。
  *
- * transaction id 必须显式写死且只增不改：app 升级后旧特权进程可能仍存活，
- * 双方按 transaction code 通信，改动方法顺序会错位
- * destroy() 的 16777114 是 Shizuku user service 的保留 id
+ * 服务可能由 Shizuku 或 root `app_process` 创建，并能短暂跨越 app 升级继续存活。因此所有
+ * transaction ID 显式固定且只能追加，绝不能按声明顺序重排；新旧两端必须按同一 code 解释
+ * 每个 Binder 事务。同步方法在特权服务的 Binder 线程池执行，`oneway` 方法绝不能依赖调用
+ * 方收到异常或返回值。
+ *
+ * Stable Binder service surface between the app process and the privileged service.
+ *
+ * Shizuku or root `app_process` may create the service, and it can briefly survive an app upgrade.
+ * Every transaction ID is therefore explicitly fixed and append-only: never reorder declarations,
+ * because old and new endpoints must interpret each Binder transaction by the same code. Synchronous
+ * methods run on the privileged service's Binder pool; `oneway` methods must not rely on the caller
+ * receiving an exception or a return value.
  */
 interface RemoteService {
 
+    /**
+     * 请求特权进程完整清理后退出。
+     *
+     * `16777114` 是 Shizuku user-service 保留 transaction ID，必须保持不变。
+     *
+     * Requests that the privileged process clean up completely and exit.
+     *
+     * `16777114` is Shizuku's reserved user-service transaction ID and must remain unchanged.
+     */
     oneway void destroy() = 16777114;
 
-    // ── 生命周期 ──
+    /**
+     * 作为 `destroy()` 的兼容别名。
+     *
+     * Compatibility alias for `destroy()`.
+     */
     void exit() = 1;
 
+    /**
+     * 返回特权进程、UID、PID 和 native bridge 的诊断摘要。
+     *
+     * Returns a diagnostic summary of the privileged process, UID, PID, and native bridge.
+     */
     String version() = 2;
 
+    /**
+     * 返回当前特权进程 PID。
+     *
+     * Returns the current privileged-process PID.
+     */
     int pid() = 3;
 
-    /** app 侧上报自己的 pid，特权进程据此做 /proc 看门狗，app 消失即自杀 */
+    /**
+     * 上报 app 进程 PID，供特权侧看门狗检测 app 是否死亡。
+     *
+     * 调用为单向通知；app 进程必须周期性发送，服务不会确认接收。
+     *
+     * Reports the app-process PID so the privileged watchdog can detect app death.
+     *
+     * This is one-way notification. The app must send it periodically, and the service does not
+     * acknowledge receipt.
+     */
     oneway void heartbeat(int appPid) = 4;
 
     /**
-     * piRoot 是解包后的 PI 根目录绝对路径
-     * logDir 交给 运行框架 落 框架日志 与 Screencap 动作的产物；不设时它按进程 CWD 算，特权进程的 CWD 不可写
+     * 执行特权服务的一次性连接初始化。
+     *
+     * 参数会记入诊断日志，当前实现还会禁用 Android 12+ 的 phantom process killer。参数暂不
+     * 改变特权服务的路径或调试配置；调用方不得把成功结果视为 Runtime 已配置或就绪。
+     *
+     * Performs one-time connection initialization for the privileged service.
+     *
+     * The parameters are recorded in diagnostic logs; the current implementation also disables
+     * Android 12+ phantom process killing. They do not yet change privileged-service paths or
+     * debugging. Callers must not treat success as Runtime configuration or readiness.
      */
     boolean setup(String piRoot, String logDir, boolean isDebug) = 5;
 
-    // ── 显示 ──
+    /**
+     * 选择主屏采集或独立虚拟屏模式；未知值返回 false。
+     *
+     * Selects primary-display capture or standalone virtual-display mode; unknown values return
+     * false.
+     */
     boolean setVirtualDisplayMode(int mode) = 10;
 
+    /**
+     * 设置下一次虚拟屏创建使用的尺寸和 DPI；活动虚拟屏会重建。
+     *
+     * Sets dimensions and DPI for virtual-display creation; an active virtual display is recreated.
+     */
     void setVirtualDisplayResolution(int width, int height, int dpi) = 11;
 
-    /** 返回 display id，失败返回 -1 */
+    /**
+     * 创建当前模式对应的显示器，失败时返回 `DISPLAY_NONE`。
+     *
+     * Creates the display for the current mode; returns `DISPLAY_NONE` on failure.
+     */
     int startVirtualDisplay() = 12;
 
+    /**
+     * 停止显示器以及它依赖的看门狗和保活资源。
+     *
+     * Stops the display and its dependent watchdog and keep-alive resources.
+     */
     void stopVirtualDisplay() = 13;
 
+    /**
+     * 判断目标应用是否仍在当前虚拟屏上；无虚拟屏时返回 true。
+     *
+     * Reports whether the target app remains on the current virtual display; returns true when no
+     * virtual display exists.
+     */
     boolean isAppOnVirtualDisplay(String packageName) = 14;
 
+    /**
+     * 将目标应用任务固定回当前虚拟屏；无活动屏时返回 false。
+     *
+     * Pins the target app task back to the current virtual display; returns false without an active
+     * display.
+     */
     boolean moveAppToVirtualDisplay(String packageName) = 15;
 
+    /**
+     * 设置虚拟屏启动时是否强制全屏窗口模式。
+     *
+     * Sets whether virtual-display launches force fullscreen windowing.
+     */
     oneway void setForceFullscreenOnVirtualDisplay(boolean enabled) = 16;
 
+    /**
+     * 请求切换物理主屏电源状态。
+     *
+     * Requests a physical primary-display power-state change.
+     */
     oneway void setDisplayPower(boolean on) = 17;
 
     /**
-     * 强改**主屏**分辨率；前台模式要求主屏是 16:9，这是唯一的改法
-     * 与 setVirtualDisplayResolution 不是一回事：那个改的是后台虚拟屏，改完只影响虚拟屏上的应用
+     * 强制修改物理主屏尺寸，而不是后台虚拟屏尺寸。
+     *
+     * 这是全系统 UI 重排操作；调用方应在成功后负责提供恢复路径。
+     *
+     * Forces the physical primary-display size, not the background virtual-display size.
+     *
+     * This reflows the whole system UI. Callers must provide a recovery path after success.
      */
     boolean setForcedDisplaySize(int width, int height) = 18;
 
-    /** 撤掉 setForcedDisplaySize，主屏回到出厂分辨率 */
+    /**
+     * 撤销 `setForcedDisplaySize()` 的主屏尺寸覆盖。
+     *
+     * Clears the primary-display size override created by `setForcedDisplaySize()`.
+     */
     boolean clearForcedDisplaySize() = 19;
 
-    // ── 预览 ──
+    /**
+     * 设置可选预览 Surface；传 null 会关闭预览。
+     *
+     * Sets the optional preview Surface; null disables preview.
+     */
     void setMonitorSurface(in Surface surface) = 20;
 
+    /**
+     * 注册预览手势的 app 侧回调；传 null 解除回调。
+     *
+     * Registers the app-side callback for preview gestures; null unregisters it.
+     */
     oneway void setTouchCallback(ITouchEventCallback callback) = 21;
 
-    // ── 预览上的手动操作 ──
+    /**
+     * 向当前虚拟屏注入单指按下；主屏模式或无屏时服务会忽略。
+     *
+     * Injects a single-pointer down event into the current virtual display; the service ignores it
+     * in primary mode or without a display.
+     */
     oneway void touchDown(int x, int y) = 30;
 
+    /**
+     * 向当前虚拟屏注入单指移动；主屏模式或无屏时服务会忽略。
+     *
+     * Injects a single-pointer move event into the current virtual display; the service ignores it
+     * in primary mode or without a display.
+     */
     oneway void touchMove(int x, int y) = 31;
 
+    /**
+     * 向当前虚拟屏注入单指抬起；主屏模式或无屏时服务会忽略。
+     *
+     * Injects a single-pointer up event into the current virtual display; the service ignores it
+     * in primary mode or without a display.
+     */
     oneway void touchUp(int x, int y) = 32;
 
-    // ── 代授权限 ──
+    /**
+     * 以特权身份检查目标包是否已安装。
+     *
+     * Checks whether the target package is installed using privileged identity.
+     */
+    boolean isPackageInstalled(String packageName) = 40;
 
     /**
-     * 用特权身份给 app 自己授权，省掉用户逐个点系统页
+     * 尝试向 app 授予请求的 `PrivilegedGrant` 位。
      *
-     * permissions 与返回值都是 PrivilegedGrant 的位掩码，返回实际授到的那些
-     * 用位掩码而不是 Parcelable：Parcelable 的线格式跟着 Kotlin 类布局走，
-     * app 升级但旧特权进程仍存活时会解不出来（同本文件开头的 transaction id 约定）
+     * `permissions` 和返回值均为位掩码。使用整数而非 Parcelable，使旧特权进程仍能与升级后
+     * 的 app 交换稳定线格式。
+     *
+     * Attempts to grant the requested `PrivilegedGrant` bits to the app.
+     *
+     * Both `permissions` and the return value are bit masks. Integers, rather than Parcelable,
+     * keep the wire format stable when an old privileged process talks to an upgraded app.
      */
     int grantPermissions(String packageName, int uid, int permissions) = 41;
 
-    // ── 目标应用 ──
-    boolean isPackageInstalled(String packageName) = 40;
-
-    // ── 执行 ──
+    /**
+     * 注册 Runtime 执行事件回调；当前特权实现保留 ABI 但不执行运行控制。
+     *
+     * Registers the Runtime execution-event callback. The current privileged implementation keeps
+     * the ABI but does not run execution control.
+     */
     oneway void setRunnerCallback(IRunnerCallback callback) = 50;
 
-    /** payload 是 RunPlanPayload 的 JSON；立即返回是否受理，进度与结果走回调 */
+    /**
+     * 请求开始 Runtime 执行；当前特权实现保留 ABI 但返回 false。
+     *
+     * Requests Runtime execution start. The current privileged implementation keeps the ABI but
+     * returns false.
+     */
     boolean startRun(String runPlanJson) = 51;
 
-    /** 幂等；未在跑时也返回 true */
+    /**
+     * 请求停止 Runtime 执行；当前特权实现保留 ABI 但返回 false。
+     *
+     * Requests Runtime execution stop. The current privileged implementation keeps the ABI but
+     * returns false.
+     */
     boolean stopRun() = 52;
 
+    /**
+     * 查询 Runtime 是否执行中；当前特权实现保留 ABI 但返回 false。
+     *
+     * Queries whether the Runtime is executing. The current privileged implementation keeps the
+     * ABI but returns false.
+     */
     boolean isRunning() = 53;
 
-    /** 运行框架 版本；未加载返回 null */
+    /**
+     * 返回 Runtime native 版本；当前特权实现保留 ABI 但返回 null。
+     *
+     * Returns the Runtime native version. The current privileged implementation keeps the ABI but
+     * returns null.
+     */
     String nativeVersion() = 54;
 
-    /** 看门狗状态：0=IDLE / 1=WATCHING / 2=APP_DIED（目标 app 是否仍在虚拟屏上） */
+    /**
+     * 返回 app 看门狗状态码：0=IDLE、1=WATCHING、2=APP_DIED。
+     *
+     * Returns the app-watchdog state code: 0=IDLE, 1=WATCHING, 2=APP_DIED.
+     */
     int watchdogState() = 60;
 
-    /** 看门狗当下盯着的包名；没有目标时为空串。运行日志要把它写进那句提示里 */
+    /**
+     * 返回看门狗当前推断的目标包名；未知时为空串。
+     *
+     * Returns the target package currently inferred by the watchdog; empty when unknown.
+     */
     String watchdogTargetPackage() = 61;
 
-    // ── 亮屏与解锁 ──
-
     /**
-     * 亮屏并解除锁屏；credential 是纯数字 PIN，无凭证锁屏传空串
-     * 返回值见 WakeUnlockResult。整段在特权进程内同步完成——息屏后 app 侧协程会被挂起
+     * 解锁并点亮屏幕；`credential` 仅支持数字 PIN，空串表示无凭证锁屏。
+     *
+     * Unlocks and wakes the screen. `credential` supports only a numeric PIN, and an empty string
+     * means an unsecured keyguard.
      */
     int unlock(String credential) = 70;
 
-    /** 设置页自测：先上锁息屏再解一次 */
+    /**
+     * 执行锁屏、息屏、再解锁的设置页自测。
+     *
+     * Runs the settings self-test: lock, sleep, then unlock.
+     */
     int testUnlock(String credential) = 71;
 
-    /** 上锁并息屏；跑完自动熄屏用它 */
+    /**
+     * 立即上锁并请求息屏。
+     *
+     * Immediately locks the keyguard and requests sleep.
+     */
     int lockAndSleep() = 72;
 
     /**
-     * 强停虚拟屏上的目标应用；包名取自看门狗运行期反推的那个
-     * 放在特权侧而不是让 app 传包名：外壳不维护包名表，运行期只有这边知道
+     * 强停看门狗推断的目标应用；尚无目标时返回 false。
+     *
+     * Force-stops the target application inferred by the watchdog; returns false when no target
+     * exists.
      */
     boolean stopTargetApp() = 73;
 
-    /** 屏幕当前是否亮着；采「本轮开始时手机是不是醒着」用它 */
+    /**
+     * 宽松查询主屏是否亮起；底层读取失败时返回 true。
+     *
+     * Leniently queries whether the primary screen is on; returns true when the underlying read
+     * fails.
+     */
     boolean isScreenOn() = 74;
 
     /**
-     * 把 controller 的缓存截图落到 [path]，供 focus 模板的 {image} 用
+     * 将特权控制器缓存的截图保存到调用方指定路径；大图使用文件以避免 Binder 1 MB 缓冲限制。
      *
-     * 走文件不回传字节：一张 720p PNG 几百 KB，binder 事务缓冲总共才 1MB
+     * Saves the privileged controller's cached screenshot at the caller-provided path. Large images
+     * use a file to avoid Binder's 1 MB buffer limit.
      */
     boolean saveCachedImage(String path) = 75;
 
-    /** 下次创建虚拟屏时使用的请求刷新率；0 跟随系统，仅 Android 14+ 生效 */
+    /**
+     * 设置下一次虚拟屏创建使用的请求刷新率；0 表示跟随系统，仅 Android 14+ 生效。
+     *
+     * Sets the requested refresh rate for the next virtual-display creation; 0 follows the system
+     * and is effective only on Android 14+.
+     */
     void setVirtualDisplayRefreshRate(float rate) = 76;
 }

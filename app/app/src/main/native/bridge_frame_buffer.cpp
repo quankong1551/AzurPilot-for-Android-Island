@@ -1,3 +1,13 @@
+// 特权显示采集的三重 BGR 帧缓冲实现。
+//
+// AImageReader 回调写入最新帧；JNI 与同进程 native 消费者成对使用
+// GetLockedPixels()/UnlockPixels() 读取。原子状态避免采集覆盖仍被读取的槽位。
+//
+// Triple-buffered BGR frame storage for privileged display capture.
+// AImageReader callbacks write the newest frame; JNI and in-process native consumers
+// read through paired GetLockedPixels()/UnlockPixels() calls. Atomic state prevents
+// capture from overwriting a slot that a reader still holds.
+
 #include "bridge_frame_buffer.h"
 
 #include <android/bitmap.h>
@@ -15,6 +25,14 @@
 
 #endif
 
+// 帧槽状态、读取引用和诊断信息。
+//
+// 状态以原子操作协作采集回调与 JNI 读取者：写入者不使用被读取的槽位，释放时等待所有
+// 引用归零后才回收内存。
+//
+// Frame-slot state, read references, and diagnostics.
+// Atomics coordinate capture callbacks with JNI readers: writers never use a slot held by a
+// reader, and release waits for all references to reach zero before reclaiming memory.
 static FrameBuffer g_buffers[FRAME_BUFFER_COUNT] = {};
 static std::atomic<int> g_buffer_states[FRAME_BUFFER_COUNT] = {
         FRAME_STATE_FREE, FRAME_STATE_FREE, FRAME_STATE_FREE
@@ -26,11 +44,21 @@ static std::atomic<bool> g_frame_buffers_initialized{false};
 static std::mutex g_frame_diagnostics_mutex;
 static std::string g_frame_diagnostics = "not initialized";
 
+// 返回最近一次 AImage 平面校验的诊断结果。
+// Returns the diagnostic result of the most recent AImage-plane validation.
 std::string GetFrameReadDiagnostics() {
     std::lock_guard<std::mutex> lock(g_frame_diagnostics_mutex);
     return g_frame_diagnostics;
 }
 
+// 将一帧 RGBA/RGB 平面转换为紧凑 BGR888。
+//
+// NEON 仅加速常见的四字节像素布局；其余格式及尾部像素保持标量路径，以避免将设备相关
+// pixel stride 假设扩散到调用者。
+//
+// Converts one RGBA/RGB image plane to packed BGR888.
+// NEON accelerates only the common four-byte pixel layout; other layouts and tail pixels stay
+// scalar so device-specific pixel-stride assumptions do not leak to callers.
 static void ProcessFrameDataV2(
         const uint8_t *__restrict src,
         uint8_t *__restrict dst_bgr,
@@ -114,6 +142,13 @@ static void CommitWriteBuffer(FrameBuffer *buf) {
     }
 }
 
+// 取得一个不等于当前读帧、也未被读取者持有的写槽。
+//
+// 比较交换后会重新验证条件，因为读取者和重配置线程可能恰好在竞争窗口内更新原子状态。
+//
+// Acquires a write slot that is neither the current read frame nor held by a reader.
+// Conditions are revalidated after compare-exchange because readers and reconfiguration can
+// update atomic state in the intervening race window.
 static FrameBuffer *AcquireWriteBuffer() {
     if (!g_frame_buffers_initialized.load(std::memory_order_acquire)) {
         return nullptr;
@@ -144,6 +179,15 @@ static FrameBuffer *AcquireWriteBuffer() {
     return nullptr;
 }
 
+// 锁定当前发布帧并为调用者增加读取引用。
+//
+// 最多重试三次以处理发布者刚切换 read 指针的情况；写入状态短暂存在时只自旋有限次数，
+// 防止慢或异常的写入者永久阻塞 JNI 请求线程。
+//
+// Locks the current published frame and increments its caller-owned read reference.
+// It retries at most three times when a publisher just switched the read pointer. A transient
+// writing state spins only a bounded number of times so a slow or broken writer cannot block a
+// JNI request thread forever.
 static const FrameBuffer *LockCurrentFrame() {
     if (!g_frame_buffers_initialized.load(std::memory_order_acquire)) {
         return nullptr;
@@ -197,6 +241,14 @@ static void UnlockFrame(const FrameBuffer *frame) {
     }
 }
 
+// 为指定显示像素尺寸分配并重置三重帧缓冲。
+//
+// 64 字节对齐使标量复制和 NEON 访问保持友好；任一槽分配失败都会回滚此前分配，避免发布
+// 半初始化帧集合。
+//
+// Allocates and resets triple frame buffers for the specified display-pixel dimensions.
+// 64-byte alignment keeps scalar copies and NEON access friendly. Failure to allocate any slot
+// rolls back earlier allocations so no partially initialized frame set is published.
 void InitFrameBuffers(int width, int height) {
     {
         std::lock_guard<std::mutex> lock(g_frame_diagnostics_mutex);
@@ -236,6 +288,14 @@ void InitFrameBuffers(int width, int height) {
     LOGI("InitFrameBuffers: Success %dx%d, waiting for first real frame", width, height);
 }
 
+// 停止发布并等待活动读写者离开后释放所有帧缓冲。
+//
+// 调用方在重新配置或释放 AImageReader 时串行进入；先清除 initialized 可阻止新读取者取得
+// 引用，随后才等待已有持有者结束。
+//
+// Stops publication and frees every frame buffer after active readers and writers leave.
+// Callers serialize this with AImageReader reconfiguration or release. Clearing initialized
+// first prevents new readers from acquiring references before existing holders are drained.
 void ReleaseFrameBuffers() {
     g_frame_buffers_initialized.store(false, std::memory_order_release);
     g_read_buffer.store(nullptr, std::memory_order_release);
@@ -255,6 +315,14 @@ void ReleaseFrameBuffers() {
     g_frame_count.store(0, std::memory_order_release);
 }
 
+// 校验 AImage 平面并将其转换、发布为最新 BGR 帧。
+//
+// 返回 false 表示图像未发布（采集尚未就绪、平面布局不兼容、无可写槽）；错误仅首发一次，
+// 防止高频回调淹没 logcat。
+//
+// Validates an AImage plane, converts it, and publishes it as the newest BGR frame.
+// False means the image was not published (capture not ready, incompatible plane layout, or no
+// writable slot). Errors log only once so a high-frequency callback cannot flood logcat.
 bool WriteImageToFrame(AImage *image) {
     if (!image || !g_frame_buffers_initialized.load(std::memory_order_acquire)) {
         return false;
@@ -330,10 +398,20 @@ bool WriteImageToFrame(AImage *image) {
     return true;
 }
 
+// 返回已成功发布的单调递增帧数。
+// Returns the monotonic count of successfully published frames.
 int64_t GetFrameCount() {
     return g_frame_count.load(std::memory_order_acquire);
 }
 
+// 锁定并返回最新帧的 BGR888 快照。
+//
+// data 为 null 表示没有可读帧。成功结果的 frame_ref 必须且只能传给一次 UnlockPixels()；
+// 指针在解锁后立即失效。
+//
+// Locks and returns a BGR888 snapshot of the newest frame.
+// A null data pointer means no frame is readable. The frame_ref of a successful result must be
+// passed to UnlockPixels() exactly once; its pointers become invalid immediately after unlock.
 BRIDGE_API FrameInfo GetLockedPixels() {
     FrameInfo result = {0};
     const FrameBuffer *frame = LockCurrentFrame();
@@ -355,6 +433,8 @@ BRIDGE_API FrameInfo GetLockedPixels() {
     return result;
 }
 
+// 释放 GetLockedPixels() 取得的读取引用；空引用是无操作。
+// Releases the read reference acquired by GetLockedPixels(); a null reference is a no-op.
 BRIDGE_API int UnlockPixels(FrameInfo info) {
     if (info.frame_ref) {
         UnlockFrame(reinterpret_cast<const FrameBuffer *>(info.frame_ref));
@@ -362,6 +442,14 @@ BRIDGE_API int UnlockPixels(FrameInfo info) {
     return 0;
 }
 
+// 将锁外的 BGR 副本转为 Java ARGB_8888 Bitmap。
+//
+// JNI 查找或 Bitmap 分配失败会清除 pending exception 并返回 null；本函数绝不持有帧锁，
+// 因此 Java 堆压力不会阻塞采集回调。
+//
+// Converts a BGR copy outside the frame lock into a Java ARGB_8888 Bitmap.
+// JNI lookup or Bitmap-allocation failure clears the pending exception and returns null. This
+// function never holds a frame lock, so Java heap pressure cannot block capture callbacks.
 static jobject BuildArgb8888BitmapFromBgr(JNIEnv *env, const uint8_t *bgr, int width, int height) {
     jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
     jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
@@ -425,6 +513,14 @@ static jobject BuildArgb8888BitmapFromBgr(JNIEnv *env, const uint8_t *bgr, int w
     return bitmap;
 }
 
+// 将当前帧复制并转换为 Java Bitmap。
+//
+// 先复制 BGR 数据再解锁，把持锁时间压缩到一次 memcpy；随后可能较慢的 Bitmap 分配和颜色
+// 转换不会与采集或同进程消费者争用帧槽。
+//
+// Copies and converts the current frame into a Java Bitmap.
+// BGR data is copied before unlocking so the frame lock covers only one memcpy. Potentially slow
+// Bitmap allocation and color conversion then cannot contend with capture or in-process consumers.
 jobject CreateFrameBufferBitmap(JNIEnv *env) {
     FrameInfo frame = GetLockedPixels();
     if (!frame.data || frame.width == 0 || frame.height == 0 || frame.length == 0) {

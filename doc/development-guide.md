@@ -64,7 +64,7 @@ Windows 注意事项：
 2. 看日志：
    - logcat：`adb logcat -v time --pid=$(adb shell pidof com.azurpilot.ghio)`。
    - 文件日志落在外部私有目录（`AppPaths.ROOT`，`app/app/src/main/java/com/azurpilot/ghio/constant/AppPaths.kt:50`）下的 `log/`（`AppFiles.kt:24`）：`app.log` 是壳层全量（Timber），`proot/session.log` 是 proot stdout/stderr 与 WebUI 访问记录，设备路径 `/sdcard/Android/data/com.azurpilot.ghio/files/log/`。
-   - Windows 一键跟踪：`tools/watch-android-logs.ps1`，`-Source app` 跟踪 logcat、`-Source session` 跟踪 session.log，`-Serial`/`-Adb` 按需传。注意脚本顶部写死的包名（`tools/watch-android-logs.ps1:9`）与本仓默认包名不一致，使用前先改。
+   - Windows 一键跟踪：`tools/watch-android-logs.ps1`，`-Source app` 跟踪 logcat、`-Source session` 跟踪 session.log，`-Serial`/`-Adb` 按需传。脚本默认包名为 `com.azurpilot.ghio`；若使用带后缀的构建 profile，按实际 applicationId 改写脚本中的 `$package`。
 3. 访问运行时：`adb forward tcp:25548 tcp:25548` 后，浏览器打开 `http://127.0.0.1:25548/` 即 WebUI；`/healthz` 探活，`/android/*` 需要令牌。完整「安装 → Runtime 更新 → 会话就绪 → 网关健康」的手动循环见 [adb-e2e-testing.md](adb-e2e-testing.md)，网关协议见 [architecture.md](architecture.md)。
 
 ### 签名与升级安装
@@ -181,7 +181,7 @@ Windows notes:
 2. Read the logs:
    - logcat: `adb logcat -v time --pid=$(adb shell pidof com.azurpilot.ghio)`.
    - File logs live under `log/` (`AppFiles.kt:24`) in the external private dir (`AppPaths.ROOT`, `app/app/src/main/java/com/azurpilot/ghio/constant/AppPaths.kt:50`): `app.log` holds the full app-shell log (Timber), `proot/session.log` holds proot stdout/stderr and the WebUI access log. On-device path: `/sdcard/Android/data/com.azurpilot.ghio/files/log/`.
-   - One-command tailing on Windows: `tools/watch-android-logs.ps1`, with `-Source app` for logcat and `-Source session` for session.log; pass `-Serial`/`-Adb` as needed. Note the hardcoded package name at the top of the script (`tools/watch-android-logs.ps1:9`) differs from the default applicationId — adjust it before use.
+   - One-command tailing on Windows: `tools/watch-android-logs.ps1`, with `-Source app` for logcat and `-Source session` for session.log; pass `-Serial`/`-Adb` as needed. Its default package is `com.azurpilot.ghio`; when using a suffixed build profile, update `$package` in the script to the effective applicationId.
 3. Reach the runtime: after `adb forward tcp:25548 tcp:25548`, open `http://127.0.0.1:25548/` in a browser for the WebUI; `/healthz` is the readiness probe and `/android/*` requires a token. The full manual loop "install → Runtime update → session ready → gateway health" is in [adb-e2e-testing.md](adb-e2e-testing.md); the gateway protocol is in [architecture.md](architecture.md).
 
 ### Signing and in-place upgrades

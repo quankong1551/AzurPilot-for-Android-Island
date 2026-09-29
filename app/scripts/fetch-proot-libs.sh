@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# 生成 x86_64 的 proot 原生库九件套，输出到 app/src/main/prootLibs/x86_64/。
+# 从固定的 Termux Debian 包生成 x86_64 PRoot 原生库九件套。
 #
-# 来源与 arm64-v8a 一致（Spike A 实证配方，见 spike/a-proot-exec/REPORT.md §1.2/§7）：
-# Termux 包改名为 lib*.so 并用同长字符串改写 DT_NEEDED。本脚本每次构建自动拉取，
-# 版本与 SHA256 钉死，仓库内不提交生成产物。arm64-v8a 仍是仓内已验证的钉版产物。
+# CI 在构建 x86_64 Runtime 前调用本脚本，产物写入 app/app/src/main/prootLibs/x86_64/；
+# arm64-v8a 使用仓内已验证的固定产物。Termux 二进制会改名为 lib*.so 并以同长字符串
+# 改写 DT_NEEDED，使 AGP 将其安装到 nativeLibraryDir——targetSdk 限制下唯一可靠可
+# execve 的 APK 私有位置。所有包版本和 SHA-256 固定，生成物不提交。
 #
-# 依赖关系（AGP 打包要求 lib*.so 命名，安装后落在 nativeLibraryDir）：
-#   libproot.so        <- Termux proot: usr/bin/proot（改写 NEEDED libtalloc.so.2 -> libtalloc.so）
-#   libproot-loader.so <- Termux proot: usr/libexec/proot/loader（静态 ELF，proot exec 它拉起客户机）
+# Builds the x86_64 PRoot native-library set from pinned Termux Debian packages.
+# CI calls this before building the x86_64 runtime and writes output to
+# app/app/src/main/prootLibs/x86_64/; arm64-v8a uses verified pinned artifacts in the repository.
+# Termux binaries are renamed to lib*.so and their DT_NEEDED strings are rewritten in place so AGP
+# installs them in nativeLibraryDir, the only APK-private location reliably execve-able under
+# targetSdk restrictions. Package versions and SHA-256 values are pinned; generated output is not
+# committed.
+#
+# 依赖关系 / Dependency mapping:
+#   libproot.so        <- Termux proot: usr/bin/proot (NEEDED libtalloc.so.2 -> libtalloc.so)
+#   libproot-loader.so <- Termux proot: usr/libexec/proot/loader (static ELF guest launcher)
 #   libtalloc.so       <- libtalloc: usr/lib/libtalloc.so.2.4.3
-#   libandroid-shmem.so / libandroid-selinux.so / libpcre2-8.so   <- 同名包，直接改名
-#   libbusybox.so      <- busybox: usr/bin/busybox 4KB stub（改写 NEEDED -> libbusybox_app.so）
-#   libbusybox_app.so  <- busybox: usr/lib/libbusybox.so.1.38.0（真正的 applet 载荷，SONAME 保持原样）
+#   libandroid-shmem.so / libandroid-selinux.so / libpcre2-8.so <- same-named packages, renamed
+#   libbusybox.so      <- busybox: usr/bin/busybox (NEEDED -> libbusybox_app.so)
+#   libbusybox_app.so  <- busybox: usr/lib/libbusybox.so.1.38.0 (applet payload; SONAME unchanged)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +28,11 @@ OUT_DIR="$REPO_ROOT/app/app/src/main/prootLibs/x86_64"
 TMP_DIR="${TMPDIR:-/tmp}/fetch-proot-libs-x86_64"
 POOL="https://packages.termux.dev/apt/termux-main/pool/main"
 
-# 包名_版本 -> data.tar 里相对 data/data/com.termux/files/usr 的路径；SHA256 为当日快照钉死值
+# 包名_版本 -> data.tar 内相对 data/data/com.termux/files/usr 的路径；SHA-256 固定为
+# 已验证快照，升级时必须同时更新来源、哈希和下方 ELF 计划。
+#
+# Package-name_version maps to a path under data.tar's data/data/com.termux/files/usr. SHA-256
+# pins a verified snapshot; upgrades must update the source, hash, and ELF plan below together.
 PKGS=(
     "proot_5.1.107.95_x86_64.deb|f63ce9bd0d38715eae0163a3772f3395913587444c7ce7232091c6d359afe3c3"
     "libtalloc_2.4.3_x86_64.deb|7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628"
@@ -29,7 +42,8 @@ PKGS=(
     "busybox_1.38.0-1_x86_64.deb|519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48"
 )
 
-# Windows 的 python3 可能是商店占位 stub，必须实际能跑才算数
+# Windows 的 python3 可能是 Microsoft Store 占位 stub，必须实际执行 import 才算可用。
+# python3 on Windows may be a Microsoft Store placeholder; it must execute an import before use.
 PY=""
 for cand in python3 python; do
     if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys' 2>/dev/null; then
@@ -51,7 +65,10 @@ for entry in "${PKGS[@]}"; do
     else
         echo "downloading $deb"
         name="${deb%%_*}"
-        # Debian pool 目录约定：lib 开头取前 4 字符（liba/…），其余取首字符（p/…）
+        # Debian pool 路径规则：lib* 取前四字符，其余包取首字符；不能由 URL 猜测后静默
+        # 回退，否则镜像布局变化会掩盖错误。
+        # Debian pool path rules use four leading characters for lib* and one for other packages;
+        # do not silently guess a fallback URL or a mirror-layout change could hide an error.
         prefix_dir="${name:0:4}"
         [[ $name == lib* ]] || prefix_dir="${name:0:1}"
         curl -fsL --retry 3 "$POOL/$prefix_dir/$name/$deb" -o "$target"
@@ -60,14 +77,34 @@ for entry in "${PKGS[@]}"; do
     fi
 done
 
-# 解包 + 改名 + DT_NEEDED 同长改写 + ELF 校验，全在 python 里一次完成
+# 解包、改名、同长 DT_NEEDED 改写与 ELF 校验放在一个 Python 进程中完成，避免中间产物被
+# AGP 或并行任务观察到。该内嵌程序只接受已完成 SHA-256 校验的 deb。
+#
+# Unpack, rename, equal-length DT_NEEDED rewrite, and ELF validation run in one Python process so
+# AGP or parallel tasks cannot observe intermediate output. This embedded program accepts only
+# deb files whose SHA-256 verification already completed.
 "$PY" - "$TMP_DIR" "$OUT_DIR" <<'PY'
+"""将已校验的 x86_64 PRoot 包物化为 AGP 可打包的 lib*.so 集合。
+
+调用方在执行前校验包哈希。本程序仅提取 PLAN 指定文件，做有界的同长 DT_NEEDED 替换，校验
+x86_64 ELF 头，并删除本脚本管理的过期产物。
+
+Materializes verified x86_64 PRoot packages as an AGP-packagable lib*.so set.
+
+The caller verifies package hashes before this code runs. This program extracts only files named
+in PLAN, performs bounded equal-length DT_NEEDED substitutions, validates x86_64 ELF headers, and
+removes stale artifacts managed by this script.
+"""
 import io, lzma, os, shutil, struct, sys, tarfile
 
 tmp_dir, out_dir = sys.argv[1], sys.argv[2]
 PREFIX = './data/data/com.termux/files/usr/'
 
-# (deb, 源路径, 输出名, [(旧 NEEDED 名, 新 NEEDED 名)])
+# (deb, 源路径, 输出名, [(旧 NEEDED 名, 新 NEEDED 名)])。替换必须不比原字符串长，
+# 因为 ELF 动态字符串表的偏移不可在此重定位。
+#
+# (deb, source path, output name, [(old NEEDED name, new NEEDED name)]). A replacement may not be
+# longer than the original because this script cannot relocate ELF dynamic-string-table offsets.
 PLAN = [
     ('proot_5.1.107.95_x86_64.deb', 'bin/proot', 'libproot.so',
      [('libtalloc.so.2', 'libtalloc.so')]),
@@ -83,6 +120,16 @@ PLAN = [
 
 
 def data_tar(deb_path):
+    """从一个已校验的 Debian archive 返回 data.tar 载荷。
+
+    抛出：
+        AssertionError: archive 不是 ar/deb 文件，或不存在 data.tar 成员。
+
+    Returns the data.tar payload from one verified Debian archive.
+
+    Raises:
+        AssertionError: The archive is not an ar/deb file or has no data.tar member.
+    """
     with open(deb_path, 'rb') as f:
         blob = f.read()
     assert blob[:8] == b'!<arch>\n', f'{deb_path} 不是 deb(ar) 包'
@@ -121,13 +168,17 @@ for deb, src, dest, patches in PLAN:
         g.write(blob)
     print(f'  {dest}  {len(blob)} bytes')
 
-# 改写后的引用必须落位
+# 改写后的引用必须准确落位；这既确认 ABI 重命名，也防止上游包布局静默漂移。
+# Rewritten references must land exactly; this confirms ABI renaming and prevents silent upstream
+# package-layout drift.
 proot = open(os.path.join(out_dir, 'libproot.so'), 'rb').read()
 assert b'libtalloc.so\0' in proot and b'libtalloc.so.2\0' not in proot
 stub = open(os.path.join(out_dir, 'libbusybox.so'), 'rb').read()
 assert b'libbusybox_app.so\0' in stub and b'libbusybox.so.1.38.0\0' not in stub
 
-# 清掉上次可能残留的旧产物（prootLibs 下只放本脚本管理的这批）
+# 清除上次遗留的受管产物，避免 AGP 意外打包已不在 PLAN 中的旧 ABI 库。
+# Remove stale managed artifacts so AGP cannot accidentally package an old ABI library no longer
+# listed in PLAN.
 for stale in os.listdir(out_dir):
     if stale not in {dest for _, _, dest, _ in PLAN}:
         os.remove(os.path.join(out_dir, stale))

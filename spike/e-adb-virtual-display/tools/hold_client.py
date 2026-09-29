@@ -1,3 +1,16 @@
+"""保持虚拟显示实验的 TCP 客户端连接，并可选地保留前若干字节的原始输出。
+
+命令行参数依次为端口、转储文件路径和最大转储字节数。脚本故意只持续读取并周期性报告流量，
+用于验证服务端在客户端长时间存活或暂时空闲时的连接行为；它不解析协议内容。
+
+Keeps a TCP client connection open for the virtual-display experiment and optionally preserves the
+first portion of the raw output.
+
+Its command-line arguments are the port, dump-file path, and maximum dump size. The script
+intentionally only reads and periodically reports traffic, so it can observe server behavior while a
+client stays connected or temporarily idle; it does not parse the protocol payload.
+"""
+
 import socket
 import sys
 import time

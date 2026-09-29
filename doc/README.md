@@ -19,6 +19,7 @@
 | [xiaomi-workstation.md](xiaomi-workstation.md) | 小米澎湃OS「工作台」无极窗口 2.0 适配 / Xiaomi HyperOS Workstation (resizable windows 2.0) adaptation |
 | [comment-style.md](comment-style.md) | 注释规范：Google 风格基准 + 双语 KDoc 惯例 / Comment conventions: Google style baseline + bilingual KDoc rules |
 | [development-guide.md](development-guide.md) | 开发指南：环境、构建、调试、签名与发布 / Development guide: environment, build, debug, signing, and release |
+| [module-reference.md](module-reference.md) | 模块参考：责任边界、关键入口与变更验证 / Module reference: ownership boundaries, key entry points, and change validation |
 
 ## 阅读约定 / Conventions
 
