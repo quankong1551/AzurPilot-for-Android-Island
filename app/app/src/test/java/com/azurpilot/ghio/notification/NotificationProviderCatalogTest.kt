@@ -22,6 +22,15 @@ import org.junit.Test
  *
  * 三处必须一致：[NOTIFICATION_PROVIDER_ORDER]、各 provider 的 id、DI 注册的那份列表。
  * 这里对着前两处；DI 那份漏一个仍要靠人看，但它与本列表在同一个 PR 里改
+ *
+ * Pins down the channel-id consistency that the compiler cannot check: a typo
+ * in an id would only show up as "the switch turns on but nothing is ever
+ * sent".
+ *
+ * Three lists must agree: [NOTIFICATION_PROVIDER_ORDER], the ids of the
+ * providers themselves, and the list registered in DI. This test checks the
+ * first two; a missing entry in the DI list still needs a human, but it is
+ * changed in the same PR as this list.
  */
 class NotificationProviderCatalogTest {
 

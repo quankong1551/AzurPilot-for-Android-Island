@@ -9,11 +9,22 @@ import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
+/**
+ * 验证 [LogExportCollector] 的按时间窗筛选与豁免规则
+ *
+ * Verifies the time-window filtering and exemption rules of
+ * [LogExportCollector].
+ */
 class LogExportCollectorTest {
 
     private lateinit var base: File
 
-    /** 固定「现在」：用真实时钟的话跨天跑测试会飘 */
+    /**
+     * 固定「现在」：用真实时钟的话跨天跑测试会飘
+     *
+     * A fixed "now": with the real clock the test would flake when it runs
+     * across a day boundary.
+     */
     private val now = 1_800_000_000_000L
     private val day = 24L * 60 * 60 * 1000
 
@@ -38,7 +49,12 @@ class LogExportCollectorTest {
         LogExportCollector.collect(listOf(File(base, "log"), File(base, "debug")), now)
             .map { it.relativeTo(base).invariantSeparatorsPath }
 
-    /** 这几份自己就有大小或份数上限，不必再按时间筛 */
+    /**
+     * 这几份自己就有大小或份数上限，不必再按时间筛
+     *
+     * These files already carry their own size or count caps, so no age
+     * filtering is needed.
+     */
     @Test
     fun `capped files are collected no matter how old`() {
         write("log/app.log", ageDays = 400)
@@ -49,7 +65,12 @@ class LogExportCollectorTest {
         assertEquals(4, collect().size)
     }
 
-    /** 按次堆文件的目录只留近 7 天，否则一年后的导出包会有上千个文件 */
+    /**
+     * 按次堆文件的目录只留近 7 天，否则一年后的导出包会有上千个文件
+     *
+     * Directories that pile up one file per run keep only the last 7 days;
+     * otherwise a year-old export would carry thousands of files.
+     */
     @Test
     fun `rolling dirs drop anything past the window`() {
         write("log/run/run_a.jsonl", ageDays = 1)
@@ -70,7 +91,12 @@ class LogExportCollectorTest {
         assertFalse("debug/logcat/app/logcat_b.log" in kept)
     }
 
-    /** 上一次的 zip 再打进来，导一次体积翻一倍 */
+    /**
+     * 上一次的 zip 再打进来，导一次体积翻一倍
+     *
+     * Packing the previous export zip in again would double the archive size
+     * on every export.
+     */
     @Test
     fun `previous exports are never packed again`() {
         write("log/export/azurpilot_logs_old.zip")

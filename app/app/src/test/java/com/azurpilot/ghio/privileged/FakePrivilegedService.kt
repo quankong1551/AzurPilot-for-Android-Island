@@ -18,6 +18,19 @@ import kotlinx.coroutines.flow.asStateFlow
  * 而 [PrivilegedServicePort] 已经是特权进程的缝了，再加一道只是把同一条边界描两遍
  *
  * `asBinder()` 返回 null 是安全的——JVM 单测里没人会拿它去 transact
+ *
+ * Test double for the AIDL `RemoteService`; shared by
+ * [com.azurpilot.ghio.runner.EnvironmentHooksTest],
+ * [com.azurpilot.ghio.runner.RunnerPortTest] and
+ * [com.azurpilot.ghio.session.SessionViewModelTest].
+ *
+ * Implements `RemoteService` directly instead of wrapping it in an extra
+ * "device actions" interface: that layer is pure forwarding, and
+ * [PrivilegedServicePort] is already the seam to the privileged process —
+ * adding another seam would just trace the same boundary twice.
+ *
+ * Returning null from `asBinder()` is safe — nobody transacts on it inside a
+ * JVM unit test.
  */
 open class FakePrivilegedService : RemoteService {
 
@@ -42,8 +55,6 @@ open class FakePrivilegedService : RemoteService {
 
     override fun asBinder(): IBinder? = null
 
-    // ── 本测试关心的 ──
-
     override fun unlock(credential: String?): Int {
         unlockCalls += credential.orEmpty()
         return unlockResult
@@ -61,7 +72,7 @@ open class FakePrivilegedService : RemoteService {
 
     override fun isScreenOn(): Boolean = screenOn
 
-    // ── 其余：本测试用不到，保持无副作用的零值 ──
+    // 其余重载本测试用不到，保持无副作用的零值
 
     override fun destroy() = Unit
     override fun exit() = Unit
@@ -104,11 +115,25 @@ open class FakePrivilegedService : RemoteService {
     override fun watchdogState(): Int = 0
     override fun watchdogTargetPackage(): String = ""
 
-    /** 缓存帧要真 controller 才有；测试里没有可落盘的东西 */
+    /**
+     * 缓存帧要真 controller 才有；测试里没有可落盘的东西
+     *
+     * Cached frames only exist with a real controller; there is nothing to
+     * write to disk in tests.
+     */
     override fun saveCachedImage(path: String?): Boolean = false
 }
 
-/** [service] 为 null 即「特权进程没连上」，收尾路径要走这条 */
+/**
+ * [PrivilegedServicePort] 的测试替身
+ *
+ * [service] 为 null 即「特权进程没连上」，收尾路径要走这条
+ *
+ * Test double for [PrivilegedServicePort].
+ *
+ * A null [service] stands for "the privileged process is not connected";
+ * the teardown path must go through this case.
+ */
 class FakePrivilegedServicePort(
     var service: RemoteService? = FakePrivilegedService(),
 ) : PrivilegedServicePort {
@@ -127,7 +152,12 @@ class FakePrivilegedServicePort(
 
     override fun serviceOrNull(): RemoteService? = service
 
-    /** 非 null 时 [useService] 先挂在这上面，测 Preparing 窗口 */
+    /**
+     * 非 null 时 [useService] 先挂在这上面，测 Preparing 窗口
+     *
+     * When non-null, [useService] awaits on it first, used to test the
+     * Preparing window.
+     */
     var holdUseService: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     override suspend fun <R> useService(action: suspend (RemoteService) -> R): R {

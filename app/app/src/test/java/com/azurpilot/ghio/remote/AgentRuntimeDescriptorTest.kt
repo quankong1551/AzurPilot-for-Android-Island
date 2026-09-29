@@ -6,6 +6,12 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证 agent 运行时描述的解析与 bundle / nativeLibs 占位符替换及其失败语义
+ *
+ * Verifies parsing of the agent runtime descriptor and the bundle /
+ * nativeLibs placeholder substitution, including its failure semantics.
+ */
 class AgentRuntimeDescriptorTest {
 
     @Test

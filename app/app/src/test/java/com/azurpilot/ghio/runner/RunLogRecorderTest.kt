@@ -25,7 +25,12 @@ import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
-/** 落盘的边界在这里验；合成规则归 RunLogComposerTest */
+/**
+ * 落盘的边界在这里验；合成规则归 RunLogComposerTest
+ *
+ * The disk-persistence boundary is verified here; composition rules belong
+ * to RunLogComposerTest.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RunLogRecorderTest {
 
@@ -234,7 +239,12 @@ class RunLogRecorderTest {
         )
     }
 
-    /** 没投出去也要留一份：「昨晚为什么没跑」是查这份日志的头号问题 */
+    /**
+     * 没投出去也要留一份：「昨晚为什么没跑」是查这份日志的头号问题
+     *
+     * A round that never dispatched still leaves a record: "why didn't it
+     * run last night" is the number-one question this log answers.
+     */
     @Test
     fun `a round that never dispatched still gets a footer`() = runTest(dispatcher) {
         val runner = RecordingEventRunnerPort()
@@ -249,7 +259,12 @@ class RunLogRecorderTest {
         )
     }
 
-    /** details_json 占掉文件的绝大部分体积，只有调试模式才值得带 */
+    /**
+     * details_json 占掉文件的绝大部分体积，只有调试模式才值得带
+     *
+     * details_json takes up most of the file's size, so it is only worth
+     * writing in debug mode.
+     */
     @Test
     fun `raw details only reach the file in debug mode`() = runTest(dispatcher) {
         val runner = RecordingEventRunnerPort()
@@ -271,6 +286,12 @@ class RunLogRecorderTest {
      * 开新一轮要重置合成器
      *
      * 去重靠的是「与上一条一模一样就丢掉」，跨轮留着的话新一轮的第一条会被上一轮的末条吃掉
+     *
+     * A new round must reset the composer.
+     *
+     * Dedup works by "drop when identical to the previous entry"; if it
+     * carried over, the first entry of a new round would be swallowed by the
+     * last entry of the previous one.
      */
     @Test
     fun `a new session does not dedup against the previous one`() = runTest(dispatcher) {
@@ -296,6 +317,13 @@ class RunLogRecorderTest {
      *
      * 逐条发布要按条复制整份 [RUN_LOG_CAPACITY] 列表，还让 UI 跟着事件率重组；
      * 识别期一秒几十条，这条回归掉了不会有任何测试变红，只会变卡
+     *
+     * A burst publishes a few new lists, not one per entry.
+     *
+     * Publishing per entry copies the entire [RUN_LOG_CAPACITY] list each
+     * time and makes the UI recompose at the event rate; recognition emits
+     * dozens per second, and a regression here turns nothing red — the app
+     * just gets janky.
      */
     @Test
     fun `a burst of entries publishes as a few batches`() = runTest(dispatcher) {
@@ -324,7 +352,12 @@ class RunLogRecorderTest {
     )
 
     private companion object {
-        /** FocusDispatcher 只拿它查 $i18n；本用例的 focus 不走翻译，空项目就够 */
+        /**
+         * FocusDispatcher 只拿它查 $i18n；本用例的 focus 不走翻译，空项目就够
+         *
+         * FocusDispatcher only uses it for `$i18n` lookups; the focus events
+         * in these cases skip translation, so an empty project suffices.
+         */
         val DEFINITION = ProjectDefinition(
             name = "demo",
             version = "1",
@@ -337,7 +370,12 @@ class RunLogRecorderTest {
         )
         val LENIENT = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
-        /** 宽出 RunLogRecorder.FLUSH_INTERVAL_MS 一截，那个常量是私有的，不为测试开出来 */
+        /**
+         * 宽出 RunLogRecorder.FLUSH_INTERVAL_MS 一截，那个常量是私有的，不为测试开出来
+         *
+         * Generously wider than RunLogRecorder.FLUSH_INTERVAL_MS; that
+         * constant is private and is not exposed just for tests.
+         */
         const val SETTLE_MILLIS = 500L
     }
 }

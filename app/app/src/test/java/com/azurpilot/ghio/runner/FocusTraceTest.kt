@@ -9,6 +9,12 @@ import org.junit.Test
 private const val FAILED = "Node.PipelineNode.Failed"
 private const val SUCCEEDED = "Node.PipelineNode.Succeeded"
 
+/**
+ * 验证 focus 条目 trace 上报标记的解析：默认值、显式覆盖与无正文条目的产出
+ *
+ * Verifies parsing of the trace reporting flag on focus entries: defaults,
+ * explicit overrides, and the emission of entries without content.
+ */
 class FocusTraceTest {
 
     @Test
@@ -35,7 +41,12 @@ class FocusTraceTest {
         assertTrue(on.trace)
     }
 
-    /** 只配 trace 不配 content 是协议允许的写法，不能整条丢掉 */
+    /**
+     * 只配 trace 不配 content 是协议允许的写法，不能整条丢掉
+     *
+     * Configuring trace without content is allowed by the protocol and must
+     * not drop the whole entry.
+     */
     @Test
     fun `没有正文的 trace 条目照样产出`() {
         val entry = FocusParser.parse(SUCCEEDED, """{"focus":{"$SUCCEEDED":{"trace":true}}}""")!!

@@ -17,6 +17,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证各运行环境钩子的 engage / release 语义：跳过条件、gating 失败与收尾时机
+ *
+ * 覆盖 [WakeUnlockHook]、[ScreenSaverHook]、[AutoSleepHook]、[CountdownHook]
+ * 与 [CloseTargetAppHook]
+ *
+ * Verifies the engage / release semantics of the run-environment hooks: skip
+ * conditions, gating failures, and teardown timing.
+ *
+ * Covers [WakeUnlockHook], [ScreenSaverHook], [AutoSleepHook],
+ * [CountdownHook] and [CloseTargetAppHook].
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class EnvironmentHooksTest {
 
@@ -38,6 +50,11 @@ class EnvironmentHooksTest {
     private fun context(runMode: RunMode = RunMode.BACKGROUND) =
         RunContext(RunTrigger.Manual, runMode, plan, journal = DiscardingRunJournal)
 
+    /**
+     * 记录 show / hide 调用次数的 [RunScreenSaver] 测试替身
+     *
+     * Fake [RunScreenSaver] recording show / hide call counts.
+     */
     private class RecordingScreenSaver(private val showSucceeds: Boolean = true) : RunScreenSaver {
         var shown = 0
         var hidden = 0
@@ -51,8 +68,6 @@ class EnvironmentHooksTest {
         }
     }
 
-    // ── 亮屏解锁 ────────────────────────────────────────────────────
-
     @Test
     fun `wake unlock is skipped when the switch is off`() = runTest {
         val service = FakePrivilegedService()
@@ -63,7 +78,12 @@ class EnvironmentHooksTest {
         assertTrue(service.unlockCalls.isEmpty())
     }
 
-    /** 手动 Start 时用户正对着亮屏解锁的手机按按钮，解一次是空操作 */
+    /**
+     * 手动 Start 时用户正对着亮屏解锁的手机按按钮，解一次是空操作
+     *
+     * On a manual Start the user is holding the awake phone and pressing the
+     * button, so unlocking once more is a no-op anyway.
+     */
     @Test
     fun `wake unlock never runs for a manual trigger`() = runTest {
         val service = FakePrivilegedService()
@@ -93,7 +113,12 @@ class EnvironmentHooksTest {
         assertEquals(listOf("1234"), service.unlockCalls)
     }
 
-    /** 没设锁屏的设备解不出东西也不算失败 */
+    /**
+     * 没设锁屏的设备解不出东西也不算失败
+     *
+     * A device with no keyguard set has nothing to unlock, and that must not
+     * count as a failure.
+     */
     @Test
     fun `no keyguard counts as success`() = runTest {
         val service = FakePrivilegedService().apply { unlockResult = WakeUnlockResult.NO_KEYGUARD }
@@ -103,7 +128,12 @@ class EnvironmentHooksTest {
         hook.engage(scheduleContext())
     }
 
-    /** gating：抛出去让 RunLauncher 中止整轮，别对着锁屏跑到超时 */
+    /**
+     * gating：抛出去让 RunLauncher 中止整轮，别对着锁屏跑到超时
+     *
+     * Gating: the failure makes RunLauncher abort the whole round instead of
+     * running against the lock screen until timeout.
+     */
     @Test
     fun `a rejected pin aborts the run`() = runTest {
         val service = FakePrivilegedService().apply {
@@ -119,8 +149,6 @@ class EnvironmentHooksTest {
         assertTrue(hook.engage(scheduleContext()) is EngageResult.Failed)
     }
 
-    // ── 屏保 ────────────────────────────────────────────────────────
-
     @Test
     fun `screen saver stays off in foreground mode`() = runTest {
         val saver = RecordingScreenSaver()
@@ -130,7 +158,12 @@ class EnvironmentHooksTest {
         assertEquals(0, saver.shown)
     }
 
-    /** 没盖上就不该登记撤销——否则会去掀用户自己手动盖的那份 */
+    /**
+     * 没盖上就不该登记撤销——否则会去掀用户自己手动盖的那份
+     *
+     * No cover shown means no release registered — otherwise teardown would
+     * dismiss the one the user covered manually.
+     */
     @Test
     fun `a screen saver that failed to show registers no release`() = runTest {
         val saver = RecordingScreenSaver(showSucceeds = false)
@@ -153,8 +186,12 @@ class EnvironmentHooksTest {
         assertEquals(1, saver.hidden)
     }
 
-    // ── 自动熄屏：采样必须发生在唤醒之前 ────────────────────────────
-
+    /**
+     * 自动熄屏的采样必须发生在唤醒之前；本组用例验的就是采样时点的判定
+     *
+     * Auto-sleep sampling must happen before waking; this group of cases
+     * pins down the decision based on that sample.
+     */
     @Test
     fun `auto sleep is skipped when the phone was already awake`() = runTest {
         val service = FakePrivilegedService().apply { screenOn = true }
@@ -182,7 +219,12 @@ class EnvironmentHooksTest {
         assertEquals(1, service.lockAndSleepCount)
     }
 
-    /** 压根没跑起来就别熄屏：用户点了 Start 看到失败，屏幕还黑了 */
+    /**
+     * 压根没跑起来就别熄屏：用户点了 Start 看到失败，屏幕还黑了
+     *
+     * Never sleep when the run never started: the user pressed Start, saw a
+     * failure, and would be left staring at a dark screen.
+     */
     @Test
     fun `auto sleep does not fire when the run never started`() = runTest {
         val service = FakePrivilegedService().apply { screenOn = false }
@@ -194,8 +236,6 @@ class EnvironmentHooksTest {
 
         assertEquals(0, service.lockAndSleepCount)
     }
-
-    // ── 倒计时 ──────────────────────────────────────────────────────
 
     private fun scheduleContext(
         options: ScheduleRunOptions = ScheduleRunOptions(),
@@ -209,13 +249,23 @@ class EnvironmentHooksTest {
         journal = DiscardingRunJournal,
     )
 
-    /** 手动 Start 不该被拖住：trigger 不是 Schedule 就没有倒计时 */
+    /**
+     * 手动 Start 不该被拖住：trigger 不是 Schedule 就没有倒计时
+     *
+     * A manual Start must not be held back: no countdown unless the trigger
+     * is a Schedule.
+     */
     @Test
     fun `manual trigger has no countdown`() = runTest {
         assertTrue(CountdownHook.engage(context()) is EngageResult.Skipped)
     }
 
-    /** 秒数不开放配置，定时触发一律等这么久 */
+    /**
+     * 秒数不开放配置，定时触发一律等这么久
+     *
+     * The seconds are not configurable; a scheduled trigger always waits
+     * this long.
+     */
     @Test
     fun `countdown waits thirty seconds and reports each one`() = runTest {
         val ticks = mutableListOf<String>()
@@ -242,7 +292,12 @@ class EnvironmentHooksTest {
         assertEquals(0L, currentTime)
     }
 
-    /** gating：取消要中止整轮，不是等完照跑 */
+    /**
+     * gating：取消要中止整轮，不是等完照跑
+     *
+     * Gating: a cancel aborts the whole round instead of running after the
+     * wait.
+     */
     @Test
     fun `cancel aborts the run`() = runTest {
         val signals = RunSignals().apply { requestCancel() }
@@ -251,7 +306,11 @@ class EnvironmentHooksTest {
         assertTrue(CountdownHook.engage(scheduleContext(signals = signals)) is EngageResult.Failed)
     }
 
-    /** 两个都点过说明用户改了主意，以「立即开始」为准 */
+    /**
+     * 两个都点过说明用户改了主意，以「立即开始」为准
+     *
+     * Pressing both means the user changed their mind; "start now" wins.
+     */
     @Test
     fun `start now wins over an earlier cancel`() = runTest {
         val signals = RunSignals().apply {
@@ -261,8 +320,6 @@ class EnvironmentHooksTest {
 
         assertTrue(CountdownHook.engage(scheduleContext(signals = signals)) is EngageResult.Skipped)
     }
-
-    // ── 关目标应用 ──────────────────────────────────────────────────
 
     @Test
     fun `target app is closed after a completed run`() = runTest {
@@ -276,7 +333,12 @@ class EnvironmentHooksTest {
         assertEquals(1, service.stopTargetAppCount)
     }
 
-    /** 用户手动停多半是想接手看看现场，别把人家应用关了 */
+    /**
+     * 用户手动停多半是想接手看看现场，别把人家应用关了
+     *
+     * A manual stop usually means the user wants to take over and inspect;
+     * do not close their app.
+     */
     @Test
     fun `target app survives a manual stop`() = runTest {
         val service = FakePrivilegedService()
@@ -289,7 +351,12 @@ class EnvironmentHooksTest {
         assertEquals(0, service.stopTargetAppCount)
     }
 
-    /** 特权进程断了时收尾不该反过来触发重连 */
+    /**
+     * 特权进程断了时收尾不该反过来触发重连
+     *
+     * Teardown must not trigger a reconnect when the privileged process is
+     * gone.
+     */
     @Test
     fun `teardown is a no-op when the privileged process is gone`() = runTest {
         val port = FakePrivilegedServicePort(service = null)
@@ -299,7 +366,12 @@ class EnvironmentHooksTest {
         ).releaseOrNull()!!(RunEndReason.Ran(ExecutionResult.Completed(emptyList())))
     }
 
-    /** 全局开关管每一轮，手动 Start 那轮压根没有 ScheduleRunOptions 可看 */
+    /**
+     * 全局开关管每一轮，手动 Start 那轮压根没有 ScheduleRunOptions 可看
+     *
+     * The global switch governs every round; a manual-Start round has no
+     * ScheduleRunOptions to consult at all.
+     */
     @Test
     fun `the global switch closes the target app on a manual run`() = runTest {
         val service = FakePrivilegedService()
@@ -322,7 +394,12 @@ class EnvironmentHooksTest {
         )
     }
 
-    /** 前台模式没有虚拟屏，看门狗从不起来，全局开着也没有目标可关 */
+    /**
+     * 前台模式没有虚拟屏，看门狗从不起来，全局开着也没有目标可关
+     *
+     * Foreground mode has no virtual display and the watchdog never runs, so
+     * even with the global switch on there is no target to close.
+     */
     @Test
     fun `foreground mode ignores the global switch`() = runTest {
         val port = FakePrivilegedServicePort(FakePrivilegedService())

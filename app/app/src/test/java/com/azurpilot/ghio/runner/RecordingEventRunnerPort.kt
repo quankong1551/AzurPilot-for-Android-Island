@@ -8,7 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** 只为按需推事件；不模拟执行，start/stop 一律受理 */
+/**
+ * 只为按需推事件；不模拟执行，start/stop 一律受理
+ *
+ * Fake [RunnerPort] that only pushes events on demand; shared by
+ * [FocusDispatcherTest], [RunLogRecorderTest] and
+ * [com.azurpilot.ghio.session.SessionViewModelTest]. It does not simulate
+ * execution — start/stop are always accepted.
+ */
 class RecordingEventRunnerPort : RunnerPort {
 
     private val _state = MutableStateFlow(RunnerState())

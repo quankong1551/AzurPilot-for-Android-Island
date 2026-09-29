@@ -5,6 +5,12 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+/**
+ * 验证 [RunConfiguration] 任务复制与重命名（customLabel）的语义
+ *
+ * Verifies the semantics of task duplication and renaming (customLabel) on
+ * [RunConfiguration].
+ */
 class ConfiguredTaskDuplicateRenameTest {
 
     private val source = ConfiguredTask(

@@ -17,6 +17,12 @@ import org.junit.BeforeClass
 import org.junit.Test
 import java.io.File
 
+/**
+ * 对内置 M9A 项目的全量加载断言：分片合并、option 引用完整性、case 子树、分组与模板
+ *
+ * Pins down full loading of the bundled M9A project: shard merging, option
+ * reference completeness, case subtrees, groups and templates.
+ */
 class ProjectLoaderTest {
 
     companion object {
@@ -111,7 +117,13 @@ class ProjectLoaderTest {
     }
 }
 
-/** 内存 ProjectSource：按路径前缀模拟目录结构，供本包各合成用例共用 */
+/**
+ * 内存 ProjectSource：按路径前缀模拟目录结构，供本包各合成用例共用
+ *
+ * In-memory [ProjectSource] simulating a directory tree by path prefixes;
+ * shared by the synthetic cases across this package ([GlobalOptionTest],
+ * [ResourceOptionTest] and the loader tests in this file).
+ */
 internal class MapProjectSource(private val files: Map<String, String>) : ProjectSource {
     override val projectName: String = "synthetic"
 
@@ -128,13 +140,27 @@ internal class MapProjectSource(private val files: Map<String, String>) : Projec
         files[path] ?: throw IllegalArgumentException("no file: $path")
 }
 
-/** 生成合法的 V2 根文件：interface_version + import 声明，body 追加其余顶层字段 */
+/**
+ * 生成合法的 V2 根文件：interface_version + import 声明，body 追加其余顶层字段
+ *
+ * Builds a valid V2 root file: interface_version plus the import declaration;
+ * [body] appends the remaining top-level fields.
+ */
 private fun piRoot(vararg imports: String, body: String = ""): String {
     val importJson = imports.joinToString(",") { "\"$it\"" }
     val extra = if (body.isBlank()) "" else ",$body"
     return """{"interface_version":2,"name":"t"$extra,"import":[$importJson]}"""
 }
 
+/**
+ * 加载期的声明清洗与物化：分组合并与引用清洗、JSONC 容错、languages 匹配与
+ * i18n 物化、description 三种形态、不支持的 option 类型降级
+ *
+ * Pins down load-time declaration cleaning and materialization: group
+ * merging and reference cleaning, JSONC tolerance, language matching and
+ * i18n materialization, the three description forms, and downgrading
+ * unsupported option types.
+ */
 class ProjectLoaderGroupTest {
 
     private fun load(files: Map<String, String>): ProjectLoadResult.Ready {
@@ -424,6 +450,15 @@ class ProjectLoaderGroupTest {
     }
 }
 
+/**
+ * interface.json 的协议级约束：缺 interface_version / 版本不符 / 文件缺失即 Failure，
+ * 以及根文件的 task / preset / import 顺序等加载语义
+ *
+ * Pins down the protocol-level constraints on interface.json — missing
+ * interface_version, a wrong version, or a missing file must yield Failure —
+ * plus loading semantics such as root-file tasks and presets and import
+ * ordering.
+ */
 class ProjectLoaderProtocolTest {
 
     @Test
@@ -585,6 +620,13 @@ class ProjectLoaderProtocolTest {
     }
 }
 
+/**
+ * controller 的解析与适用性判定：取 PI 声明的 Adb 项、按声明名判定任务适用性、缺省回落
+ *
+ * Pins down controller parsing and applicability: use the PI-declared Adb
+ * entry, judge task applicability by the declared name, and the fallback
+ * when no Adb controller is declared.
+ */
 class ProjectLoaderControllerTest {
 
     private fun load(files: Map<String, String>): ProjectLoadResult.Ready {
@@ -608,7 +650,12 @@ class ProjectLoaderControllerTest {
         assertEquals("Adb", ready.definition.controller.type)
     }
 
-    /** 回归：曾写死 name=Android/type=ADB，只有恰好把 controller 命名为 ADB 的 PI 才匹配得上 */
+    /**
+     * 回归：曾写死 name=Android/type=ADB，只有恰好把 controller 命名为 ADB 的 PI 才匹配得上
+     *
+     * Regression: the name/type used to be hardcoded to Android/ADB, so only
+     * PIs that happened to name their controller "ADB" would match.
+     */
     @Test
     fun `任务按 PI 声明的 controller 名判定适用性`() {
         val ready = load(
@@ -654,6 +701,12 @@ class ProjectLoaderControllerTest {
     }
 }
 
+/**
+ * agent 声明的解析：单对象与数组两种形态、声明顺序保留、缺 child_exec 的条目剔除
+ *
+ * Pins down agent-declaration parsing: the single-object and array forms,
+ * preserving declaration order, and dropping entries without child_exec.
+ */
 class ProjectLoaderAgentTest {
 
     private fun load(files: Map<String, String>): ProjectLoadResult.Ready {

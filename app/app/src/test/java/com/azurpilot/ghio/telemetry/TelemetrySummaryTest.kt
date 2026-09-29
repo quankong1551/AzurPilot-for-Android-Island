@@ -40,9 +40,21 @@ private fun definition(vararg options: OptionDefinition) = ProjectDefinition(
     templates = emptyList(),
 )
 
+/**
+ * 验证遥测摘要对各类 option 的脱敏投影：自由文本只报填没填，枚举与子选项原样
+ *
+ * Verifies the telemetry summary's privacy-safe projection of each option
+ * kind: free text reported as filled/empty only, enums and child options
+ * verbatim.
+ */
 class TelemetrySummaryTest {
 
-    /** 自由文本装的是路径、账号这类用户输入，只能报填没填 */
+    /**
+     * 自由文本装的是路径、账号这类用户输入，只能报填没填
+     *
+     * Free text holds user input such as paths and accounts; the report can
+     * only say whether it was filled.
+     */
     @Test
     fun `字符串输入只报填没填`() {
         val definition = definition(
@@ -59,7 +71,12 @@ class TelemetrySummaryTest {
         assertEquals("account=filled,path=empty", summary.getValue("settings"))
     }
 
-    /** 数值与布尔的取值域由 PI 定死，带不出隐私 */
+    /**
+     * 数值与布尔的取值域由 PI 定死，带不出隐私
+     *
+     * The value domains of numbers and booleans are fixed by the PI, so they
+     * cannot carry private data.
+     */
     @Test
     fun `数值与布尔原样上报`() {
         val definition = definition(

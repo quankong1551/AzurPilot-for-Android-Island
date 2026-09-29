@@ -8,6 +8,10 @@ import org.junit.Test
 /**
  * 样例取自 运行框架 `docs/zh_cn/3.3-ProjectInterfaceV2协议.md`「消息模板机制」
  * 与 M9A 的 pipeline 实际写法
+ *
+ * Samples are taken from the runtime framework's
+ * `docs/zh_cn/3.3-ProjectInterfaceV2协议.md` ("message template mechanism")
+ * and from the actual pipeline style used by M9A.
  */
 class FocusParserTest {
 
@@ -20,6 +24,12 @@ class FocusParserTest {
      * 运行框架 给**每一条**节点回调都带 `focus` 键，没配模板时值是 null
      *
      * 实测一轮冒烟 222 条回调里 184 条如此。只判键名在不在，等于一条都没筛掉
+     *
+     * The framework attaches a `focus` key to **every** node callback, with
+     * a null value when no template is configured.
+     *
+     * Measured over one smoke round: 184 of 222 callbacks were like that.
+     * Checking only for the key's presence would filter out nothing at all.
      */
     @Test
     fun `a null focus field is filtered out without parsing`() {
@@ -69,7 +79,12 @@ class FocusParserTest {
         assertEquals(setOf(FocusChannel.Notification), FocusParser.parse("M", details)?.channels)
     }
 
-    /** modal 要求把 pipeline 卡住等用户点头，回调是单向的，做不到 */
+    /**
+     * modal 要求把 pipeline 卡住等用户点头，回调是单向的，做不到
+     *
+     * modal would require stalling the pipeline until the user confirms; the
+     * callback is one-way, so that cannot be done.
+     */
     @Test
     fun `dialog and modal fall back to the log channel`() {
         val details = """{"focus":{"M":{"content":"x","display":["dialog","modal"]}}}"""
@@ -88,7 +103,11 @@ class FocusParserTest {
         assertEquals(setOf(FocusChannel.Log), FocusParser.parse("M", details)?.channels)
     }
 
-    /** 只配 trace 不配 content 的条目没有要展示的东西 */
+    /**
+     * 只配 trace 不配 content 的条目没有要展示的东西
+     *
+     * An entry with only trace and no content has nothing to display.
+     */
     @Test
     fun `entry without content is not displayable`() {
         // 只配 trace 的条目仍要产出：上报走它，展示侧靠 displayable 过滤
@@ -107,7 +126,12 @@ class FocusParserTest {
         )
     }
 
-    /** 嵌套对象取不出标量，不收进替换表，正文里那处原样留着 */
+    /**
+     * 嵌套对象取不出标量，不收进替换表，正文里那处原样留着
+     *
+     * No scalar can be pulled out of a nested object, so it is not collected
+     * into the substitution table and the spot in the body stays verbatim.
+     */
     @Test
     fun `non-primitive placeholder is passed through verbatim`() {
         val details = """{"reco":{"box":[1,2]},"focus":{"M":"命中 {reco}"}}"""
@@ -116,7 +140,12 @@ class FocusParserTest {
         assertEquals("命中 {reco}", substituteFocusPlaceholders(focus.content, focus.placeholders))
     }
 
-    /** focus 自己是对象，不该混进替换表 */
+    /**
+     * focus 自己是对象，不该混进替换表
+     *
+     * The focus dictionary itself is an object and must not leak into the
+     * substitution table.
+     */
     @Test
     fun `the focus dictionary itself never becomes a placeholder`() {
         val details = """{"name":"NodeA","focus":{"M":"x"}}"""

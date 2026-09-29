@@ -5,6 +5,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+/**
+ * 验证运行中状态栏文案的解析与优先级：focus > pipeline 节点 > 回退日志
+ *
+ * Verifies the parsing and precedence of the live status text: focus wins
+ * over the pipeline node, which wins over the fallback log.
+ */
 class PipelineNodeStatusTest {
 
     @Test

@@ -9,11 +9,22 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
+/**
+ * 验证定时策略的下次触发时刻计算：固定时刻与间隔两种类型、跨日跨周与关机补算
+ *
+ * Verifies the next-trigger calculation for schedule strategies: both fixed
+ * time and interval types, day/week rollovers, and catch-up after an
+ * outage.
+ */
 class ScheduleTriggerTest {
 
     private val zone: ZoneId = ZoneId.of("Asia/Shanghai")
 
-    /** 2026-08-10 是周一 */
+    /**
+     * 2026-08-10 是周一
+     *
+     * 2026-08-10 is a Monday.
+     */
     private fun at(text: String): ZonedDateTime =
         LocalDateTime.parse(text).atZone(zone)
 
@@ -54,7 +65,12 @@ class ScheduleTriggerTest {
         assertEquals(at("2026-08-17T08:00"), next)
     }
 
-    /** 触发后续排时以上一个计划时刻为界，否则会把刚响过的那个点再算一遍 */
+    /**
+     * 触发后续排时以上一个计划时刻为界，否则会把刚响过的那个点再算一遍
+     *
+     * Rescheduling after a fire is bounded by the previous planned instant;
+     * otherwise the slot that just fired would be counted again.
+     */
     @Test
     fun `fixed time skips the slot that just fired`() {
         val strategy = fixed(setOf(DayOfWeek.MONDAY), "08:00", "20:00")
@@ -81,7 +97,12 @@ class ScheduleTriggerTest {
         assertEquals(at("2026-08-10T12:00"), nextTriggerOf(strategy, now = at("2026-08-10T09:00")))
     }
 
-    /** 关机数天后开机：应一步跳到基准之后的第一个整数倍，而不是逐个累加 */
+    /**
+     * 关机数天后开机：应一步跳到基准之后的第一个整数倍，而不是逐个累加
+     *
+     * Booting after days of being off: jump straight to the first multiple
+     * past the base instead of stepping through one by one.
+     */
     @Test
     fun `interval jumps straight past a long outage`() {
         val start = at("2026-08-01T00:00").toInstant().toEpochMilli()

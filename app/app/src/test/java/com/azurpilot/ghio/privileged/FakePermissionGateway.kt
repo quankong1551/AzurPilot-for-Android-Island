@@ -3,7 +3,14 @@ package com.azurpilot.ghio.privileged
 import com.azurpilot.ghio.domain.RemoteBackend
 import kotlinx.coroutines.flow.MutableStateFlow
 
-/** 不碰 Shizuku binder 与 ProcessLifecycleOwner，只记调用 */
+/**
+ * 不碰 Shizuku binder 与 ProcessLifecycleOwner，只记调用
+ *
+ * Fake of [PermissionGateway] (remote-access permissions and privileged
+ * service binding); shared by
+ * [com.azurpilot.ghio.session.SessionViewModelTest]. Never touches the
+ * Shizuku binder or ProcessLifecycleOwner, only records calls.
+ */
 class FakePermissionGateway : PermissionGateway {
 
     override val state = MutableStateFlow(RemoteAccessState())

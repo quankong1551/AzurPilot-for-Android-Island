@@ -25,6 +25,14 @@ import java.io.InputStream
  *
  * 中间的 [PiInstallState.Unpacking] 不断言：进度由解包线程池回报，StateFlow 会把连着来的
  * 几条合并掉，断言它必然出现过就是在赌调度。逐条目回报本身由 `PiInstallerTest` 覆盖
+ *
+ * Asserts only the final state and whether a round actually unpacked
+ * anything.
+ *
+ * The intermediate [PiInstallState.Unpacking] is never asserted: progress is
+ * reported by the unpacking thread pool and the StateFlow merges consecutive
+ * emissions, so asserting it appeared would be betting on the scheduler.
+ * Per-entry reporting itself is covered by `PiInstallerTest`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PiInstallCoordinatorTest {
@@ -98,7 +106,12 @@ class PiInstallCoordinatorTest {
         assertEquals(PiInstallState.Ready, coordinator.state.value)
     }
 
-    /** 失败不抛给调用方：返回 false，调用方据此跳过 reload */
+    /**
+     * 失败不抛给调用方：返回 false，调用方据此跳过 reload
+     *
+     * Failure is not thrown at the caller: it returns false, and the caller
+     * skips the reload accordingly.
+     */
     @Test
     fun `解包失败落到 Failed`() = runTest(dispatcher) {
         val coordinator = coordinatorFor(BrokenPiPackage, temp.newFolder("external"))
@@ -108,7 +121,12 @@ class PiInstallCoordinatorTest {
         assertTrue(coordinator.state.value is PiInstallState.Failed)
     }
 
-    /** 弹窗上的「重试」走的就是这条；Failed 不是终点 */
+    /**
+     * 弹窗上的「重试」走的就是这条；Failed 不是终点
+     *
+     * The "retry" button on the dialog goes through this; Failed is not a
+     * terminal state.
+     */
     @Test
     fun `Failed 之后仍能重试到就绪`() = runTest(dispatcher) {
         val base = temp.newFolder("external")

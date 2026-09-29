@@ -4,7 +4,13 @@ import android.view.Surface
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/** 只记调用次数：Surface 是平台类型，JVM 单测里不构造也不解引用 */
+/**
+ * 只记调用次数：Surface 是平台类型，JVM 单测里不构造也不解引用
+ *
+ * Fake [PreviewPort] recording call counts; shared by
+ * [com.azurpilot.ghio.session.SessionViewModelTest]. Surface is a platform
+ * type — never constructed nor dereferenced inside JVM unit tests.
+ */
 class RecordingPreviewPort : PreviewPort {
     override val markers: StateFlow<List<PreviewTouchMarker>> = MutableStateFlow(emptyList())
 
@@ -21,7 +27,11 @@ class RecordingPreviewPort : PreviewPort {
         detachCount++
     }
 
-    /** 预览上的手动触摸；按 (x, y, action) 记录顺序 */
+    /**
+     * 预览上的手动触摸；按 (x, y, action) 记录顺序
+     *
+     * Manual touches on the preview, recorded in (x, y, action) order.
+     */
     val touches = mutableListOf<Triple<Int, Int, String>>()
 
     override fun touchDown(x: Int, y: Int) {

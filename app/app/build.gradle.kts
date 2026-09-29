@@ -43,6 +43,9 @@ android {
     }
 }
 
+// 捆绑运行时校验：rootfs.tar.xz（300MB+）与 BUILD_MANIFEST 由 CI 的 rootfs workflow 产出、
+// 不入库，本地缺失时所有 package/assemble 任务在此明确失败，避免打出没有运行时的残缺包；
+// azurpilot.slimApk=true 的精简构建跳过该校验
 val verifyBundledAzurPilotRuntime = tasks.register("verifyBundledAzurPilotRuntime") {
     val archive = layout.projectDirectory.file("src/main/assets/rootfs/rootfs.tar.xz")
     val manifest = layout.projectDirectory.file("src/main/assets/rootfs/BUILD_MANIFEST")
@@ -71,8 +74,11 @@ if (providers.gradleProperty("azurpilot.slimApk").orNull != "true") {
 }
 
 dependencies {
+    // 隐藏框架 API 的实现只在运行时的平台上存在，编译期仅需签名镜像，故 compileOnly
     compileOnly(project(":hidden-api"))
 
+    // @PrefSchema / @PrefKey 注解与配套 KSP 处理器：生成 DataStore schema 访问器
+    // （原始键名 snake_case，迁移需用原始键）
     implementation(project(":annotation-api"))
     ksp(project(":ksp-processor"))
 

@@ -4,7 +4,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** TouchArgs.contact 版本闸的判定；旧 fw 不填该字段，误读过闸会读到栈残值 */
+/**
+ * TouchArgs.contact 版本闸的判定；旧 fw 不填该字段，误读过闸会读到栈残值
+ *
+ * Pins down the version gate for TouchArgs.contact; the old framework never
+ * filled that field, and misreading the gate would surface stack garbage.
+ */
 class NativeVersionTest {
 
     @Test

@@ -3,6 +3,12 @@ package com.azurpilot.ghio.i18n
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * 验证应用语言到 PI 项目 locale 的映射与回落策略
+ *
+ * Verifies the mapping from the app language to the PI project locale,
+ * including the fallback rules.
+ */
 class AppLanguagePolicyTest {
 
     @Test

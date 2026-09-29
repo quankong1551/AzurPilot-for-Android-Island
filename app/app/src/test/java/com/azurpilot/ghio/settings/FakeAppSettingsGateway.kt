@@ -5,6 +5,14 @@ import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.runner.ResolutionPreference
 import kotlinx.coroutines.flow.MutableStateFlow
 
+/**
+ * 内存态的应用设置网关测试替身；读写在同一进程内直接可见
+ *
+ * In-memory fake of [AppSettingsGateway]; shared by
+ * [com.azurpilot.ghio.runner.EnvironmentHooksTest] and
+ * [com.azurpilot.ghio.session.SessionViewModelTest]. Writes are immediately
+ * visible within the same process.
+ */
 class FakeAppSettingsGateway : AppSettingsGateway {
 
     override val runMode = MutableStateFlow(RunMode.BACKGROUND)

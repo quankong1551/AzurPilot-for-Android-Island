@@ -9,7 +9,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 对齐 MXU 的 `src/utils/piEnv.ts`：整条透传、`$` 前缀递归查表、拿不到就不设 */
+/**
+ * 对齐 MXU 的 `src/utils/piEnv.ts`：整条透传、`$` 前缀递归查表、拿不到就不设
+ *
+ * Mirrors MXU's `src/utils/piEnv.ts`: whole-entry pass-through, recursive
+ * table lookup for `$`-prefixed values, and omitting what cannot be
+ * resolved.
+ */
 class PiAgentEnvTest {
 
     private fun obj(json: String) = Json.parseToJsonElement(json) as JsonObject
@@ -49,7 +55,12 @@ class PiAgentEnvTest {
         assertFalse("nativeVersion 只有特权进程问得到", env.containsKey("PI_CLIENT_NATIVE_VERSION"))
     }
 
-    /** 条目整条透传，不裁剪成投影里的那几个字段 */
+    /**
+     * 条目整条透传，不裁剪成投影里的那几个字段
+     *
+     * Entries pass through whole, not trimmed down to the few fields of the
+     * projection.
+     */
     @Test
     fun `controller 与 resource 整条序列化`() {
         val env = build()
@@ -69,7 +80,12 @@ class PiAgentEnvTest {
         )
     }
 
-    /** MXU 的 `translations?.[key] ?? key`：查不到退回 key 本身，不留 `$` */
+    /**
+     * MXU 的 `translations?.[key] ?? key`：查不到退回 key 本身，不留 `$`
+     *
+     * MXU's `translations?.[key] ?? key`: an unresolvable key falls back to
+     * the key itself, with the `$` stripped.
+     */
     @Test
     fun `查不到的 key 退回 key 本身`() {
         val env = build(
@@ -79,7 +95,12 @@ class PiAgentEnvTest {
         assertEquals("""{"name":"官服","label":"missing"}""", env["PI_RESOURCE"])
     }
 
-    /** 不设空串：agent 侧靠「变量在不在」判断 Client 支不支持这套约定 */
+    /**
+     * 不设空串：agent 侧靠「变量在不在」判断 Client 支不支持这套约定
+     *
+     * No empty strings are set: the agent side detects whether the client
+     * supports this convention by a variable's presence, not its value.
+     */
     @Test
     fun `拿不到的项整个不设`() {
         val env = build(

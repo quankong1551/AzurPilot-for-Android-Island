@@ -9,6 +9,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+/**
+ * 验证 [RunLaunchResult] 各结果到定时触发记录（[TriggerResult] / 失败原因）的映射
+ *
+ * Verifies the mapping from every [RunLaunchResult] outcome to the schedule
+ * trigger record ([TriggerResult] and its failure reason).
+ */
 class ScheduleLaunchOutcomeTest {
 
     @Test
@@ -38,7 +44,13 @@ class ScheduleLaunchOutcomeTest {
         }
     }
 
-    /** 定时触发本该在 RunLauncher 里被降级；真漏过来也得记成失败而不是当成功 */
+    /**
+     * 定时触发本该在 RunLauncher 里被降级；真漏过来也得记成失败而不是当成功
+     *
+     * A scheduled trigger is supposed to be downgraded inside RunLauncher; if
+     * one ever leaks through, it must still be recorded as a failure rather
+     * than a success.
+     */
     @Test
     fun `needs confirmation is recorded as blocked rather than started`() {
         val outcome = RunLaunchResult

@@ -4,6 +4,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证项目版本号到「开发态」的判定：预发布标签、占位版本与解析失败的处理
+ *
+ * Verifies the "debug project version" decision: pre-release labels,
+ * placeholder versions, and unparseable input.
+ */
 class TelemetryGateTest {
 
     @Test

@@ -27,12 +27,24 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证 [RunLauncher] 的启动链路：precheck 拦截与确认循环、保活挂载、hook
+ * engage/release 顺序与 busy 屏障、指定配置 id 的定时触发
+ *
+ * Verifies the [RunLauncher] launch pipeline: precheck blocking and the
+ * confirmation loop, keep-alive attachment, hook engage/release ordering and
+ * the busy barrier, and scheduled launches with an explicit configuration id.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RunLauncherTest {
 
     /**
      * 必须 Unconfined：[StubRunnerPort] 的 execute 挂在传入 scope 上，
      * StandardTestDispatcher 下它不推进，phase 永远停在 Preparing，屏障就等不到收尾
+     *
+     * Must be Unconfined: [StubRunnerPort]'s execute runs on the passed-in
+     * scope. Under a StandardTestDispatcher it never advances, phase stays
+     * stuck at Preparing, and the barrier would never see the teardown.
      */
     private val testDispatcher = UnconfinedTestDispatcher()
     private val emptyJson = JsonObject(emptyMap())
@@ -100,14 +112,25 @@ class RunLauncherTest {
      *
      * 配套用 advanceTimeBy 推进而不是 advanceUntilIdle：实测后者在这套
      * stub + backgroundScope 的组合下推不动虚拟时间，收尾等不到
+     *
+     * Nonzero delays make the barrier actually suspend waiting for a state
+     * edge instead of seeing Idle right away.
+     *
+     * Drive it with advanceTimeBy rather than advanceUntilIdle: the latter
+     * was measured not to advance virtual time with this stub +
+     * backgroundScope combination, so the teardown would never arrive.
      */
     private fun slowStub(scope: CoroutineScope) = StubRunnerPort(
         scope = scope,
         scenario = StubRunnerScenario(prepareDelayMillis = 100, taskDelayMillis = 100),
     )
 
-    // ── 保活：既有行为不能因为改成挂载物而变 ──────────────────────────
-
+    /**
+     * 保活改成挂载物后行为不变：runner 受理即拉起一次
+     *
+     * Keep-alive became a hook, but its behavior is unchanged: one start as
+     * soon as the runner accepts.
+     */
     @Test
     fun `keep alive engages once the runner accepts`() = runTest(testDispatcher) {
         val keepAlive = RecordingRunKeepAlive()
@@ -121,7 +144,12 @@ class RunLauncherTest {
         assertEquals(1, keepAlive.startCount)
     }
 
-    /** 保活是执行的一部分：没受理就拉，前台服务会因为读到非 busy 而当场自停 */
+    /**
+     * 保活是执行的一部分：没受理就拉，前台服务会因为读到非 busy 而当场自停
+     *
+     * Keep-alive is part of the run: starting it before the runner accepts
+     * makes the foreground service self-stop on reading a non-busy state.
+     */
     @Test
     fun `keep alive stays untouched when there is nothing to run`() = runTest(testDispatcher) {
         val keepAlive = RecordingRunKeepAlive()
@@ -168,8 +196,6 @@ class RunLauncherTest {
         assertEquals(1, keepAlive.startCount)
     }
 
-    // ── 检查 ─────────────────────────────────────────────────────────
-
     @Test
     fun `blocking precheck stops before the runner is touched`() = runTest(testDispatcher) {
         val runner = fastStub(backgroundScope)
@@ -203,7 +229,12 @@ class RunLauncherTest {
         assertEquals(RunLaunchResult.Started, launchIn(RunMode.BACKGROUND))
     }
 
-    /** 确认循环：先问，带着 token 重跑就该放行 */
+    /**
+     * 确认循环：先问，带着 token 重跑就该放行
+     *
+     * The confirmation loop: ask once, then let a re-launch carrying the
+     * token through.
+     */
     @Test
     fun `confirmation is asked once and the re-run passes`() = runTest(testDispatcher) {
         val token = ConfirmToken("demo")
@@ -224,7 +255,12 @@ class RunLauncherTest {
         assertEquals(RunLaunchResult.Started, launcher.launch(RunTrigger.Manual, setOf(token)))
     }
 
-    /** 定时触发没人可问，降级成拦截而不是弹一个没人能点的框 */
+    /**
+     * 定时触发没人可问，降级成拦截而不是弹一个没人能点的框
+     *
+     * A scheduled trigger has nobody to ask: degrade to blocked instead of
+     * popping a dialog nobody can click.
+     */
     @Test
     fun `confirmation degrades to blocked for scheduled triggers`() = runTest(testDispatcher) {
         val token = ConfirmToken("demo")
@@ -242,7 +278,12 @@ class RunLauncherTest {
         assertTrue((result as RunLaunchResult.Blocked).reason.isResource(R.string.msg_no_executable_tasks))
     }
 
-    /** 检查忘了消费自己的 token 就会无限弹框；守卫把它挡成一次明确失败 */
+    /**
+     * 检查忘了消费自己的 token 就会无限弹框；守卫把它挡成一次明确失败
+     *
+     * A precheck that forgets to consume its own token would loop forever;
+     * the guard turns it into one explicit failure.
+     */
     @Test
     fun `precheck that ignores its own token is blocked instead of looping`() = runTest(testDispatcher) {
         val token = ConfirmToken("demo")
@@ -262,8 +303,6 @@ class RunLauncherTest {
                 .isResource(R.string.msg_precheck_ignored_confirmation),
         )
     }
-
-    // ── 挂载物 ───────────────────────────────────────────────────────
 
     @Test
     fun `releases run in reverse engage order after the run settles`() = runTest(testDispatcher) {
@@ -306,7 +345,12 @@ class RunLauncherTest {
         assertTrue((reason as RunEndReason.Ran).result is ExecutionResult.Completed)
     }
 
-    /** 投递被拒时 runner 从没跑过，但环境已经改了，必须当场撤 */
+    /**
+     * 投递被拒时 runner 从没跑过，但环境已经改了，必须当场撤
+     *
+     * When the dispatch is rejected the runner never ran, but the
+     * environment has already changed — it must be rolled back on the spot.
+     */
     @Test
     fun `rejected dispatch releases what was already engaged`() = runTest(testDispatcher) {
         val log = mutableListOf<String>()
@@ -400,7 +444,11 @@ class RunLauncherTest {
         assertTrue(thrown is IllegalStateException)
     }
 
-    /** 静音没静上不该拦住整晚的任务 */
+    /**
+     * 静音没静上不该拦住整晚的任务
+     *
+     * A failed mute must not block the whole night's tasks.
+     */
     @Test
     fun `non gating hook failure is skipped and the run proceeds`() = runTest(testDispatcher) {
         val log = mutableListOf<String>()
@@ -423,7 +471,11 @@ class RunLauncherTest {
         assertNull(bad.releaseReason)
     }
 
-    /** 一项收尾挂了不能让后面的不撤 */
+    /**
+     * 一项收尾挂了不能让后面的不撤
+     *
+     * One failing release must not stop the remaining ones from running.
+     */
     @Test
     fun `a failing release does not stop the rest`() = runTest(testDispatcher) {
         val log = mutableListOf<String>()
@@ -448,9 +500,11 @@ class RunLauncherTest {
         assertEquals(listOf("engage:outer", "release:outer"), log)
     }
 
-    // ── 指定运行配置（定时规则用） ────────────────────────────────────
-
-    /** 定时规则可以绑一份不是当前激活的配置 */
+    /**
+     * 定时规则可以绑一份不是当前激活的配置
+     *
+     * A schedule rule may bind a configuration other than the active one.
+     */
     @Test
     fun `an explicit configuration id runs that one instead of the active one`() = runTest(testDispatcher) {
         val other = RunConfigurationId("c2")
@@ -478,7 +532,12 @@ class RunLauncherTest {
         assertEquals(other, runner.state.value.activeExecution?.runConfigurationId)
     }
 
-    /** 绑定的配置被删了要单独报，不能混进「没有可用的任务」 */
+    /**
+     * 绑定的配置被删了要单独报，不能混进「没有可用的任务」
+     *
+     * A deleted bound configuration is reported on its own, not lumped into
+     * "no executable tasks".
+     */
     @Test
     fun `a deleted target configuration is reported on its own`() = runTest(testDispatcher) {
         val launcher = launcher(scope = backgroundScope, runner = fastStub(backgroundScope))
@@ -491,9 +550,12 @@ class RunLauncherTest {
         assertEquals(RunLaunchResult.ConfigurationMissing, result)
     }
 
-    // ── 屏障 ─────────────────────────────────────────────────────────
-
-    /** Fw 的 stop 是耗时操作：跑着的时候把屏保掀掉，用户会看到任务还在跑但屏幕亮了 */
+    /**
+     * Fw 的 stop 是耗时操作：跑着的时候把屏保掀掉，用户会看到任务还在跑但屏幕亮了
+     *
+     * The framework's stop takes time: dismissing the screen saver while the
+     * run is still busy would leave the screen lit with tasks still running.
+     */
     @Test
     fun `release does not run while the runner is still busy`() = runTest(testDispatcher) {
         val hook = RecordingHook("env", Anchor.BeforeDispatch)
@@ -509,7 +571,12 @@ class RunLauncherTest {
         assertNull(hook.releaseReason)
     }
 
-    /** 自然长跑没有墙钟：phase 还 busy 就不能撤 */
+    /**
+     * 自然长跑没有墙钟：phase 还 busy 就不能撤
+     *
+     * A natural long run has no wall-clock cutoff: teardown must wait while
+     * phase is still busy.
+     */
     @Test
     fun `a long running round is not torn down while still busy`() = runTest(testDispatcher) {
         val hook = RecordingHook("env", Anchor.BeforeDispatch)
@@ -526,7 +593,12 @@ class RunLauncherTest {
         assertTrue(runner.state.value.phase.isBusy)
     }
 
-    /** Stop 只把 phase 打成 Stopping，收尾仍等 !isBusy，不能靠墙钟提前掀屏保 */
+    /**
+     * Stop 只把 phase 打成 Stopping，收尾仍等 !isBusy，不能靠墙钟提前掀屏保
+     *
+     * Stop only sets phase to Stopping; teardown still waits for !isBusy and
+     * must not release the screen saver early on a wall-clock timeout.
+     */
     @Test
     fun `stopping does not release until the runner is idle`() = runTest(testDispatcher) {
         val hook = RecordingHook("env", Anchor.BeforeDispatch)
@@ -544,6 +616,12 @@ class RunLauncherTest {
         assertEquals(RunnerPhase.Stopping, runner.state.value.phase)
     }
 
+    /**
+     * 记录 engage / release 顺序的 [RunEnvHook] 测试替身；[failWith] 可让它当场抛
+     *
+     * Fake [RunEnvHook] recording engage / release order; [failWith] makes it
+     * throw on engage.
+     */
     private class RecordingHook(
         override val id: String,
         override val anchor: Anchor,

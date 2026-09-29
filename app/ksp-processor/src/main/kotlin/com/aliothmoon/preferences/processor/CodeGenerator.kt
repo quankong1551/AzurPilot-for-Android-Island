@@ -10,6 +10,14 @@ import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.ksp.writeTo
 
+/**
+ * 为一个 @PrefSchema 类生成 `<Schema>Schema` object：Preferences 键常量、Defaults 默认值、
+ * Preferences→数据类的 toXxx 读取器，以及 DataStore 上的 flow 与 update 写回
+ *
+ * Generates the `<Schema>Schema` object for one @PrefSchema class: Preferences key constants,
+ * Defaults, a Preferences→data-class toXxx reader, plus a flow and an update writer on
+ * DataStore.
+ */
 class SchemaCodeGenerator(
     private val codeGenerator: KspCodeGenerator,
     private val packageName: String,
@@ -25,6 +33,12 @@ class SchemaCodeGenerator(
     private val flowClass = ClassName("kotlinx.coroutines.flow", "Flow")
     private val ioExceptionClass = ClassName("java.io", "IOException")
 
+    /**
+     * 生成并写出 schema 文件；声明 originating file，KSP 增量构建才能正确失效缓存
+     *
+     * Builds and writes the schema file; the originating file is declared so KSP incremental
+     * builds invalidate correctly.
+     */
     fun generate() {
         logger.info("start process ...")
         val fileSpec = FileSpec.builder(packageName, "${className}Schema")
@@ -42,7 +56,6 @@ class SchemaCodeGenerator(
     private fun buildSchemaObject(): TypeSpec {
         val builder = TypeSpec.objectBuilder(schemaObjectName)
 
-        // Add key properties
         properties.forEach { prop ->
             val propName = prop.simpleName.asString()
             val keyName = getKeyName(prop)
@@ -55,7 +68,7 @@ class SchemaCodeGenerator(
             )
         }
 
-        // Add Defaults object
+        // Defaults 的 Set 成员不能 const，只能 val
         val defaultsBuilder = TypeSpec.objectBuilder("Defaults")
         properties.forEach { prop ->
             val propName = prop.simpleName.asString()
@@ -80,18 +93,21 @@ class SchemaCodeGenerator(
         }
         builder.addType(defaultsBuilder.build())
 
-        // Add toXxx() function inside object
         builder.addFunction(buildToFunction())
 
-        // Add flow property inside object
         builder.addProperty(buildFlowProperty())
 
-        // Add update() function inside object
         builder.addFunction(buildUpdateFunction())
 
         return builder.build()
     }
 
+    /**
+     * 生成数据类流：IOException（文件损坏等）回退为空偏好，其余异常照抛
+     *
+     * Emits the data-class flow: an IOException (corrupt file and the like) falls back to
+     * empty preferences, anything else rethrows.
+     */
     private fun buildFlowProperty(): PropertySpec {
         val flowType = flowClass.parameterizedBy(ClassName(packageName, className))
 
@@ -128,6 +144,14 @@ class SchemaCodeGenerator(
         return builder.build()
     }
 
+    /**
+     * 生成 update 写回：forceAll 时全量写回，否则读旧值只写差异项，
+     * 避免为未变化的键触发 DataStore 写盘与监听
+     *
+     * Emits the update writer: forceAll writes every field back; otherwise the old values are
+     * read and only differences are written, so unchanged keys cause neither a DataStore write
+     * nor a listener emission.
+     */
     private fun buildUpdateFunction(): FunSpec {
         val dataClass = ClassName(packageName, className)
 

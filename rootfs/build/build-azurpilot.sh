@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
-# 构建 AzurPilot Android rootfs。目标架构由 AZURPILOT_ABI 决定：
+# 构建 AzurPilot Android rootfs（CI 用：rootfs.yml 的 build job 调用，也可本地手动执行）。
+# 目标架构由 AZURPILOT_ABI 决定：
 #   arm64-v8a（默认）→ Ubuntu arm64 base，需原生 ARM64 runner（ubuntu-24.04-arm）
 #   x86_64           → Ubuntu amd64 base，需原生 x86_64 runner（ubuntu-24.04）
 # proot 不做指令翻译，rootfs 与设备 ABI 必须一一对应；CI 按矩阵各出一份并分别发布。
+# 环境变量（均有默认值）：AZURPILOT_ABI / AZURPILOT_REF / AZURPILOT_REPO /
+#   UBUNTU_BASE / WORK_DIR / DIST_DIR；需要 root（自动经 sudo 重入）、uv 与 npm。
+#
+# Builds the AzurPilot Android rootfs. Invoked by the build job of the rootfs.yml
+# CI workflow; can also be run manually. The target architecture comes from
+# AZURPILOT_ABI:
+#   arm64-v8a (default) -> Ubuntu arm64 base, needs a native ARM64 runner
+#   (ubuntu-24.04-arm); x86_64 -> Ubuntu amd64 base, needs a native x86_64 runner
+#   (ubuntu-24.04). PRoot does no instruction translation, so the rootfs ABI must
+#   match the device exactly; CI builds and publishes one artifact per matrix
+#   entry. Environment (all defaulted): AZURPILOT_ABI / AZURPILOT_REF /
+#   AZURPILOT_REPO / UBUNTU_BASE / WORK_DIR / DIST_DIR; requires root (re-execs
+#   itself through sudo), uv and npm.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,6 +24,7 @@ WORK_DIR="${WORK_DIR:-$REPO_ROOT/.tmp/azurpilot-build}"
 ROOTFS_DIR="$WORK_DIR/rootfs"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 SOURCE_REPO="${AZURPILOT_REPO:-https://github.com/wess09/AzurPilot.git}"
+# 上游源码固定到具体提交，保证产物可复现；CI 会用 AZURPILOT_REF 覆盖为最新解析结果。
 SOURCE_REF="${AZURPILOT_REF:-1841cb1941751a81ab70668b4d2383c369c4506e}"
 TARGET_ABI="${AZURPILOT_ABI:-arm64-v8a}"
 
@@ -51,6 +66,8 @@ unmount_all() {
 }
 trap unmount_all EXIT
 
+# DNS 只服务构建期 chroot：bind 挂载宿主侧文件，卸载后 rootfs 里只留下空文件，
+# 不把固定 DNS 打进发布的镜像。
 rm -f "$ROOTFS_DIR/etc/resolv.conf"
 printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$WORK_DIR/resolv.conf"
 touch "$ROOTFS_DIR/etc/resolv.conf"
@@ -63,6 +80,7 @@ mkdir -p "$WORK_DIR/uv-cache"
 bind_mount "$WORK_DIR/uv-cache" "$ROOTFS_DIR/opt/uv-cache"
 
 guest() {
+    # env -i 提供最小环境：宿主变量一律不泄入 chroot，uv 的路径策略在此集中声明。
     chroot "$ROOTFS_DIR" /usr/bin/env -i HOME=/root LANG=C.UTF-8 LC_ALL=C.UTF-8 \
         DEBIAN_FRONTEND=noninteractive GIT_TERMINAL_PROMPT=0 \
         UV_PYTHON_INSTALL_DIR=/opt/uv-python UV_CACHE_DIR=/opt/uv-cache \
@@ -76,6 +94,7 @@ guest apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils libglib2.0-0t64 libgomp1 libgl1 \
     libstdc++6 libatomic1 libsm6 libxext6 libsndfile1 libvulkan1 python3 \
     openssh-client
+# uv 是静态链接单文件，直接从 runner 复制进 rootfs，无需在 guest 内再安装一遍。
 cp -L "$(command -v uv)" "$ROOTFS_DIR/usr/local/bin/uv"
 guest uv python install 3.14.6
 
@@ -102,8 +121,11 @@ install -m 0644 "$REPO_ROOT/rootfs/overlays/sitecustomize.py" "$VENV_SITE_PACKAG
 guest /bin/sh -c 'cd /opt/azurpilot && .venv/bin/python -m module.config.config_updater'
 
 FRONTEND="$ROOTFS_DIR/opt/azurpilot/frontend"
+# npm 缓存同样外移宿主目录，随 uv-cache 一起交给 actions/cache 跨构建复用。
 NPM_CONFIG_CACHE="$WORK_DIR/npm-cache" npm ci --prefix "$FRONTEND" --no-audit --no-fund
 NPM_CONFIG_CACHE="$WORK_DIR/npm-cache" npm run build --prefix "$FRONTEND"
+# 复用上游 deploy/frontend.py 自己的指纹逻辑计算前端源码指纹，随 dist 打包，
+# 避免在本仓另写一份会与上游漂移的实现。
 AZURPILOT_SOURCE="$ROOTFS_DIR/opt/azurpilot" python3 - <<'PY'
 import importlib.util, os, pathlib
 root = pathlib.Path(os.environ['AZURPILOT_SOURCE'])
@@ -114,9 +136,12 @@ spec.loader.exec_module(mod)
 PY
 rm -rf "$FRONTEND/node_modules"
 
+# 冒烟验证：重依赖可在 guest 内真实导入，且 psutil 子进程枚举确实走兼容层打桩。
 guest /bin/sh -c 'cd /opt/azurpilot && AZURPILOT_ANDROID=1 .venv/bin/python -c "import cv2,numpy,scipy,onnxruntime,rapidocr,ncnn,psutil; import module.api.app, module.device.device, module.ocr.al_ocr; assert psutil.Process.children.__module__ == \"android_process_compat\"; print(\"IMPORTS_OK\")"'
 mkdir -p "$ROOTFS_DIR/opt/azurpilot/log"
 
+# 生成 BUILD_MANIFEST：记录上游提交、ABI 与关键产物哈希；rootfs_version 由上游提交
+# 与 rootfs 输入内容共同决定，供 app 端 RootfsProvisioner 识别运行时版本。
 SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_REPO="$SOURCE_REPO" REPO_ROOT="$REPO_ROOT" \
     TARGET_ABI="$TARGET_ABI" \
     ROOTFS_DIR="$ROOTFS_DIR" python3 - <<'PY'
@@ -170,5 +195,6 @@ fi
 rm -rf "$ROOTFS_DIR/opt/uv-cache" "$ROOTFS_DIR/root/.cache" "$ROOTFS_DIR/var/lib/apt/lists"/*
 rm -rf "$ROOTFS_DIR/opt/azurpilot/.git"
 find "$ROOTFS_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
+# -T0 多线程压缩缩短 CI 时长；--one-file-system 防止把残留挂载误打进镜像。
 XZ_OPT=-T0 tar --one-file-system -C "$ROOTFS_DIR" -cJf "$DIST_DIR/rootfs.tar.xz" .
 sha256sum "$DIST_DIR/rootfs.tar.xz"

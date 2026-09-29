@@ -15,6 +15,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证 [DefaultProjectRepository] 的加载结果映射与并发 reload 时的最新优先语义
+ *
+ * Verifies how [DefaultProjectRepository] maps load results to state, and
+ * that the latest reload wins when loads run concurrently.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultProjectRepositoryTest {
 
@@ -28,6 +34,12 @@ class DefaultProjectRepositoryTest {
         unmockkObject(AppDispatchers)
     }
 
+    /**
+     * 只含固定文件的 [ProjectSource] 测试替身；未列出的路径读取即抛
+     *
+     * Fake [ProjectSource] backed by a fixed set of files; reading an
+     * unlisted path throws.
+     */
     private class MapSource(private val files: Map<String, String>) : ProjectSource {
         override val projectName: String = "demo"
         override fun list(path: String): List<String> = emptyList()

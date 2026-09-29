@@ -6,7 +6,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** 合成规则对齐桌面端 MXU 的回调日志合成规则 */
+/**
+ * 合成规则对齐桌面端 MXU 的回调日志合成规则
+ *
+ * The composition rules mirror the desktop MXU's callback log composition
+ * rules.
+ */
 class RunLogComposerTest {
 
     private val composer = RunLogComposer()
@@ -34,7 +39,12 @@ class RunLogComposerTest {
         assertEquals(RunLogKind.Error, callback("Tasker.Task.Failed")?.kind)
     }
 
-    /** 拿不到当前任务名就退回 PI 的 entry，宁可显示内部名也不显示空 */
+    /**
+     * 拿不到当前任务名就退回 PI 的 entry，宁可显示内部名也不显示空
+     *
+     * When the current task name is unavailable, fall back to the PI's entry:
+     * better an internal name than a blank.
+     */
     @Test
     fun `task name falls back to the pipeline entry`() {
         val entry = RunLogComposer().compose(
@@ -63,7 +73,12 @@ class RunLogComposerTest {
         )
     }
 
-    /** 资源多路径逐条发同样的通知，合成后连着重复只留第一条 */
+    /**
+     * 资源多路径逐条发同样的通知，合成后连着重复只留第一条
+     *
+     * Resources with multiple paths emit the same notification per path;
+     * after composition, consecutive duplicates keep only the first.
+     */
     @Test
     fun `repeated resource notifications collapse into one`() {
         assertEquals(RunLogKind.Info, callback("Resource.Loading.Starting", """{"path":"/a"}""")?.kind)
@@ -73,7 +88,12 @@ class RunLogComposerTest {
         assertNull(callback("Resource.Loading.Succeeded", """{"path":"/b"}"""))
     }
 
-    /** MXU 把节点消息直接丢掉；这里降级留着，「全部」档可见 */
+    /**
+     * MXU 把节点消息直接丢掉；这里降级留着，「全部」档可见
+     *
+     * MXU drops node messages outright; here they are kept downgraded and
+     * visible at the "all" level.
+     */
     @Test
     fun `node messages stay raw and keep their details`() {
         val entry = callback("Node.Recognition.Failed", """{"name":"NodeA"}""")
@@ -92,6 +112,12 @@ class RunLogComposerTest {
      *
      * `$i18n` 查表、`{image}`、文件路径这几步有先后依赖、后两步还要 IO，
      * 都在调用方做完了（见 SessionViewModelTest）；合成器只管装
+     *
+     * The body goes into the entry as-is.
+     *
+     * The `$i18n` lookup, `{image}` and file-path steps are order-dependent,
+     * and the last two need IO — the caller does all of them (see
+     * SessionViewModelTest); the composer only packs what it is given.
      */
     @Test
     fun `focus content is taken as-is`() {
@@ -120,7 +146,12 @@ class RunLogComposerTest {
         assertEquals(RunLogKind.Agent, compose(agentLine("normal"), afterWindow)?.kind)
     }
 
-    /** stderr 上的话多半不是 agent 自己说的：链接器警告就走这条 */
+    /**
+     * stderr 上的话多半不是 agent 自己说的：链接器警告就走这条
+     *
+     * Text on stderr is usually not the agent's own words — linker warnings
+     * come through there.
+     */
     @Test
     fun `stderr lines are told apart from what the agent prints`() {
         assertEquals(RunLogKind.Agent, compose(agentLine("reco hit"))?.kind)
@@ -130,7 +161,12 @@ class RunLogComposerTest {
         )
     }
 
-    /** 洪泛滑窗按两条流合起来算：刷屏就是刷屏，不分从哪条管道出来 */
+    /**
+     * 洪泛滑窗按两条流合起来算：刷屏就是刷屏，不分从哪条管道出来
+     *
+     * The flood window counts both streams together: flooding is flooding,
+     * regardless of which pipe it came from.
+     */
     @Test
     fun `the flood window counts both streams together`() {
         repeat(AGENT_THRESHOLD - 1) { index ->
@@ -139,14 +175,24 @@ class RunLogComposerTest {
         assertEquals(RunLogKind.Warning, compose(agentLine("flood"), 0)?.kind)
     }
 
-    /** agent 的两条流都不进「关键」档——它和原始转储同级 */
+    /**
+     * agent 的两条流都不进「关键」档——它和原始转储同级
+     *
+     * Neither agent stream reaches the "essential" level — both sit at the
+     * same level as raw dumps.
+     */
     @Test
     fun `agent output is not essential`() {
         assertEquals(false, compose(agentLine("out"))!!.isEssential)
         assertEquals(false, compose(agentLine("err", fromStderr = true))!!.isEssential)
     }
 
-    /** 编排层的 connect 成功是关键档，跟设备连接同一档；child 自己的 stderr 仍不是 */
+    /**
+     * 编排层的 connect 成功是关键档，跟设备连接同一档；child 自己的 stderr 仍不是
+     *
+     * An orchestration-layer connect success is essential, on the same level
+     * as a device connection; the child's own stderr still is not.
+     */
     @Test
     fun `agent connect is an essential success line using the exec basename`() {
         val entry = compose(
@@ -168,6 +214,12 @@ class RunLogComposerTest {
      * 特权进程攒批之后，洪泛滑窗必须按行计
      *
      * 按事件计的话一批 64 行只算 1，阈值永远踩不到，抑制器等于关掉了
+     *
+     * After the privileged process starts batching, the flood window must
+     * count by lines.
+     *
+     * Counting by event, a 64-line batch would count as 1, the threshold
+     * would never trip, and the suppressor would be effectively off.
      */
     @Test
     fun `a batched burst counts every line toward the flood window`() {
@@ -175,7 +227,12 @@ class RunLogComposerTest {
         assertEquals(RunLogKind.Warning, compose(agentLine(burst), 0)?.kind)
     }
 
-    /** 单行批的行数是 1，别把没有换行的那种算成 0 */
+    /**
+     * 单行批的行数是 1，别把没有换行的那种算成 0
+     *
+     * A single-line batch counts as 1; never count a batch without newlines
+     * as 0.
+     */
     @Test
     fun `a single line batch counts as one`() {
         assertEquals(1, RunnerEvent.AgentOutput("only", fromStderr = false).lineCount)

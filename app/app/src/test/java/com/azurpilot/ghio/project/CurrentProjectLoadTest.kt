@@ -15,10 +15,22 @@ import org.junit.Test
  * 这类错误在装机前就该拦下
  *
  * 与 [CurrentProjectI18nTest] 分开：那份只管翻译完整性
+ *
+ * Pins down the load contract of the packaged PI: Error-level diagnostics
+ * mean the declaration itself is broken (references to nonexistent options,
+ * duplicates, missing required fields) and must be rejected before install.
+ *
+ * Kept separate from [CurrentProjectI18nTest], which only checks translation
+ * completeness.
  */
 class CurrentProjectLoadTest {
 
-    /** locale 显式固定，不依赖运行机默认语言；ProjectLoader 内部直读 [AppLocales] */
+    /**
+     * locale 显式固定，不依赖运行机默认语言；ProjectLoader 内部直读 [AppLocales]
+     *
+     * Fixes the locale explicitly instead of relying on the host machine's
+     * default language; ProjectLoader reads [AppLocales] directly inside.
+     */
     @Before
     fun fixLocale() {
         mockkObject(AppLocales)

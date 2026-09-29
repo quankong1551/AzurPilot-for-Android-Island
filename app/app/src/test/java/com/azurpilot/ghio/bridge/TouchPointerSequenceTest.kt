@@ -7,6 +7,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证多点触控按下 / 移动 / 抬起各阶段的 action 编排、指针列表与非法输入拒绝逻辑
+ *
+ * Verifies the action choreography and pointer list for each multi-touch down /
+ * move / up stage, plus the rejection of invalid inputs.
+ */
 class TouchPointerSequenceTest {
 
     private fun p(contact: Int, x: Float = contact * 10f) = Pointer(contact, x, 0f)

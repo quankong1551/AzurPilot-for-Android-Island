@@ -20,6 +20,13 @@ import org.junit.Test
  *
  * 顺序按协议 3.3「Client 处理流程」：查表 → 读外部正文 → **最后**替换占位符。
  * 之前反了（解析时就替换），译文与文件正文里的 `{name}` 永远轮不到替换
+ *
+ * Regression gate on the completion ordering.
+ *
+ * The order follows protocol 3.3 "Client processing flow": table lookup →
+ * read the external body → substitute placeholders **last**. It used to be
+ * the other way around (substitution at parse time), so `{name}` inside
+ * translations and file bodies never got replaced.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class FocusDispatcherTest {
@@ -95,7 +102,12 @@ class FocusDispatcherTest {
         assertEquals("显影罐不足", result.content)
     }
 
-    /** 查无此键回落键名本身，与加载期物化 label/description 的处理一致 */
+    /**
+     * 查无此键回落键名本身，与加载期物化 label/description 的处理一致
+     *
+     * A missing key falls back to the key itself, consistent with the
+     * load-time materialization of labels and descriptions.
+     */
     @Test
     fun `unknown translation key falls back to the key`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()
@@ -103,7 +115,12 @@ class FocusDispatcherTest {
         assertEquals("tip.missing", result.content)
     }
 
-    /** 这条是 #5 的回归闸门：译文里的占位符必须还能替换 */
+    /**
+     * 这条是 #5 的回归闸门：译文里的占位符必须还能替换
+     *
+     * Regression gate for issue #5: placeholders inside a translated body
+     * must still be substituted.
+     */
     @Test
     fun `placeholders inside a translated body are still substituted`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()
@@ -111,7 +128,11 @@ class FocusDispatcherTest {
         assertEquals("NodeA 没跑成", completed(runner, dispatcherWith(runner), event).content)
     }
 
-    /** 同上，换成读进来的文件正文 */
+    /**
+     * 同上，换成读进来的文件正文
+     *
+     * Same as above, with a read-in file body instead.
+     */
     @Test
     fun `placeholders inside a file body are still substituted`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()
@@ -120,7 +141,12 @@ class FocusDispatcherTest {
         assertEquals("NodeA 的现场", completed(runner, dispatcherWith(runner, resolver), event).content)
     }
 
-    /** 查表结果本身就是个文件路径——所以查表必须早于读文件 */
+    /**
+     * 查表结果本身就是个文件路径——所以查表必须早于读文件
+     *
+     * The lookup result is itself a file path — which is exactly why the
+     * lookup must precede the file read.
+     */
     @Test
     fun `a translation resolving to a file path is then loaded`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()
@@ -138,7 +164,11 @@ class FocusDispatcherTest {
         assertEquals("![](file:///tmp/shot.png)", result.content)
     }
 
-    /** 直接文本不该白跑一趟 IO */
+    /**
+     * 直接文本不该白跑一趟 IO
+     *
+     * Plain text must not trigger a pointless IO round trip.
+     */
     @Test
     fun `plain text never reaches the resolver`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()
@@ -147,7 +177,11 @@ class FocusDispatcherTest {
         assertEquals(emptyList<String>(), resolver.requests)
     }
 
-    /** 渠道原样带过去：补完不该动它 */
+    /**
+     * 渠道原样带过去：补完不该动它
+     *
+     * Channels pass through untouched: completion must not touch them.
+     */
     @Test
     fun `channels survive completion`() = runTest(UnconfinedTestDispatcher()) {
         val runner = RecordingEventRunnerPort()

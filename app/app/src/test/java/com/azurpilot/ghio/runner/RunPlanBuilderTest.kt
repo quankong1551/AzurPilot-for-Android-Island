@@ -24,6 +24,12 @@ import org.junit.BeforeClass
 import org.junit.Test
 import java.io.File
 
+/**
+ * 验证 [RunPlanBuilder] 把已加载 PI 与用户配置编译成可执行 RunPlan 的语义
+ *
+ * Verifies how [RunPlanBuilder] compiles the loaded PI plus the user
+ * configuration into an executable RunPlan.
+ */
 class RunPlanBuilderTest {
 
     companion object {
@@ -189,7 +195,12 @@ class RunPlanBuilderTest {
         assertTrue("Builder 侧应同样回落而非拦下", RunPlanBuilder.build(definition, config) is RunPlanResult.Success)
     }
 
-    /** 自定义关卡 3-9 的常规作战任务；其余 option 选定避免级联出 Unset 诊断 */
+    /**
+     * 自定义关卡 3-9 的常规作战任务；其余 option 选定避免级联出 Unset 诊断
+     *
+     * The regular-combat task pinned to custom stage 3-9; the other options
+     * are set explicitly so no cascading Unset diagnostics appear.
+     */
     private fun customStageTask() = ConfiguredTask(
         taskName = "常规作战",
         enabled = true,
@@ -203,7 +214,12 @@ class RunPlanBuilderTest {
         ),
     )
 
-    /** 选择无子 option 的 case，避免测试再级联出 Unset 诊断 */
+    /**
+     * 选择无子 option 的 case，避免测试再级联出 Unset 诊断
+     *
+     * Picks a case without child options, so the test cascades no further
+     * Unset diagnostics.
+     */
     private fun firstCaseOf(optionName: String): OptionValue.SingleCase {
         val option = definition.options.getValue(optionName)
         check(option is OptionDefinition.Choice) { "非 choice option: $optionName" }
@@ -211,13 +227,21 @@ class RunPlanBuilderTest {
         return OptionValue.SingleCase(case.name)
     }
 
-    /** 提取 SelectCombatStage.action.param.custom_action_param.stage */
+    /**
+     * 提取 SelectCombatStage.action.param.custom_action_param.stage
+     *
+     * Extracts SelectCombatStage.action.param.custom_action_param.stage.
+     */
     private fun JsonObject.stageValue(): String? = runCatching {
         this["SelectCombatStage"]!!.jsonObject["action"]!!.jsonObject["param"]!!
             .jsonObject["custom_action_param"]!!.jsonObject["stage"]!!.jsonPrimitive.content
     }.getOrNull()
 
-    /** 提取 CombatStageGate.recognition.param.custom_recognition_param.expression */
+    /**
+     * 提取 CombatStageGate.recognition.param.custom_recognition_param.expression
+     *
+     * Extracts CombatStageGate.recognition.param.custom_recognition_param.expression.
+     */
     private fun JsonObject.expressionValue(): String? = runCatching {
         this["CombatStageGate"]!!.jsonObject["recognition"]!!.jsonObject["param"]!!
             .jsonObject["custom_recognition_param"]!!.jsonObject["expression"]!!.jsonPrimitive.content

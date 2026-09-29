@@ -78,13 +78,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-/** 不带任何条目的 PI 包；解包走完整条路径但一个文件都不落 */
+/**
+ * 不带任何条目的 PI 包；解包走完整条路径但一个文件都不落
+ *
+ * A [PiPackage] with no entries; unpacking exercises the full path yet
+ * writes no files.
+ */
 private object EmptyPiPackage : PiPackage {
     override fun manifest(): List<String> = emptyList()
 
     override fun open(path: String): InputStream = throw FileNotFoundException(path)
 }
 
+/**
+ * 验证 [SessionViewModel] 的意图处理：运行日志与 focus 分流、前台模式的三道闸、
+ * 忙时锁定配置修改与项目 reload
+ *
+ * Verifies [SessionViewModel] intent handling: run-log and focus routing,
+ * the three foreground-mode gates, busy-time locking of configuration
+ * mutations, and project reload.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModelTest {
 
@@ -154,6 +167,11 @@ class SessionViewModelTest {
     /**
      * 带上真实的前台模式检查与保活挂载物：VM 侧要验的「前台模式点不动」如今由
      * ForegroundModePrecheck 产生，emptyList 会让那条用例空转通过
+     *
+     * Uses the real foreground-mode precheck and keep-alive hook: the
+     * "foreground mode cannot start" behavior the VM must uphold is produced
+     * by ForegroundModePrecheck, and an emptyList would let that case pass
+     * vacuously.
      */
     private fun TestScope.launcherFor(
         project: FakeProjectRepository,
@@ -200,7 +218,12 @@ class SessionViewModelTest {
         return Triple(vm, store, runner)
     }
 
-    /** 只换 RunnerPort 的构造点；createVm 的返回三元组绑死了 StubRunnerPort */
+    /**
+     * 只换 RunnerPort 的构造点；createVm 的返回三元组绑死了 StubRunnerPort
+     *
+     * A construction point that only swaps the RunnerPort; createVm's return
+     * triple is pinned to StubRunnerPort.
+     */
     private fun TestScope.createVmWithRunner(
         runner: RunnerPort,
         focusDispatcher: FocusDispatcher = idleFocusDispatcher(),
@@ -229,6 +252,12 @@ class SessionViewModelTest {
      *
      * 落盘那条路走不到——单测不经 `SessionLogHook` 开会话，[RunSessionLogStore] 的目录
      * 因此从头到尾没被碰过
+     *
+     * Where the run log is produced; the VM only forwards its flow.
+     *
+     * The disk path is never exercised — unit tests never begin a session
+     * through `SessionLogHook`, so the [RunSessionLogStore] directory stays
+     * untouched from start to end.
      */
     private fun TestScope.recorderFor(
         runner: RunnerPort,
@@ -244,11 +273,19 @@ class SessionViewModelTest {
 
     /**
      * 空清单的解包：VM 这一层只关心它放不放行 reload，解包本身另有 PiInstallerTest 覆盖
+     *
+     * Empty-manifest unpacking: at the VM level only whether it gates reload
+     * matters; unpacking itself is covered by PiInstallerTest.
      */
     private fun emptyPiInstall() =
         PiInstallCoordinator(PiInstaller(EmptyPiPackage, versionCode = 1))
 
-    /** 不接任何 RunnerPort 的 dispatcher：focus 的补完另有 FocusDispatcherTest 覆盖 */
+    /**
+     * 不接任何 RunnerPort 的 dispatcher：focus 的补完另有 FocusDispatcherTest 覆盖
+     *
+     * A dispatcher not attached to any RunnerPort: focus completion is
+     * covered by FocusDispatcherTest.
+     */
     private fun TestScope.idleFocusDispatcher(
         resolver: FocusContentResolver = PassthroughFocusContentResolver,
         runner: RunnerPort = RecordingEventRunnerPort(),
@@ -277,7 +314,12 @@ class SessionViewModelTest {
         assertTrue(vm.runLog.value.isEmpty())
     }
 
-    /** 合成规则由 RunLogComposerTest 覆盖，这里只验 ViewModel 确实把事件送进了合成器 */
+    /**
+     * 合成规则由 RunLogComposerTest 覆盖，这里只验 ViewModel 确实把事件送进了合成器
+     *
+     * Composition rules are covered by RunLogComposerTest; this only checks
+     * that the ViewModel really feeds events into the composer.
+     */
     @Test
     fun `run log routes events through the composer`() = runTest(mainDispatcher) {
         val runner = RecordingEventRunnerPort()
@@ -301,6 +343,12 @@ class SessionViewModelTest {
      * 补完之后按渠道分流；补完本身的规则见 FocusDispatcherTest
      *
      * dispatcher 与 VM 共用同一个 RunnerPort，事件才走得通那条补完流
+     *
+     * Routed by channel after completion; the completion rules themselves
+     * are covered by FocusDispatcherTest.
+     *
+     * The dispatcher and the VM share one RunnerPort, so events can actually
+     * flow through the completion path.
      */
     @Test
     fun `focus with the log channel reaches the run log`() = runTest(mainDispatcher) {
@@ -319,7 +367,11 @@ class SessionViewModelTest {
         assertEquals(UiText.Verbatim("显影罐不足"), vm.runLog.value.single().text)
     }
 
-    /** 只声明 toast 的模板不进日志 */
+    /**
+     * 只声明 toast 的模板不进日志
+     *
+     * A template declaring only toast must not reach the log.
+     */
     @Test
     fun `toast only focus does not reach the log`() = runTest(mainDispatcher) {
         val runner = RecordingEventRunnerPort()
@@ -336,7 +388,12 @@ class SessionViewModelTest {
         assertTrue(vm.runLog.value.isEmpty())
     }
 
-    /** 「只看关键」留下合成过的，滤掉没被合成的原始回调 */
+    /**
+     * 「只看关键」留下合成过的，滤掉没被合成的原始回调
+     *
+     * "Essential only" keeps composed entries and filters out raw callbacks
+     * that were never composed.
+     */
     @Test
     fun `essential filter drops raw callbacks`() = runTest(mainDispatcher) {
         val runner = RecordingEventRunnerPort()
@@ -430,6 +487,13 @@ class SessionViewModelTest {
      *
      * 三条都断言**没发出** [SessionEffect.ShowOverlay]：面板真接通之前，
      * 任何一条漏到那儿都会挂出一个空壳窗口
+     *
+     * The three gates of the control layer: backend not connected → wrong
+     * aspect ratio → with both passed, still only "not yet supported".
+     *
+     * All three assert that [SessionEffect.ShowOverlay] is **not** emitted:
+     * before the panel is really wired up, any result leaking to it would
+     * hang an empty shell window.
      */
     @Test
     fun `overlay is blocked until the privileged service is connected`() = runTest(mainDispatcher) {
@@ -526,7 +590,12 @@ class SessionViewModelTest {
         )
     }
 
-    /** 前台模式的拦截在 VM 而不是 RunLauncher，只有这条路径能证明它没漏 */
+    /**
+     * 前台模式的拦截在 VM 而不是 RunLauncher，只有这条路径能证明它没漏
+     *
+     * The foreground-mode interception lives in the VM, not RunLauncher;
+     * only this path proves nothing leaks past it.
+     */
     @Test
     fun `start in foreground mode is blocked before reaching the launcher`() = runTest(mainDispatcher) {
         val settings = FakeAppSettingsGateway().apply { runMode.value = RunMode.FOREGROUND }
@@ -549,7 +618,12 @@ class SessionViewModelTest {
         assertEquals(RunnerPhase.Idle, runner.state.value.phase)
     }
 
-    /** 虚拟屏尺寸改由用户选之后，这条是它进 UiState 的唯一通路 */
+    /**
+     * 虚拟屏尺寸改由用户选之后，这条是它进 UiState 的唯一通路
+     *
+     * Since the virtual-display size became user-selected, this is the only
+     * path it takes into UiState.
+     */
     @Test
     fun `preview resolution follows the resolution preference`() = runTest(mainDispatcher) {
         val settings = FakeAppSettingsGateway()

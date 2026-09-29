@@ -6,12 +6,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 映射得上的才上色，映射不上的普通展示；无论如何转义符都不能落到正文里 */
+/**
+ * 映射得上的才上色，映射不上的普通展示；无论如何转义符都不能落到正文里
+ *
+ * Pins down that only mappable SGR codes colorize while unmappable ones
+ * render plainly; either way escape sequences must never leak into the
+ * visible text.
+ */
 class AnsiAnnotatedTextTest {
 
     private val warning = Color.Yellow
 
-    /** 只认 33，其余一律没有相似档 */
+    /**
+     * 只认 33，其余一律没有相似档
+     *
+     * Only code 33 resolves; everything else has no matching color.
+     */
     private val resolver: (Int) -> Color? = { if (it == 33) warning else null }
 
     @Test
@@ -32,7 +42,12 @@ class AnsiAnnotatedTextTest {
         assertEquals("掉落上报已禁用".length, span.end)
     }
 
-    /** M9A 的 CRITICAL 是 `41m` + `37m`：背景色与白色都没有相似档，但转义仍要吃掉 */
+    /**
+     * M9A 的 CRITICAL 是 `41m` + `37m`：背景色与白色都没有相似档，但转义仍要吃掉
+     *
+     * M9A's CRITICAL is `41m` + `37m`: neither a background color nor white
+     * has a matching color, yet the escapes must still be consumed.
+     */
     @Test
     fun `映射不上的档只吃转义不上色`() {
         val out = ansiAnnotated("\u001B[41m\u001B[37m严重\u001B[0m", resolver)
@@ -48,7 +63,12 @@ class AnsiAnnotatedTextTest {
         assertEquals(1, out.spanStyles.single().end)
     }
 
-    /** 光标移动之类的 CSI 在 Android 上没有对应语义，吃掉即可 */
+    /**
+     * 光标移动之类的 CSI 在 Android 上没有对应语义，吃掉即可
+     *
+     * Non-SGR CSI sequences such as cursor movement have no meaning on
+     * Android; consume them and move on.
+     */
     @Test
     fun `非 SGR 的 CSI 被吃掉`() {
         val out = ansiAnnotated("\u001B[2J\u001B[1;1H清屏后", resolver)
@@ -56,7 +76,12 @@ class AnsiAnnotatedTextTest {
         assertTrue(out.spanStyles.isEmpty())
     }
 
-    /** 攒批可能把一行从转义序列中间切开，剩下的宁可原样露出也不吞掉正文 */
+    /**
+     * 攒批可能把一行从转义序列中间切开，剩下的宁可原样露出也不吞掉正文
+     *
+     * Batching may split a line in the middle of an escape sequence; the
+     * remainder is shown verbatim rather than swallowing real text.
+     */
     @Test
     fun `截断的序列原样保留`() {
         val out = ansiAnnotated("尾部\u001B[33", resolver)

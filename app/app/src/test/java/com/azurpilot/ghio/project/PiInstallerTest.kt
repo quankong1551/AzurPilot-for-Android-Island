@@ -22,6 +22,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+/**
+ * 验证 [PiInstaller] 的解包、versionCode 标记复用与失败不留半成品目录的语义
+ *
+ * Verifies [PiInstaller] unpacking, versionCode marker reuse, and that a
+ * failure never leaves a half-unpacked directory behind.
+ */
 class PiInstallerTest {
 
     @get:Rule
@@ -86,7 +92,12 @@ class PiInstallerTest {
         assertEquals("12", File(base, PiInstaller.PI_MARKER_NAME).readText())
     }
 
-    /** 标记是提交点：内容在但标记缺失，说明上次解包没走完 */
+    /**
+     * 标记是提交点：内容在但标记缺失，说明上次解包没走完
+     *
+     * The marker is the commit point: content present but the marker missing
+     * means the previous unpack never finished.
+     */
     @Test
     fun `标记缺失时重解`() {
         val base = temp.newFolder("external")
@@ -100,7 +111,13 @@ class PiInstallerTest {
         assertTrue("标记缺失应触发重解", pkg.openCount > afterFirst)
     }
 
-    /** 按内容指纹判过期的旧包升上来时，两个标记并存会让人分不清哪个在生效 */
+    /**
+     * 按内容指纹判过期的旧包升上来时，两个标记并存会让人分不清哪个在生效
+     *
+     * When upgrading from the old scheme that expired packages by content
+     * fingerprint, two coexisting markers would make it unclear which one is
+     * in effect.
+     */
     @Test
     fun `重解时清掉旧版指纹标记`() {
         val base = temp.newFolder("external")
@@ -111,7 +128,12 @@ class PiInstallerTest {
         assertFalse(legacy.exists())
     }
 
-    /** 解包不完整比解包失败更难查，任一条目失败即整体失败且不留标记 */
+    /**
+     * 解包不完整比解包失败更难查，任一条目失败即整体失败且不留标记
+     *
+     * A partial unpack is harder to diagnose than a failed one: any entry
+     * failing fails the whole install, and no marker is written.
+     */
     @Test
     fun `条目读取失败时整体失败且不写标记`() {
         val base = temp.newFolder("external")
@@ -138,7 +160,12 @@ class PiInstallerTest {
         assertEquals("11", File(base, PiInstaller.PI_MARKER_NAME).readText())
     }
 
-    /** 弹窗的进度条吃的就是这串回报；内存包按清单顺序 */
+    /**
+     * 弹窗的进度条吃的就是这串回报；内存包按清单顺序
+     *
+     * The dialog's progress bar consumes exactly this reporting stream; the
+     * in-memory package reports in manifest order.
+     */
     @Test
     fun `解包逐条目回报进度`() {
         val base = temp.newFolder("external")
@@ -166,7 +193,12 @@ class PiInstallerTest {
         assertEquals(0, reported)
     }
 
-    /** 设置页的手动重来：versionCode 没变也要真解一遍 */
+    /**
+     * 设置页的手动重来：versionCode 没变也要真解一遍
+     *
+     * The settings page's manual reinstall: a real unpack happens even when
+     * versionCode is unchanged.
+     */
     @Test
     fun `reinstall 不看标记`() {
         val base = temp.newFolder("external")
@@ -180,7 +212,12 @@ class PiInstallerTest {
         assertEquals("11", File(base, PiInstaller.PI_MARKER_NAME).readText())
     }
 
-    /** 读取路径拿的是这个；它不该顺带解包，未解包就得响 */
+    /**
+     * 读取路径拿的是这个；它不该顺带解包，未解包就得响
+     *
+     * The read path obtains the directory here; it must not unpack as a side
+     * effect and must fail loudly when unpacking has not happened.
+     */
     @Test
     fun `installedDir 在未解包时抛出`() {
         val base = temp.newFolder("external")
@@ -279,6 +316,12 @@ class PiInstallerTest {
     }
 }
 
+/**
+ * 真实 zip 字节流的 [PiPackage] 测试替身；[open] 不可用，只有 [openArchive] 有数据
+ *
+ * Fake [PiPackage] backed by real zip bytes; [open] is unusable — only
+ * [openArchive] carries data.
+ */
 private class ZipPiPackage(
     files: Map<String, String>,
     manifest: List<String> = files.keys.sorted(),
@@ -293,6 +336,12 @@ private class ZipPiPackage(
     override fun openArchive(): InputStream = bytes.inputStream()
 }
 
+/**
+ * 把 [files] 打成内存中的 zip 字节流，供 [ZipPiPackage] 使用
+ *
+ * Packs [files] into an in-memory zip byte stream, for use by
+ * [ZipPiPackage].
+ */
 private fun zipBytes(files: Map<String, String>): ByteArray =
     ByteArrayOutputStream().use { raw ->
         ZipOutputStream(raw).use { zip ->

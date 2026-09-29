@@ -20,6 +20,12 @@ import org.junit.Test
  * PI v2.3.0 `resource[].option` 全链路：解析 → 按资源分桶投影 → override 编译顺序
  *
  * 一律用合成 PI：冻结的 M9A fixture 没有 resource.option，不该为新特性改动
+ *
+ * Pins down the full `resource[].option` chain of PI v2.3.0: parse →
+ * per-resource bucketed projection → override compile order.
+ *
+ * Every case uses a synthetic PI: the frozen M9A fixture has no
+ * resource.option and must not be touched for new features.
  */
 class ResourceOptionTest {
 
@@ -131,7 +137,12 @@ class ResourceOptionTest {
         assertEquals(emptyList<String>(), official.optionNames)
     }
 
-    /** 协议「Option 覆盖顺序」：task 基础 → global → resource → task option */
+    /**
+     * 协议「Option 覆盖顺序」：task 基础 → global → resource → task option
+     *
+     * The protocol's "Option override order": task base → global → resource
+     * → task option.
+     */
     @Test
     fun `resource 排在 global 之后 task option 之前`() {
         val definition = load(pi()).definition
@@ -183,7 +194,12 @@ class ResourceOptionTest {
         })
     }
 
-    /** v2.3.1：option 自身的 resource 限制对 resource.option 同样生效 */
+    /**
+     * v2.3.1：option 自身的 resource 限制对 resource.option 同样生效
+     *
+     * v2.3.1: an option's own resource restriction applies to resource
+     * options too.
+     */
     @Test
     fun `不满足 resource 限制的 resource option 不产生 override`() {
         val extra = """

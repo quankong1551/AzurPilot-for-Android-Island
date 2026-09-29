@@ -15,6 +15,12 @@ import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
+/**
+ * 验证 [RunSessionLogStore] 的会话文件读写、按文件名出摘要、截断容错与过期清理
+ *
+ * Verifies [RunSessionLogStore] session-file round trips, filename-derived
+ * summaries, truncated-line tolerance, and expiry cleanup.
+ */
 class RunSessionLogStoreTest {
 
     private lateinit var logDir: File
@@ -62,7 +68,12 @@ class RunSessionLogStoreTest {
         assertEquals(RunSessionOutcome.COMPLETED, (records[3] as RunSessionRecord.Footer).outcome)
     }
 
-    /** 摘要全部来自文件名，列表页因此不必读内容 */
+    /**
+     * 摘要全部来自文件名，列表页因此不必读内容
+     *
+     * The summary comes entirely from the file name, so the list page never
+     * needs to read file contents.
+     */
     @Test
     fun `the summary comes from the file name`() = runBlocking {
         checkNotNull(store.open(START, listOf("a", "b", "c"))).close()
@@ -73,7 +84,12 @@ class RunSessionLogStoreTest {
         assertTrue(info.sizeBytes > 0)
     }
 
-    /** 被杀进程会留下半行；那一行跳过就是了，不该毁掉前面几百条 */
+    /**
+     * 被杀进程会留下半行；那一行跳过就是了，不该毁掉前面几百条
+     *
+     * A killed process leaves a half-written line; skipping it is fine — it
+     * must not destroy the hundreds of records before it.
+     */
     @Test
     fun `a truncated line does not sink the whole file`() = runBlocking {
         val writer = checkNotNull(store.open(START, listOf("a")))
@@ -101,7 +117,12 @@ class RunSessionLogStoreTest {
     }
 
     private companion object {
-        /** 2023-11-14；`cleanup` 读真实时钟，这个时刻必须确实是过去 */
+        /**
+         * 2023-11-14；`cleanup` 读真实时钟，这个时刻必须确实是过去
+         *
+         * 2023-11-14; `cleanup` reads the real clock, so this instant must
+         * genuinely be in the past.
+         */
         const val START = 1_700_000_000_000L
     }
 }

@@ -6,7 +6,12 @@ import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
-/** Plain JVM modules (annotation-api / ksp-processor): same Java and jvmTarget level as the Android side */
+/**
+ * 纯 JVM 模块（annotation-api / ksp-processor）的公共基线：Java 与 jvmTarget 与 Android 侧同级
+ *
+ * Plain JVM modules (annotation-api / ksp-processor): same Java and jvmTarget level as the
+ * Android side.
+ */
 class KotlinJvmConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {

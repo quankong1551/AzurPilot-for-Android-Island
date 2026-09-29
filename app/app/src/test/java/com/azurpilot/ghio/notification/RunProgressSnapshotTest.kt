@@ -9,6 +9,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * 验证运行进度快照的确定性进度条、标题与通知文案在各阶段下的取值
+ *
+ * Verifies how the run-progress snapshot derives the determinate progress
+ * bar, title, and notification text at each runner phase.
+ */
 class RunProgressSnapshotTest {
 
     @Test

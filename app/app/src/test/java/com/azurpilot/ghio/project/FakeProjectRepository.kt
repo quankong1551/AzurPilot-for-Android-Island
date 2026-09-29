@@ -4,7 +4,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** 可控的 ProjectRepository，供 ViewModel 单测注入 */
+/**
+ * 可控的 ProjectRepository，供 ViewModel 单测注入
+ *
+ * Fake of [ProjectRepository] whose [state] is driven by tests via [emit];
+ * shared by [com.azurpilot.ghio.runner.RunLauncherTest],
+ * [com.azurpilot.ghio.runner.FocusDispatcherTest],
+ * [com.azurpilot.ghio.runner.RunLogRecorderTest] and
+ * [com.azurpilot.ghio.session.SessionViewModelTest].
+ */
 class FakeProjectRepository(
     initial: ProjectState = ProjectState.Loading,
 ) : ProjectRepository {

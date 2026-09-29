@@ -29,6 +29,12 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
+/**
+ * 验证 [RunnerPort] 的 phase 状态机在 Preparing 阶段被 stop / 取消时的走向
+ *
+ * Verifies how the [RunnerPort] phase state machine behaves when stop or
+ * cancellation lands during the Preparing phase.
+ */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class RunnerPortTest {
 

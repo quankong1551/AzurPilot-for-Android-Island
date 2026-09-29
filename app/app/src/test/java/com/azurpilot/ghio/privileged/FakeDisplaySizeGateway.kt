@@ -5,6 +5,13 @@ package com.azurpilot.ghio.privileged
  *
  * [aspectSupported] 默认 true：绝大多数用例不关心前台模式那道闸，
  * 让它默认放行，要验拦截的用例自己置 false
+ *
+ * Fake of [DisplaySizeGateway] (main-display resolution); shared by
+ * [com.azurpilot.ghio.session.SessionViewModelTest].
+ *
+ * [aspectSupported] defaults to true: most cases do not care about the
+ * foreground-mode gate, so it lets everything through by default; cases that
+ * verify the interception set it to false themselves.
  */
 class FakeDisplaySizeGateway(
     var aspectSupported: Boolean = true,

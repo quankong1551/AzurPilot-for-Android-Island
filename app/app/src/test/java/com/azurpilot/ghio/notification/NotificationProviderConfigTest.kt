@@ -27,6 +27,13 @@ import org.junit.Test
  *
  * httpClient 是没有任何 stub 的 mock：真走到网络那一步会当场抛，正好把「漏判空配置」
  * 暴露成测试失败而不是一次线上超时
+ *
+ * Pins down that providers fail with an error message *before* the request is
+ * sent when the configuration is incomplete.
+ *
+ * httpClient is a mock with no stubs at all: actually reaching the network
+ * step throws on the spot, which exposes a missed empty-config check as a
+ * test failure instead of a production timeout.
  */
 class NotificationProviderConfigTest {
 
@@ -169,7 +176,12 @@ class NotificationProviderConfigTest {
         )
     }
 
-    /** barkServer 有默认值，全空配置下首个失败是 Send Key */
+    /**
+     * barkServer 有默认值，全空配置下首个失败是 Send Key
+     *
+     * barkServer has a default value, so with an all-empty configuration the
+     * first failure is the Send Key.
+     */
     @Test
     fun barkEmptyKey() = runBlocking {
         assertFailed(
@@ -227,7 +239,12 @@ class NotificationProviderConfigTest {
         )
     }
 
-    /** 漏写协议头是最常见的填法错误；报「网络失败」会把用户指到错的地方 */
+    /**
+     * 漏写协议头是最常见的填法错误；报「网络失败」会把用户指到错的地方
+     *
+     * A missing URL scheme is the most common misconfiguration; reporting
+     * "network failure" would send the user looking in the wrong place.
+     */
     @Test
     fun gotifyNonHttpScheme() = runBlocking {
         assertFailed(

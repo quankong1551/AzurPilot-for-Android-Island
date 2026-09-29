@@ -4,6 +4,9 @@ import org.gradle.api.Project
 import java.io.File
 
 /**
+ * 独立检出时以自身版本为准；若本检出是子模块，则逐层向上穿过嵌套的父仓库，
+ * 以最外层仓库为版本来源
+ *
  * A standalone checkout versions itself. When this checkout is a submodule, walk through any
  * nested superprojects and version from the outermost repository instead.
  */
@@ -29,6 +32,10 @@ private fun Project.gitCommitTime(workingDir: File, rev: String): Long = provide
  * APK 版本号只取宿主 HEAD 的提交时间。AP 独立更新不会改变 APK 版本。
  *
  * APP_VERSION_CODE 仍是最高优先级的逃生口（发布事故时可手工钉版）。
+ *
+ * The APK version code derives only from the host HEAD's commit time; independent AzurPilot
+ * (AP) runtime updates do not change it. APP_VERSION_CODE remains the highest-priority escape
+ * hatch for hand-pinning a version during a release incident.
  */
 internal fun Project.gitVersionCode(): Int {
     System.getenv("APP_VERSION_CODE")?.trim()?.takeIf { it.isNotEmpty() }?.let {

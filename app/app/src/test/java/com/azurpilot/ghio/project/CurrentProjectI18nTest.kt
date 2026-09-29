@@ -23,6 +23,13 @@ import java.io.File
  * 构建期同步进来的 PI 的发布契约：声明了 languages 就必须覆盖全部 $key
  * 契约只约束「声明了就要完整」，不要求每个 PI 都做 i18n；
  * 未配置 pi.profile 或该 PI 不做 i18n 时跳过，外壳不绑定任何具体项目
+ *
+ * Pins down the release contract of the PI synced in at build time: once
+ * `languages` is declared it must cover every `$key` reference.
+ *
+ * The contract only demands completeness when declared, and does not require
+ * every PI to do i18n; the tests skip when pi.profile is not configured or
+ * the PI does no i18n — the shell is not bound to any specific project.
  */
 @OptIn(ExperimentalSerializationApi::class)
 class CurrentProjectI18nTest {
@@ -82,7 +89,12 @@ class CurrentProjectI18nTest {
         }
     }
 
-    /** 加载期与 i18n 有关的四类诊断；任一出现即说明翻译链有问题 */
+    /**
+     * 加载期与 i18n 有关的四类诊断；任一出现即说明翻译链有问题
+     *
+     * The four i18n-related load-time diagnostics; any of them means the
+     * translation chain is broken.
+     */
     private val I18N_DIAGNOSTIC_RES = listOf(
         R.string.diagnostic_language_path_invalid,
         R.string.diagnostic_translation_read_failed,
@@ -90,6 +102,12 @@ class CurrentProjectI18nTest {
         R.string.diagnostic_description_read_failed,
     )
 
+    /**
+     * 递归收集 JSON 里以 `$` 开头的字符串值，即被引用的 i18n key
+     *
+     * Recursively collects string values starting with `$` — the referenced
+     * i18n keys.
+     */
     private fun collectI18nReferences(element: JsonElement): List<String> = when (element) {
         is JsonObject -> element.values.flatMap(::collectI18nReferences)
         is JsonArray -> element.flatMap(::collectI18nReferences)
@@ -100,10 +118,20 @@ class CurrentProjectI18nTest {
     }
 }
 
-/** syncPiAssets 的落点；单元测试工作目录是 app/ */
+/**
+ * syncPiAssets 的落点；单元测试工作目录是 app/
+ *
+ * Where the syncPiAssets output lands; the unit-test working directory is
+ * app/.
+ */
 private val piRoot = File("build/generated/piAssets/pi")
 
-/** 未配置 pi.profile 时跳过：外壳不绑定任何具体项目 */
+/**
+ * 未配置 pi.profile 时跳过：外壳不绑定任何具体项目
+ *
+ * Skips when pi.profile is not configured: the shell is not bound to any
+ * specific project.
+ */
 internal fun syncedPiOrSkip(): ProjectSource {
     assumeTrue("未同步 PI（未配置 pi.profile）", File(piRoot, "interface.json").isFile)
     return DirectoryProjectSource(piRoot)

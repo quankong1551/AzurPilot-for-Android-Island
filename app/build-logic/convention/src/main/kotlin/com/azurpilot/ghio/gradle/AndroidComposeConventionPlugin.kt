@@ -7,8 +7,13 @@ import org.gradle.kotlin.dsl.dependencies
 import org.gradle.kotlin.dsl.getByType
 
 /**
- * Apply after azurpilot.android.application or azurpilot.android.library: this reads the android extension they register
- * Only the shared floor lands here (BOM, ui, ui-graphics), material3 / icons / tooling stay per module
+ * 为模块铺 Compose 公共底座；必须在 azurpilot.android.application 或 azurpilot.android.library
+ * 之后应用，因为它读取二者注册的 android 扩展。
+ * 这里只放共享的下限（BOM、ui、ui-graphics），material3 / icons / tooling 留给各模块自行决定。
+ *
+ * Applies after azurpilot.android.application or azurpilot.android.library: this reads the
+ * android extension they register. Only the shared floor lands here (BOM, ui, ui-graphics);
+ * material3 / icons / tooling stay per module.
  */
 class AndroidComposeConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {

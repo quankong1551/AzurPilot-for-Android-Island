@@ -15,6 +15,19 @@ import javax.xml.parsers.DocumentBuilderFactory
  *
  * 静态扫源码补上，覆盖面比原来的 lint 更宽：产出层的 `DiagnosticMessages` 之类一并检查，
  * 而 lint 只看得懂 Compose 里的字面量调用
+ *
+ * Restores the format-string argument checks that were lost when messages were
+ * unified onto UiText.
+ *
+ * `resolve` calls `context.getString(resId, *args)` — resId is a variable and
+ * args is a spread array, so lint cannot follow it. A missing argument is not
+ * reported at build time and only throws `MissingFormatArgumentException` when
+ * that message is actually rendered, and this diagnostic path is low-frequency
+ * enough that it may not reproduce for months.
+ *
+ * A static scan over the sources fills the gap and covers more than the old
+ * lint did: producers such as `DiagnosticMessages` are checked too, while lint
+ * only understands literal calls inside Compose.
  */
 class UiTextArityTest {
 
@@ -73,7 +86,11 @@ class UiTextArityTest {
     private fun sourceFiles(): List<File> =
         File("src/main/java").walkTopDown().filter { it.extension == "kt" }.toList()
 
-    /** 取 `%N$s` 里最大的 N；没有占位符即 0 */
+    /**
+     * 取 `%N$s` 里最大的 N；没有占位符即 0
+     *
+     * Returns the largest N among `%N$s` placeholders; 0 when there is none.
+     */
     private fun placeholderCounts(tag: String): Map<String, Int> {
         val document = DocumentBuilderFactory.newInstance()
             .newDocumentBuilder()
@@ -92,6 +109,12 @@ class UiTextArityTest {
     /**
      * 行注释与块注释换成等长空白，字符串字面量原样保留
      * 换而不是删，行号才不会错位——报错要能直接定位
+     *
+     * Replaces line and block comments with same-length whitespace and keeps
+     * string literals intact.
+     *
+     * Replacing rather than deleting keeps line numbers stable, so a failure
+     * points straight at the offending call site.
      */
     private fun stripComments(source: String): String {
         val out = StringBuilder(source.length)
@@ -144,7 +167,12 @@ class UiTextArityTest {
         return out.toString()
     }
 
-    /** 从 `(` 之后数括号，返回参数区原文；括号不平衡返回 null */
+    /**
+     * 从 `(` 之后数括号，返回参数区原文；括号不平衡返回 null
+     *
+     * Counts parentheses from the opening `(` and returns the raw argument
+     * region; null when the parentheses are unbalanced.
+     */
     private fun balancedArgs(tail: String): String? {
         var depth = 1
         tail.forEachIndexed { index, c ->
@@ -164,6 +192,14 @@ class UiTextArityTest {
      *
      * 嵌套括号与 lambda 花括号里的逗号不算；字符串字面量整段跳过，
      * 免得带逗号的文案参数被多数一个
+     *
+     * The resource id has already been consumed by the regex; [args] is the
+     * segment after it (starting with a comma), so the number of top-level
+     * commas is the remaining argument count.
+     *
+     * Commas inside nested parentheses or lambda braces do not count; string
+     * literals are skipped whole, so a message argument containing a comma is
+     * not over-counted.
      */
     private fun countArgsAfterResource(args: String): Int {
         var depth = 0

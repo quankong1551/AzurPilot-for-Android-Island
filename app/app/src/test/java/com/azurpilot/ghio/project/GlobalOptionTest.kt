@@ -21,10 +21,21 @@ import org.junit.Test
  *
  * 一律用合成 PI：`src/test/fixtures/PI/M9A` 那份没声明 global_option，
  * 而它是冻结的断言基准，不该为新特性改动
+ *
+ * Pins down the full `global_option[]` chain of PI v2.3.0: parse and merge →
+ * read-only projection → override compile order.
+ *
+ * Every case uses a synthetic PI: the frozen fixture `src/test/fixtures/PI/M9A`
+ * declares no global_option, and it must not be touched for new features.
  */
 class GlobalOptionTest {
 
-    /** 两个 option：global 与 task 都往同一个 pipeline 节点写，用来验先后 */
+    /**
+     * 两个 option：global 与 task 都往同一个 pipeline 节点写，用来验先后
+     *
+     * Two options: the global and the task one both write to the same
+     * pipeline node, to verify the ordering.
+     */
     private fun pi(
         globalOption: String = """"global_option":["音量"],""",
         volumeScope: String = "",
@@ -58,7 +69,12 @@ class GlobalOptionTest {
         }
     """.trimIndent()
 
-    /** 全局 option 缺 default_case：应回落首个 case（甲） */
+    /**
+     * 全局 option 缺 default_case：应回落首个 case（甲）
+     *
+     * A global option without default_case: falls back to the first case
+     * ("甲").
+     */
     private fun withoutDefaultCase(): String =
         pi(globalOption = """"global_option":["无默认"],""").replace(
             """"难度": {""",
@@ -69,7 +85,12 @@ class GlobalOptionTest {
             "难度": {""",
         )
 
-    /** cases 为空：回落也没有落点，编译时必然报「未设值且无默认」 */
+    /**
+     * cases 为空：回落也没有落点，编译时必然报「未设值且无默认」
+     *
+     * cases is empty: the fallback has no target either, so compilation must
+     * report "no value set and no default".
+     */
     private fun withoutUsableDefault(): String =
         pi(globalOption = """"global_option":["无落点"],""").replace(
             """"难度": {""",
@@ -113,7 +134,11 @@ class GlobalOptionTest {
         assertEquals(emptyList<String>(), load(pi(globalOption = "")).definition.globalOptionNames)
     }
 
-    /** 协议「Option 覆盖顺序」 */
+    /**
+     * 协议「Option 覆盖顺序」
+     *
+     * The protocol's "Option override order".
+     */
     @Test
     fun `global 排在 task option 之前`() {
         val definition = load(pi()).definition
@@ -139,7 +164,12 @@ class GlobalOptionTest {
         assertEquals("100", volume.jsonPrimitive.content)
     }
 
-    /** v2.3.1：option 自身的 resource 限制对 global 同样生效，不满足即整个不参与合并 */
+    /**
+     * v2.3.1：option 自身的 resource 限制对 global 同样生效，不满足即整个不参与合并
+     *
+     * v2.3.1: an option's own resource restriction applies to global options
+     * too; when unmet, the whole option takes no part in the merge.
+     */
     @Test
     fun `不满足 resource 限制的 global option 不产生 override`() {
         val definition = load(pi(volumeScope = """"resource":["国际服"],""")).definition
@@ -157,7 +187,12 @@ class GlobalOptionTest {
         )
     }
 
-    /** 生态里绝大多数 option 不写 default_case，回落首个 case 而不是把整轮拦下 */
+    /**
+     * 生态里绝大多数 option 不写 default_case，回落首个 case 而不是把整轮拦下
+     *
+     * Most options in the ecosystem omit default_case: fall back to the
+     * first case instead of blocking the whole run.
+     */
     @Test
     fun `无 default_case 时回落首个 case`() {
         val definition = load(withoutDefaultCase()).definition
@@ -166,7 +201,12 @@ class GlobalOptionTest {
         assertEquals("first", pick.jsonPrimitive.content)
     }
 
-    /** 全局 option 与任务无关，诊断不该按启用任务数翻倍 */
+    /**
+     * 全局 option 与任务无关，诊断不该按启用任务数翻倍
+     *
+     * Global options are task-independent, so the diagnostic must not be
+     * duplicated once per enabled task.
+     */
     @Test
     fun `cases 为空时只报一条诊断`() {
         val definition = load(withoutUsableDefault()).definition
@@ -188,7 +228,12 @@ class GlobalOptionTest {
         )
     }
 
-    /** 跑不到的全局 option 不该把「没有可执行任务」盖成 Invalid */
+    /**
+     * 跑不到的全局 option 不该把「没有可执行任务」盖成 Invalid
+     *
+     * A global option that can never run must not mask "no executable tasks"
+     * as Invalid.
+     */
     @Test
     fun `任务全禁用时仍报 NoExecutableTasks`() {
         val definition = load(withoutUsableDefault()).definition
@@ -250,7 +295,12 @@ class GlobalOptionTest {
         assertEquals(listOf("静音"), session.globalOptions.single().activeCases.map { it.name })
     }
 
-    /** docs/domain-model.md §6.3：不适用的 option 连同子树整个不显示，但值不删 */
+    /**
+     * docs/domain-model.md §6.3：不适用的 option 连同子树整个不显示，但值不删
+     *
+     * docs/domain-model.md §6.3: an inapplicable option is hidden together
+     * with its whole subtree, but its stored value is kept.
+     */
     @Test
     fun `resolver 隐藏不适用于当前资源的 global option`() {
         val definition = load(pi(volumeScope = """"resource":["国际服"],""")).definition

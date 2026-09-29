@@ -4,6 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
+/**
+ * 验证 [RunConfiguration.duplicate] 保留任务设置并生成独立的任务实例 ID
+ *
+ * Verifies that [RunConfiguration.duplicate] keeps the task settings and gives
+ * the copies independent task instance IDs.
+ */
 class RunConfigurationDuplicateTest {
     @Test
     fun duplicate_preservesTaskSettingsWithIndependentIds() {

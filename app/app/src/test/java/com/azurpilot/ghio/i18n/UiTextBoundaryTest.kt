@@ -9,6 +9,12 @@ import java.io.File
  *
  * 规则本身在 docs/android-ui-contract.md §3.1，但规则写在文档里挡不住任何人——
  * 这里把两条最容易被绕过的落成测试
+ *
+ * Pins down the rule that UiText is the only carrier for user-facing text.
+ *
+ * The rule itself lives in docs/android-ui-contract.md §3.1, but a rule
+ * written only in a document stops nobody — the two most easily bypassed
+ * clauses are enforced here as tests.
  */
 class UiTextBoundaryTest {
 
@@ -17,6 +23,14 @@ class UiTextBoundaryTest {
      *
      * 禁的是解析动作，不是引用资源——`uiTextOf(R.string.x)` 正是要的写法，
      * 而 `getString(R.string.x)` 会把那一刻的语言冻进值里，之后切语言不再更新
+     *
+     * Layers outside the render layers must not resolve string resources into
+     * a String in place.
+     *
+     * What is banned is the resolving action, not referencing the resource —
+     * `uiTextOf(R.string.x)` is exactly the intended form, while
+     * `getString(R.string.x)` freezes the language of that moment into the
+     * value, which then no longer updates on a language switch.
      */
     @Test
     fun `产出层不就地解析字符串资源`() {
@@ -41,6 +55,14 @@ class UiTextBoundaryTest {
      * 裸的 `Verbatim("…")` 看不出是「有意不翻译」还是「漏了」，
      * 而 `uiTextFromFramework("运行期间不能修改配置")` 一眼就是错的。
      * 单模块下 internal 挡不住任何人，只能靠这条扫描
+     *
+     * `UiText.Verbatim` may only be constructed by the three semantic
+     * factories.
+     *
+     * A bare `Verbatim("…")` cannot tell "intentionally untranslated" from
+     * "forgotten", while `uiTextFromFramework("运行期间不能修改配置")` is
+     * obviously wrong at a glance. Within one module `internal` stops nobody,
+     * so this scan is the only guard.
      */
     @Test
     fun `Verbatim 不被直接构造`() {
@@ -62,11 +84,21 @@ class UiTextBoundaryTest {
     private fun sourceFiles(): List<File> =
         File(SOURCE_ROOT).walkTopDown().filter { it.extension == "kt" }.toList()
 
-    /** Windows 下 File.path 是反斜杠，先归一再截，否则前缀永远对不上 */
+    /**
+     * Windows 下 File.path 是反斜杠，先归一再截，否则前缀永远对不上
+     *
+     * On Windows File.path uses backslashes, so normalize before trimming;
+     * otherwise the prefix never matches.
+     */
     private fun File.toRelative(): String =
         path.replace('\\', '/').substringAfter("$SOURCE_ROOT/")
 
-    /** 与 UiTextArityTest 同样的理由：注释里的示例不该算违规 */
+    /**
+     * 与 UiTextArityTest 同样的理由：注释里的示例不该算违规
+     *
+     * Same reasoning as [UiTextArityTest]: examples inside comments must not
+     * count as violations.
+     */
     private fun stripComments(source: String): String =
         source.replace(BLOCK_COMMENT, " ").replace(LINE_COMMENT, "")
 
@@ -78,6 +110,13 @@ class UiTextBoundaryTest {
          *
          * overlay 与 ui 平级而不是它的子目录——它是独立于 Activity 的第二个 UI 面，
          * 跨 Activity 存活，挂在 WindowManager 上
+         *
+         * Render layers: they draw resources in place and never pass text
+         * around as values, so the rule does not constrain them.
+         *
+         * overlay sits beside ui rather than under it — it is a second UI
+         * surface independent of any Activity, outliving Activities and
+         * attached to the WindowManager.
          */
         val RENDER_LAYERS = setOf("ui", "overlay")
         const val UI_TEXT_FILE = "i18n/UiText.kt"
@@ -89,6 +128,18 @@ class UiTextBoundaryTest {
          *
          * [RunEventNotifier] 只就地取 channel 的名字与说明：channel 建出来之后名字由系统留着，
          * 换成 UiText 也不会跟着切语言更新——那得删掉重建 channel，而那会丢掉用户在系统里的调整
+         *
+         * `UiText.resolve` is itself the sanctioned resolve exit.
+         * Two services render notifications in place: they have a Context and
+         * neither store the text as a value nor pass it across layers; the
+         * cost is that a live notification does not follow language switches —
+         * acceptable, since notifications are transient.
+         *
+         * [RunEventNotifier] only takes channel names and descriptions in
+         * place: once a channel exists its name is kept by the system, and
+         * switching it to UiText would not update it on a language switch
+         * either — that would require deleting and recreating the channel,
+         * which would lose the user's system-side adjustments.
          */
         val EAGER_RESOLVE_ALLOWED = setOf(
             "i18n/UiText.kt",
@@ -100,6 +151,10 @@ class UiTextBoundaryTest {
         /**
          * 必须带 `R.string` / `R.plurals` 限定
          * 光看方法名会把 `Settings.Secure.getString` 与 `Bundle.getString` 一起抓进来
+         *
+         * Must be qualified with `R.string` / `R.plurals`.
+         * Matching on method names alone would also catch
+         * `Settings.Secure.getString` and `Bundle.getString`.
          */
         val EAGER_RESOLVE = Regex(
             """\b(stringResource|pluralStringResource)\(|\bget(String|QuantityString)\(\s*R\.(string|plurals)\.""",

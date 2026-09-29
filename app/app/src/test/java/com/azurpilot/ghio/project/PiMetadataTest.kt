@@ -9,7 +9,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 只查表、不读文件的物化钩子；文件形态由 ProjectLoader 负责，这里不进 IO */
+/**
+ * 只查表、不读文件的物化钩子；文件形态由 ProjectLoader 负责，这里不进 IO
+ *
+ * Fake [PiTextResolver] that only consults the table and never reads files;
+ * the file-based form is ProjectLoader's job, so no IO happens here.
+ */
 private class MapTextResolver(private val translations: Map<String, String>) : PiTextResolver {
     override fun label(raw: String?): String? = raw?.let(::translate)
     override fun description(raw: String?): String? = raw?.let(::translate)
@@ -19,6 +24,12 @@ private class MapTextResolver(private val translations: Map<String, String>) : P
 
 private fun root(json: String) = Json.parseToJsonElement(json).jsonObject
 
+/**
+ * 验证 [PiParser] 对 metadata / telemetry / icon 的解析与 welcome 指纹语义
+ *
+ * Verifies [PiParser] parsing of metadata, telemetry and icons, plus the
+ * welcome fingerprint semantics.
+ */
 class PiMetadataTest {
 
     @Test
@@ -53,7 +64,12 @@ class PiMetadataTest {
         assertNull(metadata.github)
     }
 
-    /** 指纹算在原始声明上，否则切一次语言就会让同一份 welcome 再弹一次 */
+    /**
+     * 指纹算在原始声明上，否则切一次语言就会让同一份 welcome 再弹一次
+     *
+     * The fingerprint is computed on the raw declaration; otherwise one
+     * language switch would re-show the same welcome.
+     */
     @Test
     fun `welcome 指纹不随语言变化`() {
         val source = root("""{ "version": "1.2.0", "welcome": "${'$'}welcome.body" }""")
@@ -148,7 +164,12 @@ class PiMetadataTest {
         assertEquals("icon/c.webp", option.cases.single().icon)
     }
 
-    /** icon 是路径不是文案：走查表的话 $ 开头的路径会被当成 i18n key */
+    /**
+     * icon 是路径不是文案：走查表的话 $ 开头的路径会被当成 i18n key
+     *
+     * An icon is a path, not copy: going through the translation table would
+     * treat a `$`-prefixed path as an i18n key.
+     */
     @Test
     fun `icon 不查翻译表`() {
         val parsed = PiParser.parseFile(
