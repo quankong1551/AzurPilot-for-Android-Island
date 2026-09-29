@@ -17,50 +17,26 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * 激进保活系统总控：编排全部保活子系统，并对外提供心跳自检自愈入口
+ * 后台活动信号与自检的协调器。
  *
- * 聚合十重保活机制：
- * 1. 后台 24 小时无音量音频 (24/7 background silent audio) -> AudioFlinger 活跃媒体流提升进程优先级
- * 2. 前台 1px 透明浮窗像素 (1px foreground overlay pixel) -> WMS/AMS 判定为 PROCESS_STATE_VISIBLE 状态
- * 3. 伴侣设备服务 (CompanionDeviceService) -> 系统级后台执行与网络豁免
- * 4. 无障碍服务守护 (AccessibilityService daemon) -> 利用 system_server 的无障碍死亡自动重拉机制
- * 5. CPU 防休眠唤醒锁 (WakeLock) -> 阻止系统在息屏时进入深度休眠
- * 6. 定时精准闹钟唤醒 (AlarmManager setExactAndAllowWhileIdle) -> 周期性唤醒 CPU 执行自检自愈
- * 7. 系统定时作业调度 (JobScheduler) -> 15分钟系统级作业持久化守护
- * 8. 系统事件多广播监听 (BroadcastReceiver) -> 静态与动态监听开机、解锁、亮灭屏、电源插拔
- * 9. START_STICKY 粘性服务 (Sticky Service) -> 内存压力释放后系统自动重建服务与进程
- * 10. 双进程互拉守护 (Dual-Process Watchdog) -> 主进程与 :daemon 独立进程互相监听 Binder 死亡并拉起
+ * 本类组合音频、悬浮窗、WakeLock、服务、闹钟、作业与事件回调，以便在组件仍可用时重建它们。
+ * 每一项都是尽力而为的活动信号或重试触发器，受 Android 版本、权限、OEM 策略和资源压力约束；
+ * 它们不保证进程重启、后台存活或网络访问。伴侣设备服务尤其依赖既有的系统关联，而当前工程不创建关联。
  *
- * 进程级单例：[init] 写入 [getInstance]，供各接收器 / 服务在无 DI 注入的路径上取回实例。
- * [start] 在 [appScope] 上收集保活开关，切换时全量启用 / 停用所有子系统；运行期间由
- * 30 秒心跳协程、精准闹钟、系统广播与无障碍事件反复触发 [onKeepAlivePing] 自愈。
+ * [init] 写入 [getInstance]，使没有 DI 路径的接收器和服务能够发起 [onKeepAlivePing]。 [start]
+ * 在 [appScope] 收集开关；启用后，心跳、闹钟和系统事件可再次调用自检入口。
  *
- * Aggressive keep-alive orchestrator: coordinates every keep-alive subsystem and exposes
- * the heartbeat self-check / self-heal entry point.
+ * Coordinator for background-activity signals and self-checks.
  *
- * Ten keep-alive mechanisms:
- * 1. 24/7 background silent audio -> an active media stream in AudioFlinger raises the
- *    process priority
- * 2. 1px transparent foreground overlay pixel -> WMS/AMS classify the process as
- *    PROCESS_STATE_VISIBLE
- * 3. CompanionDeviceService -> system-level background execution and network exemptions
- * 4. Accessibility daemon -> leverages system_server's automatic rebind of accessibility
- *    services
- * 5. CPU partial wake lock -> keeps the system out of deep sleep while the screen is off
- * 6. Exact alarm wake-ups (AlarmManager setExactAndAllowWhileIdle) -> periodic CPU
- *    wake-ups for self-check and self-heal
- * 7. JobScheduler -> a persisted 15-minute system job
- * 8. System-event broadcast listeners -> static and dynamic receivers for boot, unlock,
- *    screen, and power events
- * 9. START_STICKY sticky service -> the system rebuilds it once memory pressure eases
- * 10. Dual-process watchdog -> the main process and the `:daemon` process watch each
- *     other's binder death and restart each other
+ * This class combines audio, an overlay, WakeLock, services, alarms, jobs, and event callbacks so it
+ * can recreate components while they remain available. Each is a best-effort activity signal or retry
+ * trigger constrained by Android version, permissions, OEM policy, and resource pressure; none
+ * guarantees a process restart, background lifetime, or network access. The companion service in
+ * particular requires an existing system association, which this repository does not create.
  *
- * Process-level singleton: [init] writes [getInstance] so receivers and services can
- * reach the instance on paths without DI. [start] collects the keep-alive toggle on
- * [appScope], enabling or disabling all subsystems wholesale on change; while running,
- * the 30-second heartbeat coroutine, exact alarms, system broadcasts, and accessibility
- * events repeatedly drive [onKeepAlivePing].
+ * [init] writes [getInstance] so receivers and services without a DI path can request
+ * [onKeepAlivePing]. [start] collects the toggle on [appScope]; once enabled, heartbeats, alarms,
+ * and system events may call the self-check entry point again.
  */
 class KeepAliveManager(
     private val context: Context,

@@ -12,49 +12,21 @@ import android.os.IBinder
 import timber.log.Timber
 
 /**
- * 适配金标联盟「公平运行内存」机制：接收系统的 TRIM 预警与 KILL 查杀前广播并按协议应答
+ * ITGSA 内存通知的协议适配器。
  *
- * HyperOS / OriginOS 等按金标联盟标准实现的系统会统计应用（同 uid 高优先级进程集合）的
- * PSS 与 Java 堆，超限时先发 TRIM 预警广播（应释放内存），查杀前再发 KILL 广播（应
- * 3 秒内备份现场并应答）。不适配的应用感知不到内存风险，后台留存时长还会被打折——
- * 对本应用就是跑任务期间被杀、虚拟屏被释放，所以必须接。
+ * 在实现相应厂商协议的系统上，本类注册 TRIM 和 KILL action，并从 `common`/`extra` Bundle
+ * 读取通知信息；存在回调 Binder 时，按本类实现的字段顺序回传处理结果。注册、投递范围、阈值、
+ * 超时和系统对回复的处理均由设备 ROM 决定，应用侧只能尽力释放内存并记录现场，不能保证额外
+ * 宽限时间、避免终止或改变 PSS 归属。
  *
- * 协议（公平运行内存规范 / HyperOS 开发者文档）：
- * - action：`itgsa.intent.action.TRIM`（预警）/ `itgsa.intent.action.KILL`（查杀前通知）
- * - extras["common"]：notifyType（1000=PSS 超限，2000=Java 堆超限）、notifyId、reason、
- *   action（"trim"/"kill"）、callback（IBinder）
- * - extras["extra"]：notifyType=1000 时含 pss/pssLimit，=2000 时含 heapAlloc/heapCapacity（KB）
- * - 应答：callback.transact(FIRST_CALL_TRANSACTION, data, reply, FLAG_ONEWAY)，data 依次写
- *   notifyType、notifyId、result（0=已处理，1=未处理）与 extra（含 "reply" 说明），3 秒硬限
+ * ITGSA memory-notification protocol adapter.
  *
- * 本应用内存大头是 root uid 的 proot 运行时进程，不计入本应用 PSS；应用侧能释放的量有限，
- * 适配的价值在于按协议应答：系统视本应用为已适配，预警/查杀前会给缓冲而不是直接强杀。
- *
- * Adapts the ITGSA "Fair Running Memory" scheme: receives the system's TRIM warning and
- * pre-kill KILL broadcasts and replies per the protocol.
- *
- * HyperOS / OriginOS and other ROMs implementing the ITGSA standard track the app's (the
- * same-uid high-priority process group's) PSS and Java heap. Past a limit they first send
- * a TRIM warning broadcast (release memory), then a KILL broadcast before killing (back
- * up the scene and reply within 3 seconds). An app that does not adapt never learns of
- * the memory risk and gets its background retention discounted — for this app that means
- * being killed mid-task and losing the virtual display, so the adaptation is mandatory.
- *
- * Protocol (Fair Running Memory spec / HyperOS developer docs):
- * - actions: `itgsa.intent.action.TRIM` (warning) / `itgsa.intent.action.KILL` (pre-kill
- *   notice)
- * - extras["common"]: notifyType (1000 = PSS over limit, 2000 = Java heap over limit),
- *   notifyId, reason, action ("trim"/"kill"), callback (IBinder)
- * - extras["extra"]: notifyType=1000 carries pss/pssLimit, 2000 carries
- *   heapAlloc/heapCapacity (KB)
- * - reply: callback.transact(FIRST_CALL_TRANSACTION, data, reply, FLAG_ONEWAY), with data
- *   writing notifyType, notifyId, result (0 = handled, 1 = not handled) and extra (with a
- *   "reply" note) in that order; 3-second hard deadline
- *
- * The bulk of this app's memory belongs to the root-uid proot runtime process and does
- * not count toward the app's PSS, so little can be freed app-side; the value of adapting
- * lies in replying per protocol: the system then treats the app as adapted and grants a
- * buffer before warning / killing instead of killing outright.
+ * On systems implementing the relevant vendor protocol, this class registers TRIM and KILL actions
+ * and reads notification data from `common` and `extra` Bundles. When a callback Binder is present,
+ * it returns the handling result in the field order implemented here. Registration, delivery scope,
+ * thresholds, deadlines, and the system's treatment of a reply are ROM-defined. The app can only
+ * make a best-effort memory-release request and record state; it cannot guarantee extra grace time,
+ * prevent termination, or alter PSS accounting.
  */
 class FairMemoryAdaptation(private val context: Context) {
 

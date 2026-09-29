@@ -40,36 +40,36 @@ static const char *kAppProcessPath = "/system/bin/app_process";
 static const uid_t kShellUid = 2000;
 
 // shell 进程需要的补充 GID。降级前设置完整组集，保留媒体、存储、网络、输入和日志访问，
-// 而不维持 root UID。数值来自 Android 平台 AID 定义，不能按应用包名推导。
+// 而不维持 root UID。数值和 AID 名称来自 Android 平台定义，不能按应用包名推导。
 //
 // Supplemental GIDs required by a shell process. Setting the full group set before demotion
-// retains media, storage, network, input, and log access without retaining root UID. Values come
-// from Android platform AID definitions and cannot be derived from the app package.
+// retains media, storage, network, input, and log access without retaining root UID. Values and AID
+// names come from Android platform definitions and cannot be derived from the app package.
 static const gid_t kRequiredShellGids[] = {
-        2000, /* shell           */
-        1002, /* bluetooth       */
-        1004, /* input           */
-        1005, /* audio           */
-        1007, /* log             */
-        1011, /* adb             */
-        1013, /* media           */
-        1015, /* sdcard_rw       */
-        1024, /* mtp             */
-        1028, /* sdcard_r        */
-        1065, /* reserved_disk   */
-        1078, /* ext_data_rw     */
-        1079, /* ext_obb_rw      */
-        1096, /* update_engine_log */
-        3001, /* net_bt_admin    */
-        3002, /* net_bt          */
-        3003, /* inet            */
-        3006, /* net_bw_stats    */
-        3007, /* net_bw_acct     */
-        3009, /* readproc        */
-        3010, /* wakelock        */
-        3011, /* uhid            */
-        3012, /* readtracefs     */
-        3013, /* virtualmachine  */
+        2000, // AID_SHELL：shell 主组。
+        1002, // AID_BLUETOOTH：蓝牙控制。
+        1004, // AID_INPUT：输入注入。
+        1005, // AID_AUDIO：音频访问。
+        1007, // AID_LOG：logcat 读取。
+        1011, // AID_ADB：ADB 相关访问。
+        1013, // AID_MEDIA：媒体服务访问。
+        1015, // AID_SDCARD_RW：外部存储读写。
+        1024, // AID_MTP：MTP 存储访问。
+        1028, // AID_SDCARD_R：外部存储读取。
+        1065, // AID_RESERVED_DISK：系统保留磁盘访问。
+        1078, // AID_EXT_DATA_RW：应用外部数据读写。
+        1079, // AID_EXT_OBB_RW：OBB 数据读写。
+        1096, // AID_UPDATE_ENGINE_LOG：更新引擎日志读取。
+        3001, // AID_NET_BT_ADMIN：蓝牙网络管理。
+        3002, // AID_NET_BT：蓝牙网络访问。
+        3003, // AID_INET：网络套接字访问。
+        3006, // AID_NET_BW_STATS：网络流量统计。
+        3007, // AID_NET_BW_ACCT：网络流量记账。
+        3009, // AID_READPROC：受限 proc 信息读取。
+        3010, // AID_WAKELOCK：唤醒锁访问。
+        3011, // AID_UHID：用户态 HID 访问。
+        3012, // AID_READTRACEFS：tracefs 读取。
+        3013, // AID_VIRTUALMACHINE：虚拟机相关访问。
 };
 
 // 描述 RootServiceStarter 所需的 app_process 启动参数。

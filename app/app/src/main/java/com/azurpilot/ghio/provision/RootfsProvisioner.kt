@@ -238,12 +238,17 @@ class RootfsProvisioner(
     }
 
     /**
-     * 用户确认后调用；AppRoot 在结果出来前不会启动 proot。
+     * 用户确认后尝试下载并部署更新；AppRoot 在结果出来前不会启动 proot。
      *
-     * Called after the user confirms; AppRoot will not start proot before the
-     * outcome is in. 在跑则忽略；失败置 error 而非 Failed 态 / Ignored while a
-     * run is in flight; failures set the check error rather than the Failed
-     * state. IO 调度器上执行 / Runs on the IO dispatcher.
+     * 运行中请求会忽略。失败会记录更新检查错误，最终仍进入 [ProvisionState.Ready]，其含义是已有
+     * Runtime 继续作为当前部署，不表示本次更新成功。该函数在 IO 调度器运行。
+     *
+     * Attempts to download and deploy an update after user confirmation; AppRoot does not start
+     * proot before the outcome is known.
+     *
+     * Requests during an active run are ignored. Failure records an update-check error and finally
+     * enters [ProvisionState.Ready], which means the existing Runtime remains the current deployment,
+     * not that this update succeeded. Runs on the IO dispatcher.
      */
     fun applyUpdate() {
         if (!running.compareAndSet(false, true)) return
@@ -476,17 +481,19 @@ class RootfsProvisioner(
     }
 
     /**
-     * 流式解包到 `rootfs.tmp`，校验通过后整体换名到正式目录
+     * 流式解包到 `rootfs.tmp`，验证后替换正式目录。
      *
-     * 步骤：解 tar → 补硬链接前向引用 → 版本/python 双校验 → 写 marker →
-     * 保留用户实例配置与日志 → 旧目录改名为 rootfs.previous → tmp 换名。
+     * 步骤：解 tar、补硬链接前向引用、校验版本和 Python、写 marker、在切换前尽力复制用户实例
+     * 配置与日志、将旧目录改名为 `rootfs.previous`、再将 tmp 换名。配置和日志迁移不是单独原子的：
+     * 复制失败会在切换前终止部署并保留旧 Runtime；最终 tmp 换名失败时会尝试恢复旧目录。
      *
-     * Streams the archive into `rootfs.tmp` and renames it into place only
-     * after verification passes.
+     * Streams the archive into `rootfs.tmp` and replaces the live directory after validation.
      *
-     * Steps: untar → backfill forward-referencing hard links → version/python
-     * dual verification → write the marker → keep user instance configs and
-     * logs → rename the old directory to rootfs.previous → rename tmp in.
+     * Steps: untar, backfill forward hard links, verify version and Python, write the marker,
+     * best-effort copy user instance configuration and logs before cutover, rename the old directory
+     * to `rootfs.previous`, then rename tmp in. Configuration and log migration is not separately
+     * atomic: a copy failure stops deployment before cutover and retains the old Runtime; a final
+     * tmp-rename failure attempts to restore the old directory.
      *
      * @param openArchive 打开包流的工厂（可重复调用）/ factory opening the archive
      *   stream (repeatable)

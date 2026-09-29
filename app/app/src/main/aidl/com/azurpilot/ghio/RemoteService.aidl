@@ -25,11 +25,14 @@ interface RemoteService {
     /**
      * 请求特权进程完整清理后退出。
      *
-     * `16777114` 是 Shizuku user-service 保留 transaction ID，必须保持不变。
+     * `16777114` 是此服务 `destroy()` 的显式稳定 ABI code。生命周期清理会由
+     * `RootServiceStarter` 直接调用 `IBinder.transact`，因此不得改号或重用。
      *
      * Requests that the privileged process clean up completely and exit.
      *
-     * `16777114` is Shizuku's reserved user-service transaction ID and must remain unchanged.
+     * `16777114` is this service's explicit stable ABI code for `destroy()`. Lifecycle cleanup
+     * calls `IBinder.transact` directly from `RootServiceStarter`, so the code must not change or
+     * be reused.
      */
     oneway void destroy() = 16777114;
 

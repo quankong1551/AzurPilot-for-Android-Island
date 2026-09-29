@@ -24,13 +24,14 @@
 ### 版本号规则（CI `resolve` 步）
 
 1. 读取上一份已发布 `latest.json` 的 `versionCode`/`versionName`/`appCommit`。
-2. `appCommit` 可达且为本仓祖先，且 `git diff appCommit..HEAD -- '*.kt'` 为空
-   → 沿用旧版本号（只发 Runtime，不动 App 版本）。
-3. 否则 `versionCode = 旧值 + 1`，`versionName = 1.0.(旧补丁 + 1)`。
-4. 无历史时：`versionCode = HEAD 提交时间戳`，`versionName = 1.0.提交计数`。
+2. CI 始终按 `1.2.<X>` 计算候选 `versionName`，其中 `X = max(提交计数 − 134, 0)`；候选 `versionCode` 是 HEAD 提交时间戳。
+3. 若 `appCommit` 可达且为本仓祖先，并且 `git diff --quiet "$app_commit" HEAD -- app` 成功，则 Android 工程输入未变：沿用已发布的 app 版本号，并可仅更新 Runtime。
+4. 若 `app/` 有变更且已有可用的上次版本，则 `versionCode = 旧值 + 1`，`versionName` 采用第 2 步的候选值，`appCommit` 更新为当前提交。
+5. 没有可比较的已发布版本时，使用第 2 步的候选值并记录当前提交。
 
-> 注意：本地构建的 versionCode 取 HEAD 时间戳，可能与 CI 递增出的版本号交错。
-> adb 安装 CI 包遇 `INSTALL_FAILED_VERSION_DOWNGRADE` 时加 `-d`。
+构建是否执行是另一项判断：CI 对 `app`、`rootfs` 和 `.github/workflows/rootfs.yml` 相对 `androidHostCommit` 的变化，以及上游 AzurPilot 提交进行比较。不要把“未变更 app 版本”解释为“不需要重建 Runtime 或 APK”。
+
+> 本地构建的 `versionCode` 取 HEAD 时间戳，可能与 CI 的已发布版本号交错。adb 安装 CI 包遇 `INSTALL_FAILED_VERSION_DOWNGRADE` 时加 `-d`。
 
 ### 镜像源
 
@@ -77,19 +78,15 @@ they must stay valid — the publish step pins them to the arm64 entry.
 
 ### Version rules (CI `resolve` step)
 
-1. Read `versionCode`/`versionName`/`appCommit` from the last published
-   `latest.json`.
-2. If `appCommit` is reachable, an ancestor of HEAD, and
-   `git diff appCommit..HEAD -- '*.kt'` is empty → keep the previous version
-   numbers (publish a Runtime only, no app version bump).
-3. Otherwise `versionCode = previous + 1` and
-   `versionName = 1.0.(previous patch + 1)`.
-4. With no history: `versionCode = HEAD commit timestamp` and
-   `versionName = 1.0.<commit count>`.
+1. Read `versionCode`, `versionName`, and `appCommit` from the last published `latest.json`.
+2. CI always calculates a candidate `versionName` as `1.2.<X>`, where `X = max(commit count − 134, 0)`; the candidate `versionCode` is the HEAD commit timestamp.
+3. If `appCommit` is reachable, is an ancestor of HEAD, and `git diff --quiet "$app_commit" HEAD -- app` succeeds, Android-project inputs are unchanged: retain the published app version and optionally publish a Runtime-only update.
+4. If `app/` changed and a comparable previous version exists, set `versionCode = previous + 1`, use the candidate `versionName` from step 2, and update `appCommit` to the current commit.
+5. Without a comparable published version, use the candidate values from step 2 and record the current commit.
 
-> Local builds derive `versionCode` from the HEAD timestamp, which can interleave
-> with CI-incremented numbers. Add `-d` to `adb install` when you hit
-> `INSTALL_FAILED_VERSION_DOWNGRADE`.
+Whether a build runs is a separate decision. CI compares `app`, `rootfs`, and `.github/workflows/rootfs.yml` against `androidHostCommit`, as well as the upstream AzurPilot commit. Do not interpret an unchanged app version as proof that no Runtime or APK rebuild is needed.
+
+> Local builds derive `versionCode` from the HEAD timestamp, which can interleave with CI-published version codes. Add `-d` to `adb install` when you hit `INSTALL_FAILED_VERSION_DOWNGRADE`.
 
 ### Mirrors
 

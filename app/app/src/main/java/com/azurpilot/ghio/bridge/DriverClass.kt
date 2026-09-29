@@ -43,28 +43,26 @@ object DriverClass {
     private const val FRAME_WAIT_INTERVAL_MS = 50L
 
     /**
-     * 在指定显示器上启动目标应用，并等待首帧渲染
+     * 在指定显示器上启动目标应用，并尝试等待首帧观测。
      *
-     * 主屏（[PrimaryDisplayManager.DISPLAY_ID]）走常规启动；虚拟屏启动后会校验
-     * 应用确实落在目标屏（部分 ROM 如 One UI 会把它挪回主屏），必要时拉回，再
-     * 阻塞等待 native 侧帧计数前进（见 [awaitFirstFrame]）。
+     * 主屏（[PrimaryDisplayManager.DISPLAY_ID]）走常规启动；虚拟屏启动后会校验应用确实落在
+     * 目标屏，必要时尝试拉回。成功启动后最多等待 [FRAME_WAIT_TIMEOUT_MS] 观察 native 帧计数前进；
+     * 超时只记录警告，不改变启动结果。
      *
-     * Launches the target app on the given display and waits for its first
-     * frame.
+     * Launches the target app on the given display and attempts to observe a first frame.
      *
-     * The primary display ([PrimaryDisplayManager.DISPLAY_ID]) takes the plain
-     * start; after a virtual-display start the app is verified to actually sit
-     * on the target display (some ROMs such as One UI move it back to the
-     * primary one) and pulled back if needed, then this blocks until the
-     * native frame counter advances (see [awaitFirstFrame]).
+     * The primary display ([PrimaryDisplayManager.DISPLAY_ID]) takes the plain start. After a virtual-
+     * display start, the app is checked on the target display and is moved back when possible. A
+     * successful start waits at most [FRAME_WAIT_TIMEOUT_MS] to observe a native frame-counter advance;
+     * timeout only logs a warning and does not change the launch result.
      *
      * @param packageName 目标应用（可为 "包名/Activity" 形式）/ the target app
      *   (possibly "package/Activity")
      * @param displayId 目标逻辑显示器 ID / target logical display id
      * @param forceStop 透传给 [ActivityUtils.startApp] 的强停开关 / force-stop
      *   flag passed through to [ActivityUtils.startApp]
-     * @return 启动且首帧到位返回 true / true when launched and the first frame
-     *   has arrived
+     * @return Activity 启动且在虚拟屏场景通过落屏校验时 true / true when the activity starts and,
+     *   for a virtual display, passes the placement check
      */
     @JvmStatic
     fun startApp(packageName: String, displayId: Int, forceStop: Boolean): Boolean {

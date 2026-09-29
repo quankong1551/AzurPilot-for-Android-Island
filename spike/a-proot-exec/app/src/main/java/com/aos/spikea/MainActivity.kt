@@ -93,6 +93,16 @@ class MainActivity : Activity() {
         if (mode() == "phantom") launchPhantom() else launchLadder()
     }
 
+    /**
+     * 启动完整阶梯的后台线程。
+     *
+     * [busy] 将一次运行限制为一个工作线程，避免两个 rootfs 部署或日志写入相互干扰。
+     *
+     * Starts the worker thread for a complete ladder.
+     *
+     * [busy] limits a run to one worker thread, preventing two rootfs deployments or log writes from
+     * interfering with each other.
+     */
     private fun launchLadder() {
         if (!busy.compareAndSet(false, true)) return
         Thread {
@@ -182,6 +192,16 @@ class MainActivity : Activity() {
         val timedOut: Boolean,
     )
 
+    /**
+     * 返回 PRoot 与 guest 进程共用的基线环境变量。
+     *
+     * 每次启动均删除继承的 `LD_PRELOAD`，避免宿主注入库改变 PRoot 的加载行为。
+     *
+     * Returns the baseline environment shared by PRoot and guest processes.
+     *
+     * Each launch removes inherited `LD_PRELOAD` so host-injected libraries cannot alter PRoot
+     * loading behavior.
+     */
     private val baseEnv: Map<String, String>
         get() = mapOf(
             "LD_LIBRARY_PATH" to nativeLibDir,
@@ -191,6 +211,18 @@ class MainActivity : Activity() {
             "HOME" to filesDir.absolutePath,
         )
 
+    /**
+     * 在 rootfs 工作目录中执行命令，并同时收集标准输出与标准错误。
+     *
+     * 两个读取线程持续排空管道，以免大量输出阻塞子进程；超时后强制终止进程并在结果中标记。
+     * 调用方必须在非主线程执行此函数。
+     *
+     * Runs a command in the rootfs working directory while collecting standard output and error.
+     *
+     * Separate reader threads drain both pipes so large output cannot block the child. A timed-out
+     * process is forcibly stopped and marked in the result. Callers must invoke this on a
+     * non-main thread.
+     */
     private fun exec(id: String, cmd: List<String>, extraEnv: Map<String, String> = emptyMap(), timeoutSec: Long = 30): ExecResult {
         log("[$id] CMD: ${cmd.joinToString(" ")}")
         if (extraEnv.isNotEmpty()) {
@@ -228,6 +260,16 @@ class MainActivity : Activity() {
         return ExecResult(if (finished) proc.exitValue() else null, outBuf.toString(), errBuf.toString(), null, ms, !finished)
     }
 
+    /**
+     * 执行一个阶梯步骤，记录其完整结果，并更新汇总表。
+     *
+     * 将启动失败、超时和非零退出码统一归为失败，便于设备间比较。
+     *
+     * Executes one ladder step, records its complete result, and updates the summary table.
+     *
+     * Launch failures, timeouts, and nonzero exit codes are all normalized as failures for
+     * cross-device comparison.
+     */
     private fun step(id: String, cmd: List<String>, extraEnv: Map<String, String> = emptyMap()): Boolean {
         val r = exec(id, cmd, extraEnv)
         val status = when {
@@ -246,6 +288,11 @@ class MainActivity : Activity() {
         return status == "PASS"
     }
 
+    /**
+     * 按执行顺序保存阶梯结果，供运行末尾输出稳定的结果表。
+     *
+     * Preserves ladder results in execution order for a stable table at the end of a run.
+     */
     private val results = LinkedHashMap<String, String>()
 
     /**
@@ -273,6 +320,17 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    /**
+     * 生成由 PRoot guest 执行的 Phantom 进程生成脚本。
+     *
+     * guest 将后台 busybox PID 写入 rootfs 的临时文件，使宿主进程可以在无需 `run-as` 的情况下
+     * 通过同 UID 的 [Os.kill] 探测其存活状态。
+     *
+     * Builds the Phantom-process spawning script executed by the PRoot guest.
+     *
+     * The guest writes background busybox PIDs to a rootfs temporary file, letting the host process
+     * probe their liveness through same-UID [Os.kill] without `run-as`.
+     */
     private fun guestPhantomScript(n: Int): String = """
         echo "GUEST_START pid=${'$'}${'$'}"
         : > /tmp/phantoms.pids
@@ -294,6 +352,11 @@ class MainActivity : Activity() {
         done
     """.trimIndent()
 
+    /**
+     * 返回 guest 写入 Phantom PID 列表的位置。
+     *
+     * Returns the location where the guest writes its Phantom PID list.
+     */
     private fun guestPidFile() = File(rootfsDir, "tmp/phantoms.pids")
 
     /**
@@ -326,6 +389,18 @@ class MainActivity : Activity() {
         return "$alive/${pids.size}"
     }
 
+    /**
+     * 运行一个 Phantom guest，直到其退出或达到可选持续时间。
+     *
+     * guest 后台任务的 stdin 会重定向到 `/dev/null`，因此显式绑定宿主 `/dev`；新建 rootfs
+     * 本身没有该节点。此函数在工作线程阻塞等待 PRoot 退出。
+     *
+     * Runs one Phantom guest until it exits or reaches the optional duration.
+     *
+     * Guest background jobs redirect stdin to `/dev/null`, so the host `/dev` is explicitly bound;
+     * a newly provisioned rootfs does not contain that node. This function blocks on a worker thread
+     * until PRoot exits.
+     */
     private fun runPhantom() {
         val n = intent?.getIntExtra("count", 48) ?: 48
         val durationSec = intent?.getIntExtra("durationSec", 0) ?: 0
@@ -395,6 +470,16 @@ class MainActivity : Activity() {
         log("[PHANTOM] PROOT_EXIT=$exit after ${(SystemClock.elapsedRealtime() - start) / 1000}s")
     }
 
+    /**
+     * 执行完整的 Spike A 阶梯并输出按步骤排序的结果表。
+     *
+     * 此函数重置上一次的结果，因此一次 Activity 运行只能由一个 [busy] 保护的工作线程进入。
+     *
+     * Runs the complete Spike A ladder and emits a result table ordered by step.
+     *
+     * This function clears results from the preceding run, so only one [busy]-guarded worker thread
+     * may enter it for an Activity instance.
+     */
     private fun runLadder() {
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         results.clear()
@@ -418,7 +503,8 @@ class MainActivity : Activity() {
         log("abis=${Build.SUPPORTED_ABIS.joinToString(",")}")
         log("targetSdk=${applicationInfo.targetSdkVersion} minSdk=${applicationInfo.minSdkVersion} versionName=${packageManager.getPackageInfo(packageName, 0).versionName}")
         val flags = applicationInfo.flags
-        val flagExtractNativeLibs = 1 shl 28 // ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS (hidden)
+        // 此隐藏常量没有公开 SDK 符号，但需要记录安装器是否提取 native 库。
+        val flagExtractNativeLibs = 1 shl 28
         log(
             "applicationFlags=0x${Integer.toHexString(flags)} " +
                 "debuggable=${flags and ApplicationInfo.FLAG_DEBUGGABLE != 0} " +

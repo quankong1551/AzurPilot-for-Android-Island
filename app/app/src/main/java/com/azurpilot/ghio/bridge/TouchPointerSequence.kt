@@ -86,8 +86,8 @@ object TouchPointerSequence {
      *   by POINTER_DOWN/POINTER_UP/MOVE
      * @property pointers 本步执行后的完整触点列表 / the full pointer list
      *   after this step
-     * @property cancelFirst 注入本步前是否要先对旧手势补发 ACTION_CANCEL /
-     *   whether to send a trailing ACTION_CANCEL for the old gesture before
+     * @property cancelFirst 注入本步前是否先以 ACTION_CANCEL 取消旧手势 /
+     *   whether to send a preceding ACTION_CANCEL for the old gesture before
      *   injecting this step
      */
     data class Step(

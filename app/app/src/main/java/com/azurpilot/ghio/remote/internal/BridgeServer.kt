@@ -23,28 +23,28 @@ import kotlin.concurrent.withLock
 import kotlin.math.roundToInt
 
 /**
- * AzurPilot 桥服务：m0 Python 代理（m0-archive/spike/m0/agent/main.py）的特权进程内 Kotlin 重写。
+ * 特权进程内的本地设备桥服务。
  *
- * 监听 127.0.0.1:22301，协议为行分隔 JSON 请求/响应 + screencap 响应行后紧跟裸字节帧，
- * 端点 ping/screencap/click/swipe/shell。协议形状与 AzurPilot 侧冻结客户端
- * 上游 patch 里的桥方法脚本 逐字节兼容：每回复（含错误帧）echo 请求 id。
+ * 服务仅绑定回环地址 `127.0.0.1:22301`。请求与常规响应均为一行 JSON；`screencap` 成功时，
+ * 元数据 JSON 行之后立即写入 `length` 字节的原始 BGR 数据。当前端点为 `ping`、`screencap`、
+ * `click`、`swipe` 和 `shell`，每个响应都会回显请求的 `id`。协议的兼容性以此实现和
+ * `doc/privileged-bridge-protocol.md` 为准，不应凭不存在的历史脚本或未固定的上游补丁推断。
  *
- * 线程模型：accept 循环一个线程，每客户端一个守护线程；帧读取与触摸注入共用
- * [DEVICE_LOCK] 串行（shell 端点除外）。start() 在 RemoteServiceImpl 构造期调用，
- * 失败记日志不抛。
+ * 一个线程接受连接，每个客户端使用一个守护线程。屏幕读取和触摸注入由 [DEVICE_LOCK] 串行，
+ * `shell` 不持有该锁。 [start] 在 [RemoteServiceImpl] 初始化期间调用；绑定失败只记录日志。
  *
- * The AzurPilot bridge server: a privileged-process Kotlin rewrite of the m0 Python agent
- * (m0-archive/spike/m0/agent/main.py).
+ * Loopback device bridge service in the privileged process.
  *
- * Listens on 127.0.0.1:22301 with a line-delimited JSON request/response protocol; a screencap
- * response line is immediately followed by the raw byte frame. Endpoints: ping, screencap,
- * click, swipe, shell. The protocol shape is byte-for-byte compatible with the frozen client
- * bridge scripts in the AzurPilot-side upstream patch: every reply (error frames included)
- * echoes the request id.
+ * The service binds only `127.0.0.1:22301`. Requests and ordinary responses are one JSON line;
+ * after a successful `screencap` metadata line it immediately writes `length` bytes of raw BGR data.
+ * Current endpoints are `ping`, `screencap`, `click`, `swipe`, and `shell`, and every response echoes
+ * the request `id`. Compatibility is defined by this implementation and
+ * `doc/privileged-bridge-protocol.md`; do not infer it from absent historical scripts or an
+ * unpinned upstream patch.
  *
- * Threading: one accept-loop thread plus one daemon thread per client. Frame reads and touch
- * injections are serialized by [DEVICE_LOCK] (the shell endpoint excepted). start() is called
- * from the RemoteServiceImpl constructor; failures are logged, never thrown.
+ * One thread accepts connections and each client has a daemon thread. [DEVICE_LOCK] serializes
+ * screen reads and touch injection; `shell` does not take the lock. [start] is called while
+ * [RemoteServiceImpl] initializes, and a bind failure is logged only.
  */
 object BridgeServer {
 

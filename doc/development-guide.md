@@ -52,7 +52,7 @@ Windows 注意事项：
    ```bash
    python app/scripts/check_i18n_strings.py
    ```
-   只校验 `values-en/` 对 `values/`（zh-CN 源）：键位对齐、占位符匹配、英文残留中文、文件内重复键；有错非零退出。`--no-fail` 只看报告；`--clean` 顺带删除冗余的 `values-zh/`。改过任何 `strings.xml` 后都要跑一遍。
+   只校验 `values-en/` 对 `values/`（zh-CN 源）：键位对齐、占位符匹配、英文残留中文、文件内重复键；有错非零退出。`--no-fail` 只看报告；`--clean` 删除冗余的 `values-zh/`，它只保证键集合归零差异，若其中存在不同译文会被默认值覆盖。改过任何 `strings.xml` 后都要跑一遍。
 
 ### 安装与调试
 
@@ -78,14 +78,14 @@ Windows 注意事项：
 
 - **versionCode** = 本仓 HEAD 提交时间戳（`app/build-logic/convention/src/main/kotlin/com/azurpilot/ghio/gradle/GitVersion.kt:40`）；事故时可设环境变量 `APP_VERSION_CODE` 手工钉版。
 - **versionName** = `1.2.<X>`：主干 `1.2`（`GitVersion.kt:49`），`X = 提交计数 − 134`，即版本方案切换点是本仓第 134 个提交（`X=0` → `1.2.0`，`GitVersion.kt:59`）；X 随提交增长，不随发布递增。
-- CI 的 `resolve` 步用同一公式（`.github/workflows/rootfs.yml:109`），并用正则 `^1\.(1|2)\.([0-9]+)$` 校验已发布版本（`.github/workflows/rootfs.yml:110`）；**改 `VERSION_BASE` 或基线计数时，`GitVersion.kt` 与 CI 正则必须同步**。
-- CI 只在 Kotlin 有变更时递增 versionCode（沿用旧值 +1），否则沿用旧版本号只发 Runtime（`.github/workflows/rootfs.yml:107-123`）；本地构建永远取 HEAD 时间戳，故本地 versionCode 可能大于 CI 包，安装时按需加 `-d`。
+- CI 的 `resolve` 步用同一公式（`.github/workflows/rootfs.yml:108-123`），并用正则 `^1\.(1|2)\.([0-9]+)$` 校验已发布版本（`.github/workflows/rootfs.yml:111`）；**改 `VERSION_BASE` 或基线计数时，`GitVersion.kt` 与 CI 正则必须同步**。
+- CI 用 `git diff --quiet "$app_commit" HEAD -- app` 判断 Android 工程输入是否改变：未变时沿用已发布 app 版本；改变时 versionCode 在上次值上加一、versionName 仍按 `1.2.<X>` 公式计算。`rootfs` 与工作流变化也可触发产物重建，但不单独推进 app 版本。
 
 ### 发布流程
 
 推送 `main` 或手动 dispatch 触发 `rootfs.yml`（`.github/workflows/rootfs.yml:3-35`，dispatch 可传上游 `azurpilot_ref`、`publish_update` 等）：
 
-1. **resolve**：取上游 AzurPilot dev head；与上次发布一致且 Kotlin 无变更则跳过构建。
+1. **resolve**：取上游 AzurPilot dev head；上游提交与 `app`、`rootfs`、工作流等产物输入均未变时才跳过构建。
 2. **build**：按 ABI 矩阵在原生 runner 上构建 rootfs（`rootfs/build/build-azurpilot.sh`），产物 `rootfs-<abi>`（含 `rootfs.tar.xz` 与 `BUILD_MANIFEST`）。
 3. **apk**：先跑 `app/scripts/fetch-proot-libs.sh`（`.github/workflows/rootfs.yml:242`）；再构建 ① per-arch 完整 APK（把对应 rootfs 放进 `assets/rootfs/` 后 `assembleRelease -Pazurpilot.releaseAbi=<abi>`，`.github/workflows/rootfs.yml:286-292`）与 ② 通用轻量包（`-Pazurpilot.slimApk=true`，双 ABI 无 rootfs，`.github/workflows/rootfs.yml:297-300`）。
 4. **publish**：push 或 `publish_update=true` 时上传固定 Release `azurpilot-android-latest` 并更新 `latest.json`；字段与镜像源见 [release-channel.md](release-channel.md)，架构矩阵见 [multi-arch.md](multi-arch.md)。
@@ -118,7 +118,8 @@ Windows 注意事项：
 - [multi-arch.md](multi-arch.md) — 架构矩阵与 32 位不可行的原因
 - [adb-e2e-testing.md](adb-e2e-testing.md) — ADB 全流程测试手册
 - [comment-style.md](comment-style.md) — 注释规范
-- [xiaomi-workstation.md](xiaomi-workstation.md) — 小米「工作台」适配
+- [build-profiles.md](build-profiles.md) — PI 打包配方、身份覆盖与验证
+- [privileged-bridge-protocol.md](privileged-bridge-protocol.md) — 特权回环桥协议与修改规则
 - [AGENTS.md](../AGENTS.md) — 构建命令与仓库约定的速查表
 
 ## English
@@ -169,7 +170,7 @@ Windows notes:
    ```bash
    python app/scripts/check_i18n_strings.py
    ```
-   It validates `values-en/` against `values/` (the zh-CN source): key parity, placeholder match, residual Chinese in English strings, and duplicate keys within a file; it exits non-zero on errors. `--no-fail` reports without failing; `--clean` also removes the redundant `values-zh/`. Run it after touching any `strings.xml`.
+   It validates `values-en/` against `values/` (the zh-CN source): key parity, placeholder match, residual Chinese in English strings, and duplicate keys within a file; it exits non-zero on errors. `--no-fail` reports without failing; `--clean` removes the redundant `values-zh/`. It guarantees only zero key-set difference: divergent translated text in that directory is discarded in favor of default values. Run it after touching any `strings.xml`.
 
 ### Install and debug
 
@@ -195,14 +196,14 @@ Windows notes:
 
 - **versionCode** = the commit timestamp of this repository's HEAD (`app/build-logic/convention/src/main/kotlin/com/azurpilot/ghio/gradle/GitVersion.kt:40`); set the `APP_VERSION_CODE` environment variable to hand-pin during a release incident.
 - **versionName** = `1.2.<X>`: the stem `1.2` (`GitVersion.kt:49`), `X = commit count − 134`, i.e. the commit that switched the scheme is #134 in this repository (`X=0` → `1.2.0`, `GitVersion.kt:59`); X grows with commits, not with releases.
-- The CI `resolve` step applies the same formula (`.github/workflows/rootfs.yml:109`) and validates published versions with the regex `^1\.(1|2)\.([0-9]+)$` (`.github/workflows/rootfs.yml:110`); **when changing `VERSION_BASE` or the baseline count, keep `GitVersion.kt` and the CI regex in sync**.
-- CI only bumps versionCode (previous + 1) when Kotlin changed; otherwise it keeps the old version and ships Runtime only (`.github/workflows/rootfs.yml:107-123`). Local builds always use the HEAD timestamp, so a local versionCode can exceed a CI build's — add `-d` when installing.
+- The CI `resolve` step uses the same formula (`.github/workflows/rootfs.yml:108-123`) and validates published versions with the regex `^1\.(1|2)\.([0-9]+)$` (`.github/workflows/rootfs.yml:111`); **when changing `VERSION_BASE` or the baseline count, keep `GitVersion.kt` and the CI regex in sync**.
+- CI uses `git diff --quiet "$app_commit" HEAD -- app` to decide whether Android-project inputs changed. With no change it retains the published app version; with change it increments versionCode from the previous value while still calculating versionName from `1.2.<X>`. `rootfs` and workflow changes can also trigger an artifact rebuild, but do not independently advance the app version.
 
 ### Release process
 
 Pushing to `main` — or a manual dispatch with inputs such as the upstream `azurpilot_ref` and `publish_update` — triggers `rootfs.yml` (`.github/workflows/rootfs.yml:3-35`):
 
-1. **resolve**: picks the upstream AzurPilot dev head; skips the build when nothing changed upstream and no Kotlin file changed since the last published APK.
+1. **resolve**: picks the upstream AzurPilot dev head; it skips the build only when the upstream commit and artifact inputs such as `app`, `rootfs`, and the workflow are unchanged.
 2. **build**: builds the rootfs per ABI on native runners (`rootfs/build/build-azurpilot.sh`), producing artifacts `rootfs-<abi>` (containing `rootfs.tar.xz` and `BUILD_MANIFEST`).
 3. **apk**: first runs `app/scripts/fetch-proot-libs.sh` (`.github/workflows/rootfs.yml:242`); then builds ① per-arch full APKs (copies the matching rootfs into `assets/rootfs/` and runs `assembleRelease -Pazurpilot.releaseAbi=<abi>`, `.github/workflows/rootfs.yml:286-292`) and ② the universal slim APK (`-Pazurpilot.slimApk=true`, both ABIs, no rootfs, `.github/workflows/rootfs.yml:297-300`).
 4. **publish**: on push or `publish_update=true`, uploads to the fixed release `azurpilot-android-latest` and refreshes `latest.json`; for fields and mirrors see [release-channel.md](release-channel.md), for the architecture matrix see [multi-arch.md](multi-arch.md).
@@ -235,5 +236,6 @@ Reproducing a full release build locally:
 - [multi-arch.md](multi-arch.md) — the architecture matrix and why 32-bit is not feasible
 - [adb-e2e-testing.md](adb-e2e-testing.md) — the ADB end-to-end testing guide
 - [comment-style.md](comment-style.md) — comment conventions
-- [xiaomi-workstation.md](xiaomi-workstation.md) — Xiaomi Workstation adaptation
+- [build-profiles.md](build-profiles.md) — PI packaging recipes, identity overrides, and verification
+- [privileged-bridge-protocol.md](privileged-bridge-protocol.md) — privileged loopback bridge protocol and change rules
 - [AGENTS.md](../AGENTS.md) — quick reference for build commands and repository conventions

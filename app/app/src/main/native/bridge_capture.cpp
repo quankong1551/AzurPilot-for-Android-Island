@@ -22,16 +22,16 @@
 
 // 当前采集器的单一所有者。
 //
-// reader 管理 listener 注册，window 只在 reader 存活期间有效。listener.context 保留
-// NativeCapturer 地址以满足 NDK 回调契约，但当前回调只使用其 reader 参数；setup 与 release
-// 必须串行，且回调不得在释放后解引用 context。
+// AImageReader 管理 listener 注册和 getWindow() 返回的借用 ANativeWindow；后者不能单独
+// release，只能随 reader 删除。listener.context 保留 NativeCapturer 地址以满足 NDK 回调契约，
+// 但当前回调不会解引用它。setup 与 release 由调用方串行。
 //
 // Single owner of the active capture resources.
 //
-// The reader manages listener registration, and the window is valid only while the reader lives.
-// listener.context retains the NativeCapturer address to satisfy the NDK callback contract, but the
-// current callback uses only its reader argument. Setup and release must be serialized, and a
-// callback must not dereference context after release.
+// AImageReader manages listener registration and the borrowed ANativeWindow returned by getWindow();
+// it must not be released independently and instead dies with the reader. listener.context keeps the
+// NativeCapturer address for the NDK callback contract, but the current callback does not dereference
+// it. Callers serialize setup and release.
 struct NativeCapturer {
     AImageReader *reader = nullptr;
     ANativeWindow *window = nullptr;

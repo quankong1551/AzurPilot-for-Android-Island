@@ -18,8 +18,9 @@ import com.azurpilot.ghio.third.wrappers.ServiceManager
  *
  * 维护当前触点集合 `slots` 与手势起始时间 `gestureDownTime`，每一步的目标状态由
  * [TouchPointerSequence.plan] 纯函数推导；注入经 [InputManager]（shell 身份）。
- * 所有 down/move/up 入口以本 object 为锁串行化，保证多触点序列的状态一致性；
- * 调用方为特权进程内的 native 桥线程。
+ * 所有 down/move/up 入口以本 object 为锁串行化，保证共享多触点状态一致。调用方可来自
+ * 特权进程内的 Binder、桥客户端或 JNI 路径，因此不同手势不能交错；每个调用方必须以连贯的
+ * down/move/up 序列使用同一逻辑手势。按键入口不共享该手势锁。
  *
  * Assembles touch/key injection: builds MotionEvents from the down/move/up
  * stream and feeds them to the hidden `injectInputEvent`.
@@ -27,9 +28,11 @@ import com.azurpilot.ghio.third.wrappers.ServiceManager
  * Keeps the current pointer set `slots` and the gesture down time
  * `gestureDownTime`; the target state of each step is derived by the pure
  * [TouchPointerSequence.plan]. Injection goes through [InputManager] (shell
- * identity). All down/move/up entries synchronize on this object so
- * multi-pointer sequences stay consistent; callers are the privileged
- * process's native bridge threads.
+ * identity). All down/move/up entries synchronize on this object to preserve
+ * shared multi-pointer state. Callers may be Binder, bridge-client, or JNI
+ * paths in the privileged process, so distinct gestures cannot interleave;
+ * each caller must use a coherent down/move/up sequence for one logical
+ * gesture. Key-entry methods do not share this gesture lock.
  */
 object InputControlUtils {
 

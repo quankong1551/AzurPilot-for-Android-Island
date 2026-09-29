@@ -9,19 +9,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 
 /**
- * 后台 24 小时无音量音频播放器
+ * 后台静音音频活动信号。
  *
- * 通过在底层 AudioFlinger 中保持一条活跃的无声音频流（AudioTrack MODE_STATIC 循环），
- * 让 Android 系统将本应用进程识别为正在进行媒体播放的前台活跃实体，从而防止进程被系统的
- * Low Memory Killer (LMK) 查杀，实现强效后台保活。数据全 0 且音量为 0，用户无感知。
+ * 该组件创建循环播放的全零 [AudioTrack]，并把音量设为零。它可作为某些设备上的媒体活动信号，
+ * 但不保证进程优先级、后台存活时间或在内存压力下不被终止；实际效果受 Android 版本、OEM 策略、
+ * 音频焦点和系统资源状态影响。
  *
- * 24/7 background silent audio player.
+ * Silent-audio activity signal for background operation.
  *
- * Keeps an active silent audio stream (an AudioTrack looping in MODE_STATIC) alive in
- * the underlying AudioFlinger, so Android recognizes the app process as an active media
- * playback entity. That prevents termination by the Low Memory Killer (LMK) and delivers
- * robust background persistence. The data is all zeros and the volume is 0, so the user
- * hears nothing.
+ * This component creates a looping all-zero [AudioTrack] with zero volume. It can act as a media
+ * activity signal on some devices, but it does not guarantee process priority, background lifetime,
+ * or survival under memory pressure. Android version, OEM policy, audio focus, and system resource
+ * state determine the actual effect.
  */
 class KeepAliveAudioPlayer {
 

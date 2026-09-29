@@ -5,27 +5,24 @@ import android.app.job.JobService
 import timber.log.Timber
 
 /**
- * 周期性系统作业保活服务
+ * 周期性 JobScheduler 回调服务。
  *
- * 由系统级服务 [android.app.job.JobScheduler] 在设定的周期到达时自动拉起
- * （manifest 声明 BIND_JOB_SERVICE 权限），即使主进程已被完全杀死，系统也会重新
- * 实例化本服务唤醒应用进程。动作即触发 [KeepAliveManager.onKeepAlivePing]
- * 执行保活自愈。
+ * JobScheduler 可在满足系统约束时启动此服务，并可能创建应用进程。当前实现仅在该进程已初始化
+ * [KeepAliveManager] 时调用 [KeepAliveManager.onKeepAlivePing]；冷启动时管理器为 null，作业只会
+ * 记录触发而不执行修复。调度频率和实际投递时间由系统与 OEM 策略决定。
  *
- * onStartJob 返回 false：自检同步完成，无需系统保持 wakelock 等待异步结果；
- * onStopJob 返回 true：作业被系统中断时请求重新调度。
+ * onStartJob 返回 false，因为本实现没有异步工作；onStopJob 返回 true，请求系统在约束允许时重排。
  *
- * Periodic JobScheduler keep-alive service.
+ * Periodic JobScheduler callback service.
  *
- * Executed automatically by the system [android.app.job.JobScheduler] when the period
- * elapses (the manifest declares the BIND_JOB_SERVICE permission); the system
- * re-instantiates this service to wake the app process even after the main process has
- * been killed entirely. The work itself is a [KeepAliveManager.onKeepAlivePing]
- * self-heal pass.
+ * JobScheduler can start this service when system constraints permit and may create the application
+ * process. The current implementation calls [KeepAliveManager.onKeepAlivePing] only when that process
+ * has already initialized [KeepAliveManager]; on a cold start the manager is null, so the job only logs
+ * its delivery and performs no repair. System and OEM policy determine scheduling frequency and actual
+ * delivery time.
  *
- * onStartJob returns false: the check completes synchronously, so the system need not
- * hold its wakelock for async work. onStopJob returns true: request a reschedule when
- * the job is interrupted by the system.
+ * onStartJob returns false because this implementation has no asynchronous work. onStopJob returns
+ * true to request rescheduling when constraints allow it.
  */
 class KeepAliveJobService : JobService() {
 

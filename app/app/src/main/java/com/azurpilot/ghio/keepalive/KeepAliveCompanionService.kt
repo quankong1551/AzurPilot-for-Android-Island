@@ -6,31 +6,21 @@ import androidx.annotation.RequiresApi
 import timber.log.Timber
 
 /**
- * 伴侣设备保活服务
+ * 伴侣设备系统回调服务。
  *
- * 在 Android 12+ (API 31+) 上，注册声明了 [android.Manifest.permission.BIND_COMPANION_DEVICE_SERVICE]
- * 权限及 [android.companion.CompanionDeviceService] intent-filter 的服务。
- * 配合 [android.Manifest.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND] 和
- * [android.Manifest.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND]，使系统将本应用
- * 认定为穿戴/伴侣设备管理服务，授予后台高优先级唤醒豁免、电池限制豁免与网络使用特权。
+ * Android 12+ 可在存在已建立的伴侣设备关联时绑定 [CompanionDeviceService] 并投递设备事件。
+ * 本服务不创建关联；当前工程也没有 [android.companion.CompanionDeviceManager] 的关联流程。因此，
+ * 没有关联时该服务不会成为保活触发源。声明的伴侣权限也不保证后台执行、电池限制或网络访问豁免。
+ * 回调到达时仅触发 [KeepAliveManager.onKeepAlivePing] 的尽力而为自检。
  *
- * 触发源：仅系统（system_server 持 BIND_COMPANION_DEVICE_SERVICE 权限）在存在伴侣设备
- * 关联且设备出现 / 消失时绑定并回调；本服务不自启，仓库内也没有创建关联的调用点，
- * 关联只能由系统侧建立。绑定与回调即触发 [KeepAliveManager.onKeepAlivePing] 自检自愈。
+ * Companion-device system callback service.
  *
- * Companion device keep-alive service.
- *
- * On Android 12+ (API 31+), registers a CompanionDeviceService with BIND_COMPANION_DEVICE_SERVICE.
- * Together with companion permissions (REQUEST_COMPANION_RUN_IN_BACKGROUND & USE_DATA_IN_BACKGROUND),
- * the system treats the app as a companion manager, granting system-level wakefulness exemptions,
- * background execution rights, and battery optimization bypasses.
- *
- * Trigger source: only the system (system_server holds BIND_COMPANION_DEVICE_SERVICE)
- * binds the service and calls back when a companion device association exists and the
- * device appears / disappears; the service never starts itself and the repo contains no
- * association-creation call site — associations can only be established from the system
- * side. Binding and callbacks both trigger [KeepAliveManager.onKeepAlivePing] for the
- * self-check and self-heal.
+ * Android 12+ can bind a [CompanionDeviceService] and deliver device events when an existing companion
+ * association is present. This service does not create associations, and this repository has no
+ * [android.companion.CompanionDeviceManager] association flow. Without an association it is not a
+ * keep-alive trigger. Declared companion permissions do not guarantee background execution, battery,
+ * or network exemptions. When a callback arrives, it only triggers the best-effort
+ * [KeepAliveManager.onKeepAlivePing] self-check.
  */
 @RequiresApi(Build.VERSION_CODES.S)
 class KeepAliveCompanionService : CompanionDeviceService() {

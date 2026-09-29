@@ -36,7 +36,7 @@
         android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- 伴侣设备保活：豁免后台运行与数据网络限制 -->
+    <!-- 伴侣设备相关权限：只有系统已有 app 发起且经用户确认的关联时，服务才可能收到回调；不保证后台或网络豁免。 -->
     <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
     <uses-permission android:name="android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND" />
 
@@ -126,7 +126,8 @@
         </service>
 
         <!--
-          伴侣设备保活服务：Android 12+ (API 31+) 注册 CompanionDeviceService 以获取系统级后台与免杀豁免
+          伴侣设备系统回调服务：仅在已有伴侣关联时可由系统绑定；本工程不创建关联，不能将此声明
+          视为后台执行、网络或进程存活保证。
         -->
         <service
             android:name=".keepalive.KeepAliveCompanionService"

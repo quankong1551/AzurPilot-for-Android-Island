@@ -89,8 +89,17 @@ static void nativeReleaseNativeCapturer(JNIEnv *env, jclass clazz) {
     ReleaseNativeCapturer();
 }
 
-// 返回已提交到共享帧缓冲的单调递增帧计数。
-// Returns the monotonic count of frames committed to shared frame buffers.
+// 返回当前已初始化帧缓冲生命周期内，已分配给成功转换帧的递增序号。
+//
+// 释放或重新初始化时计数会归零；该值在 read 指针发布前递增，适合比较本轮进度，但不能单独证明
+// 当前线程已经可以读取该帧。
+//
+// Returns the increasing sequence assigned to successfully converted frames in the current initialized
+// frame-buffer lifetime.
+//
+// Release or reinitialization resets the value. It increments before the read pointer is published,
+// so it compares progress within this lifetime only and cannot alone prove that the current thread
+// can already read that frame.
 static jlong nativeGetFrameCount(JNIEnv *env, jclass clazz) {
     (void) env;
     (void) clazz;
@@ -118,9 +127,13 @@ static JNINativeMethod gMethods[] = {
         {"getCaptureDiagnostics", "()Ljava/lang/String;",        reinterpret_cast<void *>(nativeGetCaptureDiagnostics)},
 };
 
-// JNI 二进制类名必须与 Kotlin 声明完全一致；混淆、移动包名或改 external 签名时须同步更新。
-// JNI binary class names must exactly match the Kotlin declarations; obfuscation, package moves,
-// or external-signature changes require corresponding updates here.
+// 这里保存的是斜杠分隔的 JNI 二进制类名，而非 Kotlin 源文件路径。R8 必须保留这两个类；
+// kNativeBridgeClass 的方法名和描述符必须与 gMethods 一致，kDriverClass 的回调方法描述符
+// 必须与 InitInputBridge() 的查找一致。
+//
+// These are slash-separated JNI binary class names, not Kotlin source paths. R8 must retain both
+// classes. kNativeBridgeClass method names and descriptors must match gMethods, while kDriverClass
+// callback descriptors must match the lookups in InitInputBridge().
 static constexpr char kNativeBridgeClass[] = "com/azurpilot/ghio/bridge/NativeBridgeLib";
 static constexpr char kDriverClass[] = "com/azurpilot/ghio/bridge/DriverClass";
 

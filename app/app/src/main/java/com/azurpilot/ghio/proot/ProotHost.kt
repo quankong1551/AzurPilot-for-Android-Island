@@ -121,15 +121,16 @@ class ProotHost(
     }
 
     /**
-     * 启动链：自愈清锁 → 播种实例配置 → 拉起会话 → 等服务就绪
+     * 启动链：自愈清锁、播种实例配置、拉起会话并等待服务就绪。
      *
-     * 调用方必须已持 [startMutex]；重复调用在会话存活时直接短路
+     * 本函数自行取得 [startMutex]；调用方不得预先持锁。会话已存活时重复调用直接短路。运行在 IO
+     * 调度器。
      *
-     * The start chain: self-heal cleanup → seed instance config → spawn the
-     * session → await services.
+     * The start chain: self-heal cleanup, seed instance configuration, spawn the session, and wait
+     * for services.
      *
-     * Callers must already hold [startMutex]; repeat calls short-circuit while
-     * the session is alive. IO 调度器上执行 / Runs on the IO dispatcher.
+     * This function acquires [startMutex] itself; callers must not hold it first. Repeat calls
+     * short-circuit while the session is alive. Runs on the IO dispatcher.
      */
     private suspend fun startLocked() = startMutex.withLock {
         if (session?.isAlive == true) return@withLock

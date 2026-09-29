@@ -34,12 +34,10 @@ object RootServiceBootstrapRegistry {
     const val KEY_APP_BINDER = "app_binder"
     const val KEY_APP_PID = "app_pid"
 
-    // token 只关联一个待完成 deferred；attach/remove 通过 remove 实现一次性消费。
-    // Each token maps to one pending deferred; attach/remove consume it exactly once through remove.
+    // attach/remove 通过移除 pending deferred 原子消费 token，禁止旧子进程复用回传通道。
     private val pendingBinders = ConcurrentHashMap<String, CompletableDeferred<IBinder>>()
 
-    // Binder 死亡即代表 app 主进程死亡，供 root 子进程关闭自身服务。
-    // Binder death represents app-main-process death, letting the root child close its service.
+    // app 主进程死亡时该 Binder 死亡，供 root 子进程关闭服务。
     private val appLifecycleBinder = Binder()
 
     /**

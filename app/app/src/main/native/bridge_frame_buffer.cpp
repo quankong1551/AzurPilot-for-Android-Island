@@ -408,8 +408,17 @@ bool WriteImageToFrame(AImage *image) {
     return true;
 }
 
-// 返回已成功发布的单调递增帧数。
-// Returns the monotonic count of successfully published frames.
+// 返回当前已初始化帧缓冲生命周期内，已分配给成功转换帧的递增序号。
+//
+// 释放或重新初始化时计数会归零；当前值在 read 指针发布前递增，因此仅可用于比较本轮进度，
+// 不能单独推断调用者已经能读取该帧。
+//
+// Returns the increasing sequence assigned to successfully converted frames in the current initialized
+// frame-buffer lifetime.
+//
+// Release or reinitialization resets the count. The value increments before the read pointer is
+// published, so it compares progress within this lifetime only and cannot alone prove that a caller
+// can already read that frame.
 int64_t GetFrameCount() {
     return g_frame_count.load(std::memory_order_acquire);
 }

@@ -28,8 +28,16 @@ typedef enum {
 // Three slots let a reader retain one frame while capture prepares the next.
 #define FRAME_BUFFER_COUNT 3
 
-// 保存一张紧凑 BGR888 帧及其分配元数据。
-// Stores one packed BGR888 frame and its allocation metadata.
+// 保存一张紧凑 BGR888 帧及其分配与发布元数据。
+//
+// 写入者在 g_read_buffer 的 release 存储前赋值 frame_count；读取者先 acquire 该指针才读取
+// 帧内容。index 在初始化时固定，用于定位同一槽位的原子状态和读取引用计数。
+//
+// Stores one packed BGR888 frame and its allocation and publication metadata.
+//
+// Writers assign frame_count before the release store to g_read_buffer; readers acquire that pointer
+// before reading frame contents. index is fixed during initialization and identifies the slot's
+// atomic state and reader-reference count.
 typedef struct {
     uint8_t *bgr_data;
     size_t bgr_size;
@@ -59,8 +67,17 @@ std::string GetFrameReadDiagnostics();
 // Copies the current BGR frame into an ARGB_8888 Java Bitmap; returns null when no frame exists.
 jobject CreateFrameBufferBitmap(JNIEnv *env);
 
-// 返回成功发布的单调递增帧数。
-// Returns the monotonic count of successfully published frames.
+// 返回当前已初始化帧缓冲生命周期内，已分配给成功转换帧的递增序号。
+//
+// 释放或重新初始化时计数会归零；该值在 read 指针发布前递增，只能比较本轮进度，不能单独证明
+// 调用方已可读取该帧。
+//
+// Returns the increasing sequence assigned to successfully converted frames in the current initialized
+// frame-buffer lifetime.
+//
+// Release or reinitialization resets the count. The value increments before the read pointer is
+// published, so it compares progress within this lifetime only and cannot alone prove that a caller
+// can read that frame.
 int64_t GetFrameCount();
 
 #endif // BRIDGE_FRAME_BUFFER_H

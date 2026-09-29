@@ -19,7 +19,9 @@
 | [xiaomi-workstation.md](xiaomi-workstation.md) | 小米澎湃OS「工作台」无极窗口 2.0 适配 / Xiaomi HyperOS Workstation (resizable windows 2.0) adaptation |
 | [comment-style.md](comment-style.md) | 注释规范：Google 风格基准 + 双语 KDoc 惯例 / Comment conventions: Google style baseline + bilingual KDoc rules |
 | [development-guide.md](development-guide.md) | 开发指南：环境、构建、调试、签名与发布 / Development guide: environment, build, debug, signing, and release |
+| [build-profiles.md](build-profiles.md) | 构建 Profile：PI 打包配方、身份覆盖与验证 / Build profiles: PI packaging recipes, identity overrides, and verification |
 | [module-reference.md](module-reference.md) | 模块参考：责任边界、关键入口与变更验证 / Module reference: ownership boundaries, key entry points, and change validation |
+| [privileged-bridge-protocol.md](privileged-bridge-protocol.md) | 特权桥协议：回环 framing、端点、并发与变更规则 / Privileged bridge protocol: loopback framing, endpoints, concurrency, and change rules |
 
 ## 阅读约定 / Conventions
 

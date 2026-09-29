@@ -38,9 +38,7 @@ object RootServiceStarter {
      */
     private const val DESTROY_TRANSACTION_CODE = 16777114
 
-    // linkToDeath 会随 BinderProxy 被 GC 而失效，必须持有强引用直到进程退出。
-    // linkToDeath can become ineffective when its BinderProxy is collected, so strong references
-    // must survive until process exit.
+    // linkToDeath 的观察对象与 DeathRecipient 都必须保留强引用直到进程退出。
     private var appLifecycleBinder: IBinder? = null
     private var appDeathRecipient: IBinder.DeathRecipient? = null
 
