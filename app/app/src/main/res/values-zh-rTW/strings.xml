@@ -148,6 +148,20 @@
     <string name="compat_notice_message">不同手機能否正常運作，差異很大。歡迎到 GitHub 的「機型支援列表」提交一筆：品牌、型號、系統版本、能不能用。你的一筆紀錄，能讓後來的人少踩坑。</string>
     <string name="compat_notice_go">去提交</string>
     <string name="compat_notice_later">暫不</string>
+    <string name="settings_hot_update">熱更新</string>
+    <string name="settings_hot_update_desc">只更新源碼和頁面資源，不重裝執行環境；更新中任務會先停止，完成後自動恢復。</string>
+    <string name="settings_hot_update_check">檢查更新</string>
+    <string name="settings_hot_update_apply">立即更新</string>
+    <string name="settings_hot_update_latest">已是最新</string>
+    <string name="settings_hot_update_available">發現新版本 %1$s</string>
+    <string name="settings_hot_update_wait_build">新版本資源還在準備中，稍後再試</string>
+    <string name="settings_hot_update_updating">正在更新：%1$s</string>
+    <string name="settings_hot_update_failed">上次更新失敗：%1$s</string>
+    <string name="settings_hot_update_disabled">下載渠道未就緒，重啟執行環境後生效</string>
+    <string name="settings_hot_update_phase_git">拉取源碼</string>
+    <string name="settings_hot_update_phase_dist">下載頁面資源</string>
+    <string name="settings_hot_update_phase_manifest">寫入版本資訊</string>
+    <string name="settings_hot_update_phase_reload">重啟執行環境</string>
     <string name="welcome_title">歡迎</string>
 
     <!-- 通知 -->

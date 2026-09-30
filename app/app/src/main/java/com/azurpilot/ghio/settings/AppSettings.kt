@@ -108,4 +108,18 @@ data class AppSettings(
      */
     @PrefKey(default = "false")
     val compatNoticeShown: String = "false",
+
+    /**
+     * 允许运行时热更新：经 /android/update 私有接口增量更新 AzurPilot 源码与
+     * 预构建前端（CI 按 commit 发布），只动 /opt/azurpilot 内的代码与资源，
+     * 不重装 rootfs。关闭后仅保留整包 Runtime 更新。
+     *
+     * Whether runtime hot updates are allowed: AzurPilot source and the
+     * prebuilt frontend (published per commit by CI) update incrementally via
+     * the /android/update private API, touching only code and assets under
+     * /opt/azurpilot — the rootfs is never reinstalled. When off, only the
+     * full-runtime update remains.
+     */
+    @PrefKey(default = "true")
+    val hotUpdateEnabled: String = "true",
 )

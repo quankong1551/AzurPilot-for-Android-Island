@@ -7,6 +7,7 @@ import com.azurpilot.ghio.constant.AppPaths
 import com.azurpilot.ghio.provision.RuntimeArch
 import com.azurpilot.ghio.service.RunForegroundService
 import com.azurpilot.ghio.settings.AppSettingsManager
+import com.azurpilot.ghio.update.ReleaseUrls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -248,6 +249,11 @@ class ProotHost(
         "AZURPILOT_ROOT" to GUEST_INSTALL_ROOT,
         "AZURPILOT_ANDROID" to "1",
         "AZURPILOT_ANDROID_TOKEN" to AndroidControlAuth.get(app),
+        // 热更预构建前端的下载基址：ghproxy 形态镜像前缀 + Release 基址，运行时按
+        // frontend-<commit>.tar.xz 探测/下载；镜像设置变更后下次会话生效
+        "AZURPILOT_ANDROID_DIST_BASE" to
+            ReleaseUrls.mirrorPrefix(settings.githubMirror.value, settings.githubMirrorCustom.value) +
+            ReleaseUrls.BASE,
     )
 
     /**

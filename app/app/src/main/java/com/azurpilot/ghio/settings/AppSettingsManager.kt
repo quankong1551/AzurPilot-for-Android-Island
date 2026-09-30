@@ -124,6 +124,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /** 首启「机型支持列表」弹窗是否已处理过 / Whether the first-launch device-support dialog has been handled. */
     val compatNoticeShown: StateFlow<Boolean> = _compatNoticeShown.asStateFlow()
 
+    private val _hotUpdateEnabled = MutableStateFlow(defaults.hotUpdateEnabled.toBoolean())
+
+    /** 允许运行时热更新 / Whether runtime hot updates are allowed. */
+    val hotUpdateEnabled: StateFlow<Boolean> = _hotUpdateEnabled.asStateFlow()
+
     private val _githubMirror = MutableStateFlow(defaults.githubMirror)
 
     /** Release 下载源 / The release download source. */
@@ -152,6 +157,7 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
                 _keepAliveEnabled.value = s.keepAliveEnabled.toBoolean()
                 _appLockEnabled.value = s.appLockEnabled.toBoolean()
                 _compatNoticeShown.value = s.compatNoticeShown.toBoolean()
+                _hotUpdateEnabled.value = s.hotUpdateEnabled.toBoolean()
                 _githubMirror.value = s.githubMirror
                 _githubMirrorCustom.value = s.githubMirrorCustom
                 // 必须是最后一行：置位即宣告上面全部就位
@@ -232,6 +238,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /** 写入「机型支持列表弹窗已处理」 / Writes the "device-support dialog handled" flag. */
     suspend fun setCompatNoticeShown(shown: Boolean) = with(AppSettingsSchema) {
         context.dataStore.edit { it[compatNoticeShown] = shown.toString() }
+    }
+
+    /** 写入「允许运行时热更新」 / Writes the "runtime hot updates allowed" flag. */
+    suspend fun setHotUpdateEnabled(enabled: Boolean) = with(AppSettingsSchema) {
+        context.dataStore.edit { it[hotUpdateEnabled] = enabled.toString() }
     }
 
     /** 写入 Release 下载源 / Writes the release download source. */

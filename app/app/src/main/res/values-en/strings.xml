@@ -152,6 +152,20 @@
     <string name="compat_notice_message">Whether the app runs well differs a lot between phones. Please add one entry — brand, model, system version, working or not — to the device support list on GitHub. Your single record saves others a lot of trial and error.</string>
     <string name="compat_notice_go">Open the list</string>
     <string name="compat_notice_later">Not now</string>
+    <string name="settings_hot_update">Hot update</string>
+    <string name="settings_hot_update_desc">Updates source and web assets only, never reinstalls the runtime; running tasks stop first and resume afterwards.</string>
+    <string name="settings_hot_update_check">Check for updates</string>
+    <string name="settings_hot_update_apply">Update now</string>
+    <string name="settings_hot_update_latest">Up to date</string>
+    <string name="settings_hot_update_available">New version %1$s available</string>
+    <string name="settings_hot_update_wait_build">Assets for the new version are not ready yet, try again later</string>
+    <string name="settings_hot_update_updating">Updating: %1$s</string>
+    <string name="settings_hot_update_failed">Last update failed: %1$s</string>
+    <string name="settings_hot_update_disabled">Download source not ready; takes effect after the runtime restarts</string>
+    <string name="settings_hot_update_phase_git">Fetching source</string>
+    <string name="settings_hot_update_phase_dist">Downloading web assets</string>
+    <string name="settings_hot_update_phase_manifest">Writing version info</string>
+    <string name="settings_hot_update_phase_reload">Restarting runtime</string>
     <string name="welcome_title">Welcome</string>
 
     <!-- Notifications -->

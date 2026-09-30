@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +61,7 @@ import com.azurpilot.ghio.domain.RemoteBackend
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.i18n.AppLocales
 import com.azurpilot.ghio.keepalive.KeepAliveManager
+import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
@@ -851,6 +854,7 @@ fun RuntimeSettingsPage(
     provisioner: RootfsProvisioner = koinInject(),
     updateManager: AppUpdateManager = koinInject(),
     settings: AppSettingsManager = koinInject(),
+    runController: AzurPilotRunController = koinInject(),
 ) {
     val scope = rememberCoroutineScope()
     val updater by repository.updater.collectAsStateWithLifecycle()
@@ -859,6 +863,8 @@ fun RuntimeSettingsPage(
     val updateState by updateManager.state.collectAsStateWithLifecycle()
     val githubMirror by settings.githubMirror.collectAsStateWithLifecycle()
     val githubMirrorCustom by settings.githubMirrorCustom.collectAsStateWithLifecycle()
+    val hotUpdateEnabled by settings.hotUpdateEnabled.collectAsStateWithLifecycle()
+    val hotUpdate by runController.hotUpdate.collectAsStateWithLifecycle()
     val installedVersion = provisioner.installedVersion()
     SettingsSubPage(titleRes = R.string.settings_cat_runtime, onBack = onBack, modifier = modifier) {
         AppCard {
@@ -894,6 +900,80 @@ fun RuntimeSettingsPage(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(stringResource(if (runtimeCheck.checking) R.string.settings_runtime_checking else R.string.settings_runtime_check))
+            }
+        }
+        // 热更卡片：经运行时私有接口增量更新源码与预构建前端；恢复链（实例停止、
+        // 依赖同步、重启后拉起）全部由运行时自身的文件协议接管，App 只触发与旁观
+        AppCard {
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_hot_update),
+                trailing = {
+                    Switch(
+                        checked = hotUpdateEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { settings.setHotUpdateEnabled(enabled) }
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_hot_update_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // 进页面刷一次；之后靠控制器 30 分钟一次的慢频 tick 与应用后的轮询
+            LaunchedEffect(Unit) { runController.refreshHotUpdate() }
+            val phaseText = when (hotUpdate?.phase) {
+                "git" -> stringResource(R.string.settings_hot_update_phase_git)
+                "dist" -> stringResource(R.string.settings_hot_update_phase_dist)
+                "manifest" -> stringResource(R.string.settings_hot_update_phase_manifest)
+                "reload" -> stringResource(R.string.settings_hot_update_phase_reload)
+                else -> null
+            }
+            val hot = hotUpdate
+            when {
+                hot == null -> {}
+                hot.busy && phaseText != null -> Text(
+                    stringResource(R.string.settings_hot_update_updating, phaseText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                hot.error.isNotEmpty() -> Text(
+                    stringResource(R.string.settings_hot_update_failed, hot.error),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                hot.available -> Text(
+                    stringResource(R.string.settings_hot_update_available, hot.upstreamHead?.take(12) ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                !hot.enabled -> Text(
+                    stringResource(R.string.settings_hot_update_disabled),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                !hot.distReady -> Text(
+                    stringResource(R.string.settings_hot_update_wait_build),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> Text(
+                    stringResource(R.string.settings_hot_update_latest),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.md)) {
+                TextButton(onClick = { runController.refreshHotUpdate() }) {
+                    Text(stringResource(R.string.settings_hot_update_check))
+                }
+                Button(
+                    onClick = { runController.applyHotUpdate() },
+                    enabled = hot != null && hot.available && !hot.busy,
+                ) {
+                    Text(stringResource(R.string.settings_hot_update_apply))
+                }
             }
         }
         AppCard {

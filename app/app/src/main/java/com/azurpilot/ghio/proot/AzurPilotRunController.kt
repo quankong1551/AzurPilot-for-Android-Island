@@ -97,6 +97,30 @@ data class AzurPilotRunState(
 }
 
 /**
+ * 运行时热更状态快照（/android/update/status 的解析结果）
+ *
+ * Snapshot of the runtime hot-update state (parsed from /android/update/status).
+ */
+data class HotUpdateState(
+    /** 运行时侧是否具备热更条件（已注入 dist 下载基址）/ Whether the runtime can hot-update (dist base URL injected). */
+    val enabled: Boolean = false,
+    /** 当前源码提交 / The current source commit. */
+    val localHead: String? = null,
+    /** 上游分支头提交 / The upstream branch-head commit. */
+    val upstreamHead: String? = null,
+    /** 有可用更新（上游更新且其预构建前端已发布）/ An update is available (upstream moved and its prebuilt frontend is published). */
+    val available: Boolean = false,
+    /** 上游头的预构建 dist 是否已发布 / Whether the upstream head's prebuilt dist is published. */
+    val distReady: Boolean = false,
+    /** 更新事务进行中 / An update transaction is in flight. */
+    val busy: Boolean = false,
+    /** 当前阶段（git/dist/manifest/reload）/ The current phase (git/dist/manifest/reload). */
+    val phase: String? = null,
+    /** 上次失败的错误信息 / The last failure message. */
+    val error: String = "",
+)
+
+/**
  * AzurPilot 调度器与工具的运行态控制器
  *
  * 4s 轮询薄接口产出 [AzurPilotRunState] 给悬浮窗与日志板，并暴露调度器/工具的启停：
@@ -118,6 +142,7 @@ class AzurPilotRunController(
     context: Context,
     private val scope: CoroutineScope,
     private val hostState: HostState,
+    private val settings: com.azurpilot.ghio.settings.AppSettingsManager,
 ) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -133,8 +158,14 @@ class AzurPilotRunController(
     /** 对外只读的运行态 / The externally read-only runtime state. */
     val state = _state.asStateFlow()
 
+    private val _hotUpdate = MutableStateFlow<HotUpdateState?>(null)
+
+    /** 对外只读的热更状态；null = 尚未获取 / The externally read-only hot-update state; null = not fetched yet. */
+    val hotUpdate = _hotUpdate.asStateFlow()
+
     private val started = AtomicBoolean(false)
     private val refreshMutex = Mutex()
+    private var lastHotUpdateCheck = 0L
 
     /**
      * 幂等：挂到 AzurPilotApp.postCreate，轮询整个 App 生命周期
@@ -147,7 +178,96 @@ class AzurPilotRunController(
         scope.launch(AppDispatchers.IO) {
             while (true) {
                 refreshMutex.withLock { refreshLocked() }
+                hotUpdateTick()
                 delay(POLL_MS)
+            }
+        }
+    }
+
+    /**
+     * 热更慢频 Tick：按 [HOT_UPDATE_CHECK_MS] 间隔刷一次 /android/update/status；
+     * 有可用更新且调度器与工具都空闲时自动应用（运行中的任务不打断）。
+     * 开关关闭或接口不可达时静默跳过。
+     *
+     * The slow hot-update tick: refreshes /android/update/status every
+     * [HOT_UPDATE_CHECK_MS]; applies automatically when an update is available
+     * and both the scheduler and tools are idle (running tasks are never
+     * interrupted). Silently skipped when the toggle is off or the API is
+     * unreachable.
+     */
+    private suspend fun hotUpdateTick() {
+        if (!settings.hotUpdateEnabled.value) return
+        val now = System.currentTimeMillis()
+        if (now - lastHotUpdateCheck < HOT_UPDATE_CHECK_MS) return
+        lastHotUpdateCheck = now
+        val status = fetchHotUpdateState() ?: return
+        _hotUpdate.value = status
+        val run = _state.value
+        if (status.available && !status.busy && !run.runnerAlive && !run.toolAlive) {
+            Timber.i("hot update: auto-applying %s", status.upstreamHead)
+            applyHotUpdate()
+        }
+    }
+
+    /** 拉取并解析 /android/update/status；不可达返回 null（保留上次已知态） / Fetches and parses /android/update/status; null when unreachable (the last known state is kept). */
+    private fun fetchHotUpdateState(): HotUpdateState? = parseHotUpdate(
+        get("$BASE/update/status", HTTP_TIMEOUT_MS),
+    )
+
+    /** 手动刷新热更状态（设置页「检查更新」按钮） / Manually refreshes the hot-update status (the settings "check" button). */
+    fun refreshHotUpdate() {
+        scope.launch(AppDispatchers.IO) {
+            fetchHotUpdateState()?.let { _hotUpdate.value = it }
+        }
+    }
+
+    private fun parseHotUpdate(body: String?): HotUpdateState? = body?.let {
+        runCatching {
+            val j = JSONObject(it)
+            HotUpdateState(
+                enabled = j.optBoolean("enabled"),
+                localHead = j.optStringOrNull("localHead"),
+                upstreamHead = j.optStringOrNull("upstreamHead"),
+                available = j.optBoolean("available"),
+                distReady = j.optBoolean("distReady"),
+                busy = j.optBoolean("busy"),
+                phase = j.optStringOrNull("phase"),
+                error = j.optString("error"),
+            )
+        }.onFailure { Timber.d(it, "hot update status parse failed") }.getOrNull()
+    }
+
+    private fun JSONObject.optStringOrNull(key: String): String? =
+        if (has(key) && !isNull(key)) optString(key) else null
+
+    /**
+     * 手动触发热更：POST /android/update/apply 后按 3s 轮询阶段直到收尾；
+     * 重启间隙接口不可达不终止轮询，以 30 分钟为上限。
+     *
+     * Triggers a hot update manually: POSTs /android/update/apply, then polls
+     * the phase every 3 s until it settles; unreachable windows during the
+     * WebUI restart keep the poll alive, capped at 30 minutes.
+     */
+    fun applyHotUpdate() {
+        scope.launch(AppDispatchers.IO) {
+            runCatching {
+                val conn = URL("$BASE/update/apply").openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("X-AzurPilot-Android-Token", controlToken)
+                conn.connectTimeout = HTTP_TIMEOUT_MS
+                conn.readTimeout = POST_READ_TIMEOUT_MS
+                if (conn.responseCode != 200) {
+                    Timber.w("hot update apply rejected: %s", conn.responseCode)
+                    return@launch
+                }
+                conn.inputStream.use { it.readBytes() }
+            }.onFailure { Timber.w(it, "hot update apply failed") }
+            var guard = 0
+            while (guard++ < HOT_UPDATE_POLL_LIMIT) {
+                delay(3_000)
+                val status = fetchHotUpdateState() ?: continue
+                _hotUpdate.value = status
+                if (!status.busy) break
             }
         }
     }
@@ -344,6 +464,13 @@ class AzurPilotRunController(
 
         /** 悬浮窗展示的日志尾行数 / Log tail lines shown on the overlay. */
         const val LOG_TAIL = 50
+
+        /** 热更状态检查间隔 / Interval between hot-update status checks. */
+        const val HOT_UPDATE_CHECK_MS = 30 * 60_000L
+
+        /** 手动热更后的轮询上限：600 × 3s = 30 分钟 / Poll cap after a manual apply: 600 × 3 s = 30 minutes. */
+        const val HOT_UPDATE_POLL_LIMIT = 600
+
         const val PREFS_NAME = "azurpilot_android"
         const val KEY_SELECTED_CONFIG = "selected_config"
     }
