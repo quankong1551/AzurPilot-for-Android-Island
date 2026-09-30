@@ -205,6 +205,8 @@ jobs:
           path: |
             dist/rootfs.tar.xz
             dist/BUILD_MANIFEST
+            dist/frontend-*.tar.xz
+            dist/frontend-*.tar.xz.sha256
           retention-days: 14
 
   apk:
@@ -488,6 +490,17 @@ jobs:
               --title 'AzurPilot Android 自动构建' \
               --notes '每 30 分钟检查 AzurPilot dev 更新；更新后按架构构建 rootfs 与两种签名 APK。'
           assets=(latest.json rootfs-arm64-v8a.tar.xz rootfs-x86_64.tar.xz)
+          # 预构建前端资产与 ABI 无关，任取一份（arm64）。命名带上游提交，运行时
+          # 热更服务按提交探测；旧 run 复用（reuse_rootfs_run_id）的产物里没有
+          # 该资产时跳过上传，热更探测会视作暂不可更新，不影响发布其余资产。
+          ftar="frontend-$(jq -r '.azurpilot_commit' .tmp/publish-rootfs/arm64-v8a/BUILD_MANIFEST).tar.xz"
+          if [[ -s ".tmp/publish-rootfs/arm64-v8a/$ftar" && -s ".tmp/publish-rootfs/arm64-v8a/$ftar.sha256" ]]; then
+            cp ".tmp/publish-rootfs/arm64-v8a/$ftar" "$ftar"
+            cp ".tmp/publish-rootfs/arm64-v8a/$ftar.sha256" "$ftar.sha256"
+            assets+=("$ftar" "$ftar.sha256")
+          else
+            echo "skip frontend dist asset: $ftar not present in artifact"
+          fi
           if [[ "$SIGNING_READY" == true && "$APK_BUILT" == true ]]; then
             assets+=("$asset" "AzurPilot-Android-${VERSION_NAME}-arm64-v8a-full.apk" "AzurPilot-Android-${VERSION_NAME}-x86_64-full.apk")
           fi

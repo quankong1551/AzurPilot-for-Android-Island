@@ -177,6 +177,12 @@ manifest = {
 PY
 cp "$ROOTFS_DIR/opt/azurpilot/BUILD_MANIFEST" "$DIST_DIR/BUILD_MANIFEST"
 
+# 热更用预构建前端资产：按上游提交命名，供运行时经宿主注入的镜像渠道拉取
+# （deploy/frontend.py 的安卓分支消费），不参与 rootfs 打包。dist 与镜像内
+# 同源同构建，内容一致；.source-fingerprint 已在打包前写入 dist。
+tar -cJf "$DIST_DIR/frontend-${SOURCE_COMMIT}.tar.xz" -C "$ROOTFS_DIR/opt/azurpilot/frontend" dist
+( cd "$DIST_DIR" && sha256sum "frontend-${SOURCE_COMMIT}.tar.xz" > "frontend-${SOURCE_COMMIT}.tar.xz.sha256" )
+
 # Python 依赖位于版本目录外，源码更新时继续复用已验证的锁定环境。
 mv "$ROOTFS_DIR/opt/azurpilot/.venv" "$ROOTFS_DIR/opt/azurpilot-venv"
 ln -s ../azurpilot-venv "$ROOTFS_DIR/opt/azurpilot/.venv"
