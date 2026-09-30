@@ -250,6 +250,15 @@ jobs:
           key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/gradle/libs.versions.toml', 'app/gradle/wrapper/gradle-wrapper.properties', 'app/**/*.gradle.kts', 'app/build-logic/**/*.kt') }}
           restore-keys: |
             gradle-${{ runner.os }}-${{ runner.arch }}-
+      # Termux 池会滚动删除旧版本包（pcre2 10.47 即被删导致 CI 断供），把下载的 deb
+      # 缓存一层：命中时不再依赖上游实时可用；哈希校验在脚本内，缓存投毒拦不住。
+      # restore-keys 允许脚本小改后复用未变包；key 随脚本哈希变化触发重下。
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/fetch-proot-libs-x86_64
+          key: proot-debs-x86_64-${{ hashFiles('app/scripts/fetch-proot-libs.sh') }}
+          restore-keys: |
+            proot-debs-x86_64-
       - name: Fetch proot native libs for x86_64
         run: bash app/scripts/fetch-proot-libs.sh
       - name: Prepare signing key

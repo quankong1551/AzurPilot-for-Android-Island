@@ -38,7 +38,7 @@ PKGS=(
     "libtalloc_2.4.3_x86_64.deb|7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628"
     "libandroid-shmem_0.7_x86_64.deb|ffa9e4c87467b158b148d0ff92dda796aa038276c2075af3269cdcdb06f25797"
     "libandroid-selinux_14.0.0.11-1_x86_64.deb|99cf96556683ddb53f7d645ca1720e10523c4796ce5b41c583da9f89a47679ce"
-    "pcre2_10.47_x86_64.deb|8e4fb14ba014f9b2d5e07b6ed9c519b31d00a6e7ddeb5804c3b076a6c841c2fb"
+    "pcre2_10.49_x86_64.deb|4a6f66ac12565342897ce9b5cd11ba8ce6fce1fd1a91ae679c3468d7fc2ee541"
     "busybox_1.38.0-1_x86_64.deb|519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48"
 )
 
@@ -112,7 +112,7 @@ PLAN = [
     ('libtalloc_2.4.3_x86_64.deb', 'lib/libtalloc.so.2.4.3', 'libtalloc.so', []),
     ('libandroid-shmem_0.7_x86_64.deb', 'lib/libandroid-shmem.so', 'libandroid-shmem.so', []),
     ('libandroid-selinux_14.0.0.11-1_x86_64.deb', 'lib/libandroid-selinux.so', 'libandroid-selinux.so', []),
-    ('pcre2_10.47_x86_64.deb', 'lib/libpcre2-8.so', 'libpcre2-8.so', []),
+    ('pcre2_10.49_x86_64.deb', 'lib/libpcre2-8.so', 'libpcre2-8.so', []),
     ('busybox_1.38.0-1_x86_64.deb', 'bin/busybox', 'libbusybox.so',
      [('libbusybox.so.1.38.0', 'libbusybox_app.so')]),
     ('busybox_1.38.0-1_x86_64.deb', 'lib/libbusybox.so.1.38.0', 'libbusybox_app.so', []),
