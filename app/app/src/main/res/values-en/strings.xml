@@ -146,6 +146,8 @@
     <string name="settings_about_all_dependencies">View all Android dependencies</string>
     <string name="settings_feedback_bug">Report a Bug</string>
     <string name="settings_feedback_bug_desc">Open GitHub to file an issue or browse known ones</string>
+    <string name="settings_feedback_group">Join the Feedback Group</string>
+    <string name="settings_feedback_group_desc">Join the QQ group to share questions and suggestions</string>
     <string name="compat_notice_title">Add your device to the list</string>
     <string name="compat_notice_message">Whether the app runs well differs a lot between phones. Please add one entry — brand, model, system version, working or not — to the device support list on GitHub. Your single record saves others a lot of trial and error.</string>
     <string name="compat_notice_go">Open the list</string>
@@ -757,7 +759,7 @@
     <string name="ap_instances_import">Import config</string>
     <string name="ap_instances_import_warning">“%1$s” will be imported as a new instance. The Android version uses a special config — a PC config may not work after import. Continue?</string>
     <string name="ap_instances_import_confirm">Import anyway</string>
-    <string name="ap_instances_import_read_failed">Couldn't read the config file, please try again</string>
+    <string name="ap_instances_import_read_failed">Couldn\'t read the config file, please try again</string>
     <string name="ap_instances_delete">Delete</string>
     <string name="ap_instances_delete_title">Delete instance %1$s?</string>
     <string name="ap_instances_delete_message">The config is moved to config/backup and can be restored by hand.</string>
