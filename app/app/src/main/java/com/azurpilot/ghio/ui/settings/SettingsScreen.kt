@@ -54,6 +54,7 @@ import androidx.compose.ui.Alignment
 import com.azurpilot.ghio.auth.AppLockManager
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.R
+import com.azurpilot.ghio.constant.ProjectLinks
 import com.azurpilot.ghio.domain.RemoteBackend
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.i18n.AppLocales
@@ -117,6 +118,7 @@ fun SettingsScreen(
     onOpenSection: (SettingsSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val uriHandler = LocalUriHandler.current
     Column(modifier = modifier.fillMaxSize()) {
         // M3 的顶栏滚动行为：内容滚起来时顶栏换成容器色并抬起
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -151,6 +153,14 @@ fun SettingsScreen(
                         onClick = { onOpenSection(section) },
                     )
                 }
+            }
+            // 分类入口之外唯一的直达行：反馈是走浏览器离开 App，不该混进二级页导航里
+            AppCard {
+                AppNavigationRow(
+                    label = stringResource(R.string.settings_feedback_bug),
+                    description = stringResource(R.string.settings_feedback_bug_desc),
+                    onClick = { uriHandler.openUri(ProjectLinks.ISSUES) },
+                )
             }
         }
     }

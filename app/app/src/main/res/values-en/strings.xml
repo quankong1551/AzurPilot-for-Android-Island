@@ -144,6 +144,12 @@
     <string name="settings_about_source_project">Source Project</string>
     <string name="settings_about_components">Open-source components and licenses (tap to view)</string>
     <string name="settings_about_all_dependencies">View all Android dependencies</string>
+    <string name="settings_feedback_bug">Report a Bug</string>
+    <string name="settings_feedback_bug_desc">Open GitHub to file an issue or browse known ones</string>
+    <string name="compat_notice_title">Add your device to the list</string>
+    <string name="compat_notice_message">Whether the app runs well differs a lot between phones. Please add one entry — brand, model, system version, working or not — to the device support list on GitHub. Your single record saves others a lot of trial and error.</string>
+    <string name="compat_notice_go">Open the list</string>
+    <string name="compat_notice_later">Not now</string>
     <string name="welcome_title">Welcome</string>
 
     <!-- Notifications -->

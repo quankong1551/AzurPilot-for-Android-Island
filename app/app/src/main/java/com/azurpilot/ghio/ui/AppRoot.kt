@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.BuildConfig
+import com.azurpilot.ghio.constant.ProjectLinks
 import com.azurpilot.ghio.domain.RemoteBackend
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.log.LogExportKind
@@ -267,6 +269,17 @@ fun AppRoot(
     val appLockEnabled by appSettings.appLockEnabled.collectAsStateWithLifecycle()
     val isAppLocked = appLockEnabled && appLockManager.isDeviceSecure(context) && !isUnlocked
 
+    // 首启「机型支持列表」弹窗：盘上标志未置位且本会话未处理过才弹；
+    // 必须等设置读盘完成，否则老用户会先看到默认 false 闪一下
+    val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
+    val compatNoticeShown by appSettings.compatNoticeShown.collectAsStateWithLifecycle()
+    var compatNoticeDismissed by rememberSaveable { mutableStateOf(false) }
+    // 排在所有更急的弹窗之后：更新引导、Shizuku 引导、部署门都退场了才轮到它，
+    // 否则首启时多个 AlertDialog 叠在一起
+    val showCompatNotice = settingsLoaded && !compatNoticeShown && !compatNoticeDismissed &&
+        !isAppLocked && !showProvision && !readiness.needsGuidance &&
+        appUpdateState.available == null && (!runtimeAvailable || runtimePromptDismissed)
+
     AzurPilotTheme(darkTheme = darkTheme) {
         AppLockGate(
             isUnlocked = !isAppLocked,
@@ -356,8 +369,34 @@ fun AppRoot(
                 pagerState.scrollToPage(selectedPage)
                 snapshotFlow { pagerState.settledPage }.collect { selectedPage = it }
             }
-            val scope = rememberCoroutineScope()
-            val snackbarHostState = remember { SnackbarHostState() }
+        val scope = rememberCoroutineScope()
+        val snackbarHostState = remember { SnackbarHostState() }
+
+        // 首启「机型支持列表」弹窗：确认键跳 GitHub 登记，两个按钮都落盘「已处理」，只弹这一次
+        if (showCompatNotice) {
+            val uriHandler = LocalUriHandler.current
+            AlertDialog(
+                onDismissRequest = {
+                    compatNoticeDismissed = true
+                    scope.launch { appSettings.setCompatNoticeShown(true) }
+                },
+                title = { Text(stringResource(R.string.compat_notice_title)) },
+                text = { Text(stringResource(R.string.compat_notice_message)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        compatNoticeDismissed = true
+                        scope.launch { appSettings.setCompatNoticeShown(true) }
+                        uriHandler.openUri(ProjectLinks.ISSUE_DEVICE_SUPPORT)
+                    }) { Text(stringResource(R.string.compat_notice_go)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        compatNoticeDismissed = true
+                        scope.launch { appSettings.setCompatNoticeShown(true) }
+                    }) { Text(stringResource(R.string.compat_notice_later)) }
+                },
+            )
+        }
         var exportKind by remember { mutableStateOf<LogExportKind?>(null) }
 
         val hostState: HostState = koinInject()

@@ -140,6 +140,12 @@
     <string name="settings_about_source_project">元プロジェクト</string>
     <string name="settings_about_components">使用しているオープンソースコンポーネントとライセンス（タップで表示）</string>
     <string name="settings_about_all_dependencies">Android の依存関係一覧を表示</string>
+    <string name="settings_feedback_bug">バグを報告</string>
+    <string name="settings_feedback_bug_desc">GitHub で問題の報告や既知の確認ができます</string>
+    <string name="compat_notice_title">お使いの機種を登録しませんか</string>
+    <string name="compat_notice_message">動作の可否は機種によって大きく異なります。GitHub の「機種サポートリスト」に、ブランド・型番・システムバージョン・動作結果を一件投稿してください。あなたの記録が、これから使う人の参考になります。</string>
+    <string name="compat_notice_go">リストを開く</string>
+    <string name="compat_notice_later">後で</string>
     <string name="welcome_title">ようこそ</string>
 
     <!-- 通知 -->

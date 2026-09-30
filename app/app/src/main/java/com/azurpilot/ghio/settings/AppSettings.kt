@@ -98,4 +98,14 @@ data class AppSettings(
      */
     @PrefKey(default = "true")
     val appLockEnabled: String = "true",
+
+    /**
+     * 首次启动的「机型支持列表」弹窗是否已处理过（两个按钮都算处理）；
+     * 只弹一次，不回头再骚扰
+     *
+     * Whether the first-launch "device support list" dialog has been handled
+     * (both buttons count); shown once, never nagged again.
+     */
+    @PrefKey(default = "false")
+    val compatNoticeShown: String = "false",
 )

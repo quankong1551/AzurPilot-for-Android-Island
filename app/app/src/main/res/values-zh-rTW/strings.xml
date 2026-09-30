@@ -140,6 +140,12 @@
     <string name="settings_about_source_project">來源專案</string>
     <string name="settings_about_components">使用的開源元件與授權（點擊查看專案）</string>
     <string name="settings_about_all_dependencies">檢視完整 Android 相依清單</string>
+    <string name="settings_feedback_bug">回報 Bug</string>
+    <string name="settings_feedback_bug_desc">到 GitHub 回報問題或查看已知問題</string>
+    <string name="compat_notice_title">來登記你的機型</string>
+    <string name="compat_notice_message">不同手機能否正常運作，差異很大。歡迎到 GitHub 的「機型支援列表」提交一筆：品牌、型號、系統版本、能不能用。你的一筆紀錄，能讓後來的人少踩坑。</string>
+    <string name="compat_notice_go">去提交</string>
+    <string name="compat_notice_later">暫不</string>
     <string name="welcome_title">歡迎</string>
 
     <!-- 通知 -->
