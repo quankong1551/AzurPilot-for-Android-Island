@@ -162,6 +162,10 @@
     <string name="settings_hot_update_phase_dist">アセット取得中</string>
     <string name="settings_hot_update_phase_manifest">バージョン情報書き込み中</string>
     <string name="settings_hot_update_phase_reload">ランタイム再起動中</string>
+    <string name="settings_auto_update_hour">自動更新時間</string>
+    <string name="settings_auto_update_hour_desc">毎日この時間に自動で更新を適用します</string>
+    <string name="settings_auto_update_hour_format">毎日 %1$02d:00</string>
+    <string name="settings_auto_update_hour_dialog_title">自動更新時間を選択</string>
     <string name="welcome_title">ようこそ</string>
 
     <!-- 通知 -->

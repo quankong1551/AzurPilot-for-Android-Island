@@ -122,6 +122,38 @@ class ProotHost(
     }
 
     /**
+     * 协调式停会话：挂起直到进程完全退出。
+     *
+     * 供 [com.azurpilot.ghio.provision.RuntimeAutoUpdater] 在 rootfs 切换前调用：
+     * 必须保证进程不会被 supervisor 重拉、且完全退出后再动文件系统。
+     *
+     * Coordinated session stop: suspends until the process is fully dead.
+     *
+     * Called by [com.azurpilot.ghio.provision.RuntimeAutoUpdater] before a
+     * rootfs swap: ensures the supervisor will not respawn and the process is
+     * entirely gone before the filesystem is touched. IO 调度器上执行
+     * / Runs on the IO dispatcher.
+     */
+    suspend fun stopAndAwait() {
+        wantRunning = false
+        supervisorJob?.cancel()
+        withContext(AppDispatchers.IO) {
+            startMutex.withLock {
+                val proc = session ?: return@withLock
+                Timber.i("proot session: stopping (auto-update)")
+                runCatching { proc.outputStream.close() }
+                withTimeoutOrNull(STOP_GRACE_MS) { runInterruptible { proc.waitFor() } }
+                if (proc.isAlive) {
+                    Timber.w("proot session: still alive after stdin close, destroyForcibly")
+                    proc.destroyForcibly()
+                }
+                session = null
+                _state.update { it.copy(phase = ProotPhase.IDLE, detail = "") }
+            }
+        }
+    }
+
+    /**
      * 启动链：自愈清锁、播种实例配置、拉起会话并等待服务就绪。
      *
      * 本函数自行取得 [startMutex]；调用方不得预先持锁。会话已存活时重复调用直接短路。运行在 IO
@@ -347,7 +379,7 @@ class ProotHost(
      * connections — reporting RUNNING then hands the UI an address it cannot
      * connect to.
      */
-    private suspend fun awaitServices(timeoutMs: Long): Boolean {
+    internal suspend fun awaitServices(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (httpOk("http://127.0.0.1:$WEBUI_PORT/android/status") &&

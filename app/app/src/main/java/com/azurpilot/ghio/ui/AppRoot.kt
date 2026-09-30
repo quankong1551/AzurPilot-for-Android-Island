@@ -234,10 +234,9 @@ fun AppRoot(
     val runtimeAvailable = runtimeCheck.checked && runtimeCheck.error == null &&
         runtimeCheck.latestVersion != null && runtimeCheck.latestVersion != installedRuntime
     val hotUpdateOn by appSettings.hotUpdateEnabled.collectAsStateWithLifecycle()
-    // 整包重部署只在「基础镜像有差异」时弹出：rootfs_version 仅上游提交前缀不同
-    // (commitOnly) 且热更开启时，源码差异交给热更通道，不弹整包、不挡 proot 启动；
-    // 关掉热更开关即恢复整包提示（逃生门）
-    val fullUpdatePending = runtimeAvailable && !(runtimeCheck.commitOnly && hotUpdateOn)
+    // 自动更新（热更/整包）开启时，不弹整包对话框、不挡 proot 启动，交给后台自动更新机制；
+    // 关掉开关即恢复整包提示（逃生门）。
+    val fullUpdatePending = runtimeAvailable && !hotUpdateOn
     LaunchedEffect(provisionState, runtimeCheck, runtimePromptDismissed, applyingRuntimeUpdate, hotUpdateOn) {
         if (!prootStarted && provisionState is ProvisionState.Ready && runtimeCheck.checked && !runtimeCheck.checking &&
             !applyingRuntimeUpdate && (!fullUpdatePending || runtimePromptDismissed)

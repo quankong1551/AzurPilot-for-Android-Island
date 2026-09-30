@@ -166,6 +166,10 @@
     <string name="settings_hot_update_phase_dist">Downloading web assets</string>
     <string name="settings_hot_update_phase_manifest">Writing version info</string>
     <string name="settings_hot_update_phase_reload">Restarting runtime</string>
+    <string name="settings_auto_update_hour">Auto update time</string>
+    <string name="settings_auto_update_hour_desc">Automatically check and apply updates daily at this hour without interrupting running tasks</string>
+    <string name="settings_auto_update_hour_format">Daily at %1$02d:00</string>
+    <string name="settings_auto_update_hour_dialog_title">Select daily auto-update hour</string>
     <string name="welcome_title">Welcome</string>
 
     <!-- Notifications -->

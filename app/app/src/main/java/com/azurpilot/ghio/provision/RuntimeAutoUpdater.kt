@@ -1,0 +1,318 @@
+package com.azurpilot.ghio.provision
+
+import android.app.Application
+import android.content.Context
+import android.os.Build
+import com.azurpilot.ghio.AppDispatchers
+import com.azurpilot.ghio.proot.AndroidControlAuth
+import com.azurpilot.ghio.proot.ProotHost
+import com.azurpilot.ghio.proot.ProotPhase
+import com.azurpilot.ghio.settings.AppSettingsManager
+import com.azurpilot.ghio.update.DownloadAborted
+import com.azurpilot.ghio.update.sha256Hex
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
+import timber.log.Timber
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Calendar
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Runtime 自动更新状态机
+ *
+ * 状态流转：
+ * Idle → Checking → Downloading(done, total) → Extracting(done, total)
+ *      → Suspending → Swapping → Verifying
+ *      → Completed(version) 或 RollingBack → Failed(reason, rolledBack)
+ *
+ * State machine for Runtime automatic updates.
+ */
+sealed interface AutoUpdateState {
+    /** 空闲等待中 / Idle waiting. */
+    data object Idle : AutoUpdateState
+
+    /** 正在检查新版本 / Checking for a new release. */
+    data object Checking : AutoUpdateState
+
+    /** 下载 rootfs 归档中 / Downloading the rootfs archive. */
+    data class Downloading(val done: Long, val total: Long) : AutoUpdateState
+
+    /** 解压到 staging 目录中 / Extracting to the staging directory. */
+    data class Extracting(val done: Long, val total: Long) : AutoUpdateState
+
+    /** 正在通知运行时挂起活跃实例 / Suspending running instances via the runtime API. */
+    data object Suspending : AutoUpdateState
+
+    /** 停止旧会话并原子切换目录 / Stopping the old session and swapping rootfs. */
+    data object Swapping : AutoUpdateState
+
+    /** 启动新版本并探活体检中 / Starting the new version and running health probes. */
+    data object Verifying : AutoUpdateState
+
+    /** 更新完成 / Update completed successfully. */
+    data class Completed(val version: String) : AutoUpdateState
+
+    /** 体检失败，正在回滚旧版本 / Verification failed; rolling back to previous version. */
+    data class RollingBack(val reason: String) : AutoUpdateState
+
+    /** 更新失败 / Update failed. */
+    data class Failed(val reason: String, val rolledBack: Boolean) : AutoUpdateState
+}
+
+/**
+ * Runtime 自动更新编排器
+ *
+ * 职责：
+ * 1. 每日定时（按 [AppSettingsManager.autoUpdateHour]，默认 8:00 AM）触发后台更新检查
+ * 2. 检测到全量 rootfs 更新（非 commitOnly 源码微更）时，下载归档并做 SHA-256 完整性校验
+ * 3. 解压至暂存目录 `rootfs.tmp`，不干扰前台和正在运行的任务
+ * 4. 调用上游运行时 `POST /android/update/suspend` 安全挂起所有运行实例（写入 `config/reloadalas`）
+ * 5. 安全停止 proot 会话，通过原子换名（`rootfs` → `rootfs.previous`, `rootfs.tmp` → `rootfs`）完成热切换
+ * 6. 重新启动 proot 会话并探活体检（`/android/status` + `/healthz`，90s 超时上限）
+ * 7. 若体检健康，删除 `rootfs.previous`；运行时启动生命周期读取 `config/reloadalas` 自动复活被挂起实例
+ * 8. 若体检失败，自动回滚至 `rootfs.previous` 并重启旧版，保障可用性
+ * 9. 暴露 [busy] 状态流给 [com.azurpilot.ghio.proot.AzurPilotRunController]，防止源码热更与全量更新冲突
+ *
+ * Runtime automatic update orchestrator.
+ *
+ * Orchestrates daily scheduled checks, staging decompression, instance suspension,
+ * atomic directory swapping, health validation, rollback on failure, and automatic instance revival.
+ */
+class RuntimeAutoUpdater(
+    private val app: Application,
+    private val scope: CoroutineScope,
+    private val settings: AppSettingsManager,
+    private val provisioner: RootfsProvisioner,
+    private val prootHost: ProotHost,
+) {
+    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val _state = MutableStateFlow<AutoUpdateState>(AutoUpdateState.Idle)
+
+    /** 对外只读的自动更新状态机 / Externally read-only update state. */
+    val state: StateFlow<AutoUpdateState> = _state.asStateFlow()
+
+    private val _busy = MutableStateFlow(false)
+
+    /** 当前是否正处于更新事务中（互斥锁）/ Whether an update transaction is in progress. */
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private val started = AtomicBoolean(false)
+    private val updateMutex = Mutex()
+
+    /**
+     * 启动定时轮询守护协程（幂等）
+     *
+     * Starts the scheduled polling coroutine (idempotent).
+     */
+    fun start() {
+        if (!started.compareAndSet(false, true)) return
+        scope.launch(AppDispatchers.IO) {
+            while (true) {
+                scheduledTick()
+                delay(TICK_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * 检查当前是否到达每日设定的更新时机。
+     *
+     * Checks if the daily scheduled hour has arrived.
+     */
+    private suspend fun scheduledTick() {
+        if (!settings.hotUpdateEnabled.value) return
+        val now = Calendar.getInstance()
+        val hour = now.get(Calendar.HOUR_OF_DAY)
+        val targetHour = settings.autoUpdateHour.value
+        val today = String.format(
+            Locale.US,
+            "%04d-%02d-%02d",
+            now.get(Calendar.YEAR),
+            now.get(Calendar.MONTH) + 1,
+            now.get(Calendar.DAY_OF_MONTH),
+        )
+        val lastDate = prefs.getString(KEY_LAST_CHECK_DATE, null)
+        if (hour == targetHour && lastDate != today) {
+            prefs.edit().putString(KEY_LAST_CHECK_DATE, today).apply()
+            Timber.i("auto update: scheduled trigger at %02d:00 for %s", hour, today)
+            checkAndApplyUpdate(force = false)
+        }
+    }
+
+    /**
+     * 执行一次检查与更新流程。
+     *
+     * Performs one check-and-apply update cycle.
+     *
+     * @param force 是否强制执行（忽略 commitOnly 检查与每日频次限制）/ whether to force update
+     * @return 更新是否成功 / whether the update succeeded
+     */
+    suspend fun checkAndApplyUpdate(force: Boolean = false): Boolean = withContext(AppDispatchers.IO) {
+        if (!updateMutex.tryLock()) {
+            Timber.d("auto update: another update is in progress, skipping")
+            return@withContext false
+        }
+        _busy.value = true
+        var staged = false
+        var swapped = false
+        val archive = File(app.filesDir, ARCHIVE_NAME)
+
+        try {
+            _state.value = AutoUpdateState.Checking
+            val info = provisioner.fetchIndex()
+            if (!info.has("rootfsVersion") && !info.has("runtimes")) {
+                Timber.d("auto update: no runtime section in release manifest")
+                _state.value = AutoUpdateState.Idle
+                return@withContext false
+            }
+
+            val abi = RuntimeArch.deviceAbi()
+                ?: throw IOException("设备架构不受支持：${Build.SUPPORTED_ABIS.firstOrNull()}")
+            val runtime = provisioner.parseRuntime(info, abi)
+                ?: throw IOException("发布渠道暂无 $abi 的 Runtime")
+
+            val installed = provisioner.installedVersion()
+            if (runtime.version == installed) {
+                Timber.d("auto update: runtime is up-to-date ($installed)")
+                _state.value = AutoUpdateState.Idle
+                return@withContext false
+            }
+
+            // 若仅上游提交差异（commitOnly），说明基础镜像无变化，交给轻量热更通道处理，不重复下载整包
+            val commitOnly = installed != null &&
+                runtime.version.substringAfterLast('-') == installed.substringAfterLast('-')
+            if (commitOnly && !force) {
+                Timber.i("auto update: commitOnly update detected, letting runtime hot-update handle it")
+                _state.value = AutoUpdateState.Idle
+                return@withContext false
+            }
+
+            provisioner.checkDisk()
+
+            // 1. 下载 rootfs 归档
+            while (true) {
+                val prefix = provisioner.mirrorPrefix()
+                try {
+                    provisioner.downloadArchive(runtime, prefix, archive) { done, total ->
+                        _state.value = AutoUpdateState.Downloading(done, total)
+                    }
+                    break
+                } catch (changed: DownloadAborted) {
+                    if (!provisioner.sourceSwitched(prefix)) throw IOException("下载被中止", changed)
+                    Timber.i("auto update download source changed, restarting")
+                    archive.delete()
+                    _state.value = AutoUpdateState.Downloading(0, runtime.size)
+                }
+            }
+
+            // 2. 校验 SHA-256
+            check(sha256Hex(archive).equals(runtime.sha256, ignoreCase = true)) {
+                "rootfs 下载校验失败：sha256 不匹配"
+            }
+
+            // 3. 解压到 staging 目录 rootfs.tmp
+            _state.value = AutoUpdateState.Extracting(0, runtime.size)
+            provisioner.extractToStaging({ archive.inputStream() }, runtime.size, runtime.version) { read, total ->
+                _state.value = AutoUpdateState.Extracting(read, total)
+            }
+            archive.delete()
+            staged = true
+
+            // 4. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单
+            _state.value = AutoUpdateState.Suspending
+            if (prootHost.state.value.phase == ProotPhase.RUNNING) {
+                suspendRuntime()
+            }
+
+            // 5. 停止旧会话并原子替换 rootfs
+            _state.value = AutoUpdateState.Swapping
+            prootHost.stopAndAwait()
+            provisioner.commitStaging()
+            swapped = true
+
+            // 6. 启动新版本并探活体检
+            _state.value = AutoUpdateState.Verifying
+            prootHost.ensureStarted()
+            val healthy = prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
+
+            if (healthy) {
+                Timber.i("auto update succeeded: %s", runtime.version)
+                provisioner.cleanupPrevious()
+                _state.value = AutoUpdateState.Completed(runtime.version)
+                true
+            } else {
+                Timber.e("auto update health check failed after %dms, rolling back", HEALTH_CHECK_TIMEOUT_MS)
+                _state.value = AutoUpdateState.RollingBack("新版本健康检查超时")
+                prootHost.stopAndAwait()
+                provisioner.rollbackStaging()
+                prootHost.ensureStarted()
+                _state.value = AutoUpdateState.Failed("新版本启动超时，已自动回滚", rolledBack = true)
+                false
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "auto update failed")
+            archive.delete()
+            if (staged && !swapped) {
+                runCatching { File(app.filesDir, "rootfs.tmp").deleteRecursively() }
+            }
+            if (swapped) {
+                runCatching {
+                    prootHost.stopAndAwait()
+                    provisioner.rollbackStaging()
+                    prootHost.ensureStarted()
+                }
+                _state.value = AutoUpdateState.Failed(e.message ?: "自动更新异常，已回滚", rolledBack = true)
+            } else {
+                _state.value = AutoUpdateState.Failed(e.message ?: "自动更新失败", rolledBack = false)
+            }
+            false
+        } finally {
+            _busy.value = false
+            updateMutex.unlock()
+        }
+    }
+
+    /**
+     * 调用上游 API 安全挂起所有运行实例。
+     *
+     * Calls the upstream API to safely suspend all running instances.
+     */
+    private fun suspendRuntime() {
+        runCatching {
+            val url = URL("http://127.0.0.1:25548/android/update/suspend")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("X-AzurPilot-Android-Token", AndroidControlAuth.get(app))
+            conn.connectTimeout = 3_000
+            conn.readTimeout = 15_000
+            val code = conn.responseCode
+            if (code == 200) {
+                val resp = conn.inputStream.use { it.readBytes().decodeToString() }
+                Timber.i("auto update: suspended instances: %s", resp)
+            } else {
+                Timber.w("auto update: suspend rejected with %d", code)
+            }
+        }.onFailure {
+            Timber.w(it, "auto update: suspend call failed, proceeding anyway")
+        }
+    }
+
+    companion object {
+        private const val TICK_INTERVAL_MS = 60_000L
+        private const val HEALTH_CHECK_TIMEOUT_MS = 90_000L
+        private const val ARCHIVE_NAME = "rootfs-autoupdate.tar.xz"
+        private const val PREFS_NAME = "runtime_auto_updater"
+        private const val KEY_LAST_CHECK_DATE = "last_check_date"
+    }
+}

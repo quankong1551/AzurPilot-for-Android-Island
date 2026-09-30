@@ -183,10 +183,10 @@ class RootfsProvisioner(
      * The mirror prefix in effect; "source switched" compares the
      * (mirror, custom prefix) pair as a whole.
      */
-    private fun mirrorPrefix() = ReleaseUrls.mirrorPrefix(settings.githubMirror.value, settings.githubMirrorCustom.value)
+    internal fun mirrorPrefix() = ReleaseUrls.mirrorPrefix(settings.githubMirror.value, settings.githubMirrorCustom.value)
 
     /** 前缀与 [prefix] 不同即视为换了源 / True when the prefix differs from [prefix] — the source switched. */
-    private fun sourceSwitched(prefix: String) = mirrorPrefix() != prefix
+    internal fun sourceSwitched(prefix: String) = mirrorPrefix() != prefix
 
     /**
      * Latest 清单；镜像前缀与缓存绕过集中在这里。
@@ -196,7 +196,7 @@ class RootfsProvisioner(
      *
      * @throws IOException 非 200 响应 / on a non-200 response
      */
-    private fun fetchIndex(): JSONObject {
+    internal fun fetchIndex(): JSONObject {
         val indexUrl = ReleaseUrls.selected(ReleaseUrls.INDEX, mirrorPrefix())
         val connection = URL("$indexUrl?t=${System.currentTimeMillis()}").openConnection() as HttpURLConnection
         return try {
@@ -215,7 +215,7 @@ class RootfsProvisioner(
      *
      * One Runtime entry in the release manifest.
      */
-    private data class ReleaseRuntime(val version: String, val url: String, val sha256: String, val size: Long)
+    internal data class ReleaseRuntime(val version: String, val url: String, val sha256: String, val size: Long)
 
     /**
      * 按 ABI 解析 Release 清单。新式清单是 `runtimes: { <abi>: {version,url,sha256,size} }`；
@@ -232,7 +232,7 @@ class RootfsProvisioner(
      * @throws IllegalArgumentException 清单字段缺失或非法 / when a manifest
      *   field is missing or invalid
      */
-    private fun parseRuntime(info: JSONObject, abi: String): ReleaseRuntime? {
+    internal fun parseRuntime(info: JSONObject, abi: String): ReleaseRuntime? {
         info.optJSONObject("runtimes")?.let { runtimes ->
             val entry = runtimes.optJSONObject(abi) ?: return null
             val version = entry.optString("version")
@@ -424,7 +424,7 @@ class RootfsProvisioner(
      *
      * @throws IOException 余量不足 / when free space is insufficient
      */
-    private fun checkDisk() {
+    internal fun checkDisk() {
         val free = app.filesDir.let { it.mkdirs(); it.usableSpace }
         if (free < MIN_FREE_BYTES) throw IOException("磁盘空间不足：剩余 ${free / 1_000_000} MB，需要至少 2 GB")
     }
@@ -488,7 +488,12 @@ class RootfsProvisioner(
      * @throws DownloadAborted 下载途中换了源 / when the mirror source switches
      *   mid-download
      */
-    private suspend fun downloadArchive(runtime: ReleaseRuntime, prefix: String, target: File) {
+    internal suspend fun downloadArchive(
+        runtime: ReleaseRuntime,
+        prefix: String,
+        target: File,
+        onProgress: ((done: Long, total: Long) -> Unit)? = null,
+    ) {
         val downloadUrl = ReleaseUrls.selected(runtime.url, prefix)
         ReleaseDownloader.download(
             url = downloadUrl,
@@ -496,7 +501,11 @@ class RootfsProvisioner(
             shouldAbort = { sourceSwitched(prefix) },
             totalBytes = runtime.size,
         ) { done, total ->
-            if (total > 0) _state.value = ProvisionState.Downloading(done, total)
+            if (onProgress != null) {
+                onProgress(done, total)
+            } else if (total > 0) {
+                _state.value = ProvisionState.Downloading(done, total)
+            }
         }
     }
 
@@ -525,11 +534,38 @@ class RootfsProvisioner(
      *   python check fails
      */
     private fun extract(openArchive: () -> InputStream, total: Long, expectedVersion: String) {
+        extractToStaging(openArchive, total, expectedVersion)
+        commitStaging()
+    }
+
+    /**
+     * 解包到暂存目录 `rootfs.tmp`，校验清单与 Python，迁移用户配置与日志。
+     *
+     * 完成后 `rootfs.tmp` 已就绪，调用方可在任意时刻调 [commitStaging] 做原子换名，
+     * 或调 [rollbackStaging] 放弃。
+     *
+     * Extracts the archive into the staging directory `rootfs.tmp`, verifies the
+     * manifest and Python, and migrates user configuration and logs.
+     *
+     * When this returns, `rootfs.tmp` is ready; the caller may call
+     * [commitStaging] at any point for the atomic cutover, or [rollbackStaging]
+     * to give up.
+     */
+    internal fun extractToStaging(
+        openArchive: () -> InputStream,
+        total: Long,
+        expectedVersion: String,
+        onProgress: ((read: Long, total: Long) -> Unit)? = null,
+    ) {
         tmpDir.deleteRecursively()
         check(tmpDir.mkdirs()) { "cannot create $tmpDir" }
 
         val counting = CountingInputStream(openArchive().buffered(BUFFER_SIZE)) { read ->
-            _state.value = ProvisionState.Extracting(read, total)
+            if (onProgress != null) {
+                onProgress(read, total)
+            } else {
+                _state.value = ProvisionState.Extracting(read, total)
+            }
         }
         val extracted = mutableMapOf<String, File>()
         val deferredLinks = mutableListOf<Pair<String, String>>()
@@ -553,16 +589,45 @@ class RootfsProvisioner(
         check(python.isFile || java.nio.file.Files.isSymbolicLink(python.toPath())) { "$PYTHON_REL missing" }
         File(tmpDir, MARKER_NAME).writeText(expectedVersion)
 
-        // APK 升级重铺 rootfs 时保留用户实例与日志。
+        // APK 升级或整包更新重铺 rootfs 时保留用户实例与日志。
+        syncUserDataToStaging()
+    }
+
+    /**
+     * 将当前运行时的用户配置、reloadalas 恢复清单与日志同步到暂存目录。
+     *
+     * 既在解压完成后初次迁移，也在 [commitStaging] 切换前再次同步（确保 suspend 刚写入的
+     * `reloadalas` 能被带到新 rootfs）。
+     *
+     * Syncs user configs, the reloadalas recovery manifest, and logs to staging.
+     */
+    internal fun syncUserDataToStaging() {
         val oldPilot = File(rootDir, "opt/azurpilot")
         val newPilot = File(tmpDir, "opt/azurpilot")
+        if (!oldPilot.exists() || !newPilot.exists()) return
         oldPilot.resolve("config").listFiles()
             ?.filter { it.isFile && it.extension == "json" &&
                 !it.name.startsWith("template") && !it.name.startsWith("deploy") }
             ?.forEach { file -> file.copyTo(newPilot.resolve("config/${file.name}"), overwrite = true) }
+        // reloadalas 恢复清单没有扩展名——单独迁移，保证整包更新后调度器自动复活
+        oldPilot.resolve("config/reloadalas").takeIf { it.isFile }
+            ?.copyTo(newPilot.resolve("config/reloadalas"), overwrite = true)
         oldPilot.resolve("log").takeIf { it.isDirectory }
             ?.copyRecursively(newPilot.resolve("log"), overwrite = true)
+    }
 
+    /**
+     * 提交暂存目录：原子换名 `rootfs` → `rootfs.previous`，`rootfs.tmp` → `rootfs`。
+     *
+     * 调用方保证 proot 已停止。换名前会再次同步用户配置与 reloadalas。
+     *
+     * Commits the staging directory: atomic renames `rootfs` → `rootfs.previous`,
+     * then `rootfs.tmp` → `rootfs`. The caller guarantees proot is stopped.
+     *
+     * @throws IOException 换名失败 / on a rename failure
+     */
+    internal fun commitStaging() {
+        syncUserDataToStaging()
         val previous = File(app.filesDir, "rootfs.previous")
         previous.deleteRecursively()
         val hadRoot = rootDir.exists()
@@ -571,7 +636,37 @@ class RootfsProvisioner(
             if (hadRoot) previous.renameTo(rootDir)
             throw IOException("rename $tmpDir -> $rootDir failed")
         }
-        previous.deleteRecursively()
+    }
+
+    /**
+     * 回滚暂存：删除损坏的 `rootfs`（如有），将 `rootfs.previous` 换回 `rootfs`。
+     *
+     * 供 [RuntimeAutoUpdater] 健康检查失败时恢复旧版。无 previous 时静默跳过。
+     *
+     * Rolls the staging back: deletes the broken `rootfs` (if present) and
+     * renames `rootfs.previous` back to `rootfs`.
+     *
+     * Used by [RuntimeAutoUpdater] when the health check fails. Silently skips
+     * when no previous exists.
+     */
+    internal fun rollbackStaging() {
+        val previous = File(app.filesDir, "rootfs.previous")
+        if (!previous.exists()) return
+        rootDir.deleteRecursively()
+        check(previous.renameTo(rootDir)) { "rollback rename failed" }
+    }
+
+    /**
+     * 删除旧版备份 `rootfs.previous`。
+     *
+     * 供 [RuntimeAutoUpdater] 健康检查通过后清理。
+     *
+     * Deletes the old-version backup `rootfs.previous`.
+     *
+     * Used by [RuntimeAutoUpdater] after the health check passes.
+     */
+    internal fun cleanupPrevious() {
+        File(app.filesDir, "rootfs.previous").deleteRecursively()
     }
 
     /**

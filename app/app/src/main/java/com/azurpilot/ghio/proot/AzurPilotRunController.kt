@@ -6,6 +6,7 @@ import com.azurpilot.ghio.service.HostState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -143,6 +144,7 @@ class AzurPilotRunController(
     private val scope: CoroutineScope,
     private val hostState: HostState,
     private val settings: com.azurpilot.ghio.settings.AppSettingsManager,
+    private val autoUpdateBusy: StateFlow<Boolean> = MutableStateFlow(false),
 ) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -197,6 +199,7 @@ class AzurPilotRunController(
      */
     private suspend fun hotUpdateTick() {
         if (!settings.hotUpdateEnabled.value) return
+        if (autoUpdateBusy.value) return
         val now = System.currentTimeMillis()
         if (now - lastHotUpdateCheck < HOT_UPDATE_CHECK_MS) return
         lastHotUpdateCheck = now

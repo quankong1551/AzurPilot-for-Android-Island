@@ -162,6 +162,10 @@
     <string name="settings_hot_update_phase_dist">下載頁面資源</string>
     <string name="settings_hot_update_phase_manifest">寫入版本資訊</string>
     <string name="settings_hot_update_phase_reload">重啟執行環境</string>
+    <string name="settings_auto_update_hour">自動更新時間</string>
+    <string name="settings_auto_update_hour_desc">每天在此時間自動檢測並應用更新，不打斷運行中任務</string>
+    <string name="settings_auto_update_hour_format">每天 %1$02d:00</string>
+    <string name="settings_auto_update_hour_dialog_title">選擇每日自動更新時間</string>
     <string name="welcome_title">歡迎</string>
 
     <!-- 通知 -->

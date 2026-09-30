@@ -122,4 +122,15 @@ data class AppSettings(
      */
     @PrefKey(default = "true")
     val hotUpdateEnabled: String = "true",
+
+    /**
+     * 自动更新检查时刻（24 小时制整点，0~23）；到达该小时后若调度器空闲则
+     * 自动检查并部署整包 Runtime 更新。默认早上 8 点。
+     *
+     * The daily auto-update check hour (0–23, 24-hour clock); when the clock
+     * reaches this hour and the scheduler is idle, a full Runtime update is
+     * checked and deployed automatically. Defaults to 08:00.
+     */
+    @PrefKey(default = "8")
+    val autoUpdateHour: String = "8",
 )

@@ -58,6 +58,7 @@ import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.constant.ProjectLinks
 import com.azurpilot.ghio.domain.RemoteBackend
+import java.util.Locale
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.i18n.AppLocales
 import com.azurpilot.ghio.keepalive.KeepAliveManager
@@ -864,7 +865,9 @@ fun RuntimeSettingsPage(
     val githubMirror by settings.githubMirror.collectAsStateWithLifecycle()
     val githubMirrorCustom by settings.githubMirrorCustom.collectAsStateWithLifecycle()
     val hotUpdateEnabled by settings.hotUpdateEnabled.collectAsStateWithLifecycle()
+    val autoUpdateHour by settings.autoUpdateHour.collectAsStateWithLifecycle()
     val hotUpdate by runController.hotUpdate.collectAsStateWithLifecycle()
+    var showHourDialog by remember { mutableStateOf(false) }
     val installedVersion = provisioner.installedVersion()
     SettingsSubPage(titleRes = R.string.settings_cat_runtime, onBack = onBack, modifier = modifier) {
         AppCard {
@@ -923,6 +926,21 @@ fun RuntimeSettingsPage(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (hotUpdateEnabled) {
+                AppLabeledControlRow(
+                    label = stringResource(R.string.settings_auto_update_hour),
+                    trailing = {
+                        TextButton(onClick = { showHourDialog = true }) {
+                            Text(stringResource(R.string.settings_auto_update_hour_format, autoUpdateHour))
+                        }
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.settings_auto_update_hour_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             // 进页面刷一次；之后靠控制器 30 分钟一次的慢频 tick 与应用后的轮询
             LaunchedEffect(Unit) { runController.refreshHotUpdate() }
             val phaseText = when (hotUpdate?.phase) {
@@ -1018,5 +1036,28 @@ fun RuntimeSettingsPage(
                 Text(stringResource(R.string.settings_app_check))
             }
         }
+    }
+    if (showHourDialog) {
+        AlertDialog(
+            onDismissRequest = { showHourDialog = false },
+            title = { Text(stringResource(R.string.settings_auto_update_hour_dialog_title)) },
+            text = {
+                AppSingleChoiceFlow(
+                    options = (0..23).map { hour ->
+                        hour to String.format(Locale.US, "%02d:00", hour)
+                    },
+                    selected = autoUpdateHour,
+                    onSelect = { hour ->
+                        scope.launch { settings.setAutoUpdateHour(hour) }
+                        showHourDialog = false
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showHourDialog = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
     }
 }
