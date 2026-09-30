@@ -754,6 +754,10 @@
     <string name="ap_instances_source_template">Blank template</string>
     <string name="ap_instances_source_copy">Copy %1$s</string>
     <string name="ap_instances_export">Export as JSON</string>
+    <string name="ap_instances_import">Import config</string>
+    <string name="ap_instances_import_warning">“%1$s” will be imported as a new instance. The Android version uses a special config — a PC config may not work after import. Continue?</string>
+    <string name="ap_instances_import_confirm">Import anyway</string>
+    <string name="ap_instances_import_read_failed">Couldn't read the config file, please try again</string>
     <string name="ap_instances_delete">Delete</string>
     <string name="ap_instances_delete_title">Delete instance %1$s?</string>
     <string name="ap_instances_delete_message">The config is moved to config/backup and can be restored by hand.</string>

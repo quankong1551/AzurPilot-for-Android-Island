@@ -1,5 +1,8 @@
 package com.azurpilot.ghio.ui.azurpilot.sections.settings
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.AlertDialog
@@ -24,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -97,6 +102,26 @@ fun InstancesPage(repository: AzurPilotRepository) {
         }
     }
 
+    // 导入选完文件先停一停：待确认的候选（实例名 + 文件内容），确认后才真正上传建档
+    var pendingImport by remember { mutableStateOf<ImportCandidate?>(null) }
+    val importer = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val candidate = readImportCandidate(context, uri)
+                if (candidate == null) {
+                    pendingImport = null
+                    repository.reportTransient(
+                        context.getString(R.string.ap_instances_import_read_failed)
+                    )
+                } else {
+                    pendingImport = candidate
+                }
+            }
+        }
+    }
+
     pendingDelete?.let { name ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
@@ -116,6 +141,31 @@ fun InstancesPage(repository: AzurPilotRepository) {
         )
     }
 
+    // 导入警告：安卓端配置与 PC 端存在差异（截图/控制方式等必须用安卓专用值），
+    // 直接整份导入 PC 配置后这些参数不会指向本机运行时，实例可能无法直接跑起来，
+    // 所以在上传前必须让用户显式确认。
+    pendingImport?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text(stringResource(R.string.ap_instances_import)) },
+            text = { Text(stringResource(R.string.ap_instances_import_warning, candidate.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingImport = null
+                    // 两步落库：先上传进导入目录，再用该文件建档；成功后仓库自动切到新实例
+                    repository.importConfig(candidate.name, candidate.content) { created ->
+                        repository.createInstance(created, importFile = created)
+                    }
+                }) { Text(stringResource(R.string.ap_instances_import_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) {
+                    Text(stringResource(R.string.ap_cancel))
+                }
+            },
+        )
+    }
+
     ApSectionColumn {
         if (creating) {
             CreateInstanceCard(
@@ -128,17 +178,36 @@ fun InstancesPage(repository: AzurPilotRepository) {
                 onCancel = { creating = false },
             )
         } else {
-            Button(
-                onClick = { creating = true },
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .apEnter(0),
+                horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.sm),
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(AppTokens.IconSize.md))
-                Text(
-                    text = stringResource(R.string.ap_instances_create),
-                    modifier = Modifier.padding(start = AppTokens.Spacing.sm),
-                )
+                Button(
+                    onClick = { creating = true },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(AppTokens.IconSize.md))
+                    Text(
+                        text = stringResource(R.string.ap_instances_create),
+                        modifier = Modifier.padding(start = AppTokens.Spacing.sm),
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        // json 之外放宽 text/plain 与 octet-stream：文件管理器对 json 的
+                        // MIME 标注五花八门，只认 application/json 会在选择器里直接灰掉
+                        importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(AppTokens.IconSize.md))
+                    Text(
+                        text = stringResource(R.string.ap_instances_import),
+                        modifier = Modifier.padding(start = AppTokens.Spacing.sm),
+                    )
+                }
             }
         }
 
@@ -294,3 +363,52 @@ private fun CreateInstanceCard(
  */
 private fun com.azurpilot.ghio.proot.ApConfigValues.toJsonString(): String =
     runCatching { (JSONObject.wrap(this) as? JSONObject)?.toString(2) }.getOrNull() ?: "{}"
+
+/** 一次待确认的导入候选：实例名来自文件名，内容是原始 JSON 文本 / One import candidate awaiting confirmation: the instance name derives from the file name, the content is the raw JSON text. */
+private data class ImportCandidate(val name: String, val content: String)
+
+/**
+ * 读取 SAF 选中的配置文件并装成待确认候选；读不出内容时返回 null
+ *
+ * Reads the SAF-picked config file into a candidate; returns null when the
+ * content cannot be read.
+ */
+private suspend fun readImportCandidate(context: Context, uri: Uri): ImportCandidate? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val content = context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.readBytes().toString(Charsets.UTF_8)
+            } ?: return@runCatching null
+            val fileName = queryDisplayName(context, uri).orEmpty()
+            ImportCandidate(deriveInstanceName(fileName), content)
+        }.getOrNull()
+    }
+
+/**
+ * 查 SAF 文件的显示名；查询失败或无名时返回 null，调用方回退到固定名
+ *
+ * Queries the SAF file's display name; returns null when the query fails or
+ * the name is missing, and the caller falls back to a fixed name.
+ */
+private fun queryDisplayName(context: Context, uri: Uri): String? =
+    runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
+            if (cursor.moveToFirst()) cursor.getString(index) else null
+        }
+    }.getOrNull()
+
+/**
+ * 文件名 → 实例名：去扩展名后只保留网关白名单字符（字母数字、空格、点、下划线、
+ * 连字符及汉字等），并保证首字符合法；清不出合法名时回退固定名，避免整次导入白跑。
+ *
+ * File name → instance name: strips the extension and keeps only characters the
+ * gateway whitelist allows (letters, digits, space, dot, underscore, hyphen and
+ * CJK), with a valid first character; falls back to a fixed name so one odd
+ * file name cannot sink the whole import.
+ */
+private fun deriveInstanceName(fileName: String): String {
+    val base = fileName.trim().substringBeforeLast('.').trim().trimEnd('.', ' ')
+    val cleaned = base.filter { it.isLetterOrDigit() || it in "_. -" }.take(64).trim()
+    return if (cleaned.isNotEmpty() && cleaned.first().isLetterOrDigit()) cleaned else "导入配置"
+}

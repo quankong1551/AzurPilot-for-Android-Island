@@ -476,6 +476,16 @@ class AzurPilotRepository(
         _messages.value = text
     }
 
+    /**
+     * 网关之外的场景（如导入时读本地文件失败）也走同一条瞬时提示
+     *
+     * Scenarios beyond the gateway (e.g. failing to read a local file during
+     * import) surface through the same transient message.
+     */
+    fun reportTransient(text: String) {
+        report(text)
+    }
+
     private suspend fun loadLogsLocked(instance: String, after: Long) {
         val reply = gateway.call(
             "logs.get",

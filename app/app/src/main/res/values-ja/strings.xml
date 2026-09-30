@@ -749,6 +749,10 @@
     <string name="ap_instances_source_template">空のテンプレート</string>
     <string name="ap_instances_source_copy">%1$s を複製</string>
     <string name="ap_instances_export">JSON で書き出す</string>
+    <string name="ap_instances_import">設定をインポート</string>
+    <string name="ap_instances_import_warning">「%1$s」を新しいインスタンスとしてインポートします。Android 版は特殊な設定を使うため、PC 版の設定は動かない場合があります。続行しますか？</string>
+    <string name="ap_instances_import_confirm">それでもインポート</string>
+    <string name="ap_instances_import_read_failed">設定ファイルを読み込めませんでした。もう一度お試しください</string>
     <string name="ap_instances_delete">削除</string>
     <string name="ap_instances_delete_title">インスタンス %1$s を削除しますか？</string>
     <string name="ap_instances_delete_message">設定は config/backup に移動され、後から手動で戻せます。</string>

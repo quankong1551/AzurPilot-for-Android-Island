@@ -749,6 +749,10 @@
     <string name="ap_instances_source_template">空白範本</string>
     <string name="ap_instances_source_copy">複製 %1$s</string>
     <string name="ap_instances_export">匯出為 JSON</string>
+    <string name="ap_instances_import">匯入設定</string>
+    <string name="ap_instances_import_warning">將把「%1$s」匯入為新實例。Android 版使用特殊設定，電腦版設定直接匯入可能無法使用，確定要繼續嗎？</string>
+    <string name="ap_instances_import_confirm">仍要匯入</string>
+    <string name="ap_instances_import_read_failed">設定檔讀取失敗，請重試</string>
     <string name="ap_instances_delete">刪除</string>
     <string name="ap_instances_delete_title">刪除實例 %1$s？</string>
     <string name="ap_instances_delete_message">設定會移到 config/backup 備份目錄，可之後手動還原。</string>
