@@ -154,12 +154,18 @@ fun SettingsScreen(
                     )
                 }
             }
-            // 分类入口之外唯一的直达行：反馈是走浏览器离开 App，不该混进二级页导航里
+            // 分类入口之外的直达行：反馈走浏览器离开 App，不该混进二级页导航里
             AppCard {
                 AppNavigationRow(
                     label = stringResource(R.string.settings_feedback_bug),
                     description = stringResource(R.string.settings_feedback_bug_desc),
                     onClick = { uriHandler.openUri(ProjectLinks.ISSUES) },
+                )
+                HorizontalDivider()
+                AppNavigationRow(
+                    label = stringResource(R.string.settings_feedback_group),
+                    description = stringResource(R.string.settings_feedback_group_desc),
+                    onClick = { uriHandler.openUri(ProjectLinks.QQ_FEEDBACK_GROUP) },
                 )
             }
         }
