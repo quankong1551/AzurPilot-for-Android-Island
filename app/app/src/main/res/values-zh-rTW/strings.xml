@@ -142,6 +142,8 @@
     <string name="settings_about_all_dependencies">檢視完整 Android 相依清單</string>
     <string name="settings_feedback_bug">回報 Bug</string>
     <string name="settings_feedback_bug_desc">到 GitHub 回報問題或查看已知問題</string>
+    <string name="settings_feedback_group">加群回報</string>
+    <string name="settings_feedback_group_desc">加入 QQ 群，交流使用問題與建議</string>
     <string name="compat_notice_title">來登記你的機型</string>
     <string name="compat_notice_message">不同手機能否正常運作，差異很大。歡迎到 GitHub 的「機型支援列表」提交一筆：品牌、型號、系統版本、能不能用。你的一筆紀錄，能讓後來的人少踩坑。</string>
     <string name="compat_notice_go">去提交</string>
