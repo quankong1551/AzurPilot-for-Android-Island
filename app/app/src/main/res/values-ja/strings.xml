@@ -723,6 +723,7 @@
     <string name="settings_runtime_check">Runtime の更新を確認</string>
     <string name="settings_runtime_checking">Runtime を確認中…</string>
     <string name="settings_runtime_current">Runtime は Latest と同じです</string>
+    <string name="settings_runtime_commit_only">ソースの新バージョンはホットアップデートで取得できます</string>
     <string name="settings_runtime_new_version">新しいバージョンがあります。アプリを再起動すると更新を選べます</string>
     <string name="settings_runtime_check_failed">確認に失敗：%1$s</string>
     <string name="settings_app_check">アプリの更新を確認</string>

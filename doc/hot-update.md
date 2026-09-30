@@ -22,9 +22,22 @@ AzurPilot 源码与 Web 前端资源增量更新到上游最新提交。整包 R
    断网）→ 视为**暂不可更新**，保持旧版本；
 2. 写恢复计划（reloadalas + 依赖同步标记）→ 浅 `git fetch --depth 1` + `reset --hard`；
 3. 下载并校验 dist（sha256 + 源码指纹双校验）；失败则 `git reset` 回滚旧提交；
-4. 改写 `BUILD_MANIFEST`（`azurpilot_commit` 等；`rootfs_version` 不动，App 据此
-   区分“仅源码热更”与“需要整包重部署”）；
+4. 改写 `BUILD_MANIFEST`（`azurpilot_commit` 等；`rootfs_version` 不动——区分规则见下节）；
 5. 触发 `restart_event`：父监督器完成依赖同步后重启 WebUI，实例按 reloadalas 恢复。
+
+### 整包更新与热更的区分
+
+`rootfs_version` 是复合串：`<上游提交前12位>-<rootfs 构建输入哈希前10位>`（输入 =
+build 脚本、overlays、seeds 等宿主侧内容）。热更只改写 `azurpilot_commit` 等字段，
+`rootfs_version` 保持原样。App 的整包更新判据因此拆成两层：
+
+- **构建输入哈希（末段）一致**：基础镜像无差异，整串不等仅因源码前进 →
+  置 `RuntimeUpdateCheck.commitOnly`，不弹整包更新、不阻塞 proot 启动，
+  差异交给热更通道；
+- **构建输入哈希变化**：Python 版本、系统库、overlay/种子内容变了 →
+  必须整包重部署，照常弹窗。
+
+逃生门：关闭设置里的热更开关，整包更新提示立即恢复（用于热更通道不可用时强制走整包）。
 
 ### App 侧约定
 
@@ -62,10 +75,27 @@ image changes.
    `git fetch --depth 1` + `reset --hard`;
 3. Download and verify the dist (sha256 plus source-fingerprint); on failure
    `git reset` rolls the source back;
-4. Rewrite `BUILD_MANIFEST` (`azurpilot_commit` etc.; `rootfs_version` untouched,
-   so the App distinguishes a source-only hot update from a full redeploy);
+4. Rewrite `BUILD_MANIFEST` (`azurpilot_commit` etc.; `rootfs_version` untouched —
+   see the distinction rules below);
 5. Trigger `restart_event`: the parent supervisor finishes dependency sync,
    restarts the WebUI, and instances resume per reloadalas.
+
+### Full redeploy vs hot update
+
+`rootfs_version` is a composite string: `<upstream-commit-12>-<rootfs-input-hash-10>`
+(inputs = the host-side build script, overlays, and seeds). A hot update rewrites
+`azurpilot_commit` etc. and deliberately leaves `rootfs_version` alone. The App's
+full-redeploy criterion therefore splits in two:
+
+- **Input hash (suffix) identical**: the base image is unchanged and the strings
+  differ only because the source moved → `RuntimeUpdateCheck.commitOnly` is set,
+  no full-update dialog, proot start is not blocked, and the hot-update channel
+  owns the difference;
+- **Input hash changed**: the Python version, system libraries, or overlay/seed
+  content changed → a full redeploy is required and the dialog appears as usual.
+
+Escape hatch: turning off the hot-update toggle restores the full-update prompt
+immediately (for forcing a full redeploy when the hot-update channel is unusable).
 
 ### App-side contract
 

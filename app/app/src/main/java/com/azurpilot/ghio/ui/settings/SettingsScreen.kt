@@ -884,6 +884,8 @@ fun RuntimeSettingsPage(
                 val status = when {
                     runtimeCheck.error != null -> stringResource(R.string.settings_runtime_check_failed, runtimeCheck.error!!)
                     runtimeCheck.latestVersion == installedVersion -> stringResource(R.string.settings_runtime_current)
+                    runtimeCheck.latestVersion != null && runtimeCheck.commitOnly ->
+                        stringResource(R.string.settings_runtime_commit_only)
                     runtimeCheck.latestVersion != null -> stringResource(R.string.settings_runtime_new_version)
                     else -> stringResource(R.string.settings_runtime_unknown)
                 }

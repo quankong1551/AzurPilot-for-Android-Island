@@ -233,9 +233,14 @@ fun AppRoot(
     val installedRuntime = provisioner.installedVersion()
     val runtimeAvailable = runtimeCheck.checked && runtimeCheck.error == null &&
         runtimeCheck.latestVersion != null && runtimeCheck.latestVersion != installedRuntime
-    LaunchedEffect(provisionState, runtimeCheck, runtimePromptDismissed, applyingRuntimeUpdate) {
+    val hotUpdateOn by appSettings.hotUpdateEnabled.collectAsStateWithLifecycle()
+    // 整包重部署只在「基础镜像有差异」时弹出：rootfs_version 仅上游提交前缀不同
+    // (commitOnly) 且热更开启时，源码差异交给热更通道，不弹整包、不挡 proot 启动；
+    // 关掉热更开关即恢复整包提示（逃生门）
+    val fullUpdatePending = runtimeAvailable && !(runtimeCheck.commitOnly && hotUpdateOn)
+    LaunchedEffect(provisionState, runtimeCheck, runtimePromptDismissed, applyingRuntimeUpdate, hotUpdateOn) {
         if (!prootStarted && provisionState is ProvisionState.Ready && runtimeCheck.checked && !runtimeCheck.checking &&
-            !applyingRuntimeUpdate && (!runtimeAvailable || runtimePromptDismissed)
+            !applyingRuntimeUpdate && (!fullUpdatePending || runtimePromptDismissed)
         ) {
             prootHost.ensureStarted()
             prootStarted = true
@@ -297,7 +302,7 @@ fun AppRoot(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (!isAppLocked && provisionState is ProvisionState.Ready && runtimeAvailable &&
+            if (!isAppLocked && provisionState is ProvisionState.Ready && fullUpdatePending &&
                 !runtimePromptDismissed && !applyingRuntimeUpdate && !prootStarted
             ) {
                 AlertDialog(
@@ -327,7 +332,7 @@ fun AppRoot(
             }
             if (!isAppLocked) {
                 appUpdateState.available?.takeUnless {
-                    provisionState is ProvisionState.Ready && runtimeAvailable &&
+                    provisionState is ProvisionState.Ready && fullUpdatePending &&
                         !runtimePromptDismissed && !applyingRuntimeUpdate
                 }?.let { update ->
                     AlertDialog(

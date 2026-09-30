@@ -723,6 +723,7 @@
     <string name="settings_runtime_check">檢查 Runtime 更新</string>
     <string name="settings_runtime_checking">正在檢查 Runtime…</string>
     <string name="settings_runtime_current">Runtime 已是 Latest 版本</string>
+    <string name="settings_runtime_commit_only">源碼有新版本，可透過熱更新取得</string>
     <string name="settings_runtime_new_version">發現新版本；重新啟動 App 時可選擇更新</string>
     <string name="settings_runtime_check_failed">檢查失敗：%1$s</string>
     <string name="settings_app_check">檢查 App 更新</string>

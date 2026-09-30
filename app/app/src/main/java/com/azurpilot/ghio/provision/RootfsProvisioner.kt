@@ -84,6 +84,16 @@ data class RuntimeUpdateCheck(
     val checked: Boolean = false,
     val latestVersion: String? = null,
     val error: String? = null,
+    /**
+     * 最新包与已装包的 rootfs_version 只有上游提交前缀不同、构建输入哈希后段一致——
+     * 即基础镜像无变化、差异仅在源码，热更可替代整包重部署
+     *
+     * The latest and installed rootfs_version differ only in the upstream-commit
+     * prefix while the build-input hash suffix matches — the base image is
+     * unchanged and the difference is source-only, so a hot update can replace
+     * a full redeploy.
+     */
+    val commitOnly: Boolean = false,
 )
 
 /**
@@ -150,12 +160,22 @@ class RootfsProvisioner(
                 val abi = RuntimeArch.deviceAbi() ?: throw IOException("设备架构不受支持")
                 parseRuntime(fetchIndex(), abi)?.version
             }.onSuccess { version ->
-                _updateCheck.value = RuntimeUpdateCheck(checked = true, latestVersion = version)
+                // rootfs_version = <上游提交前12位>-<构建输入哈希前10位>：整串不等但
+                // 后段一致时，基础镜像没变、差异仅在源码，整包重部署可由热更替代
+                val commitOnly = version != null && installedVersion()?.let { installed ->
+                    version != installed && inputsHash(version) == inputsHash(installed)
+                } == true
+                _updateCheck.value = RuntimeUpdateCheck(
+                    checked = true, latestVersion = version, commitOnly = commitOnly,
+                )
             }.onFailure { error ->
                 _updateCheck.value = RuntimeUpdateCheck(checked = true, error = error.message ?: "检查失败")
             }
         }
     }
+
+    /** rootfs_version 的构建输入段（末段哈希）；热更不改它，整包更新才会变 / The build-input segment (trailing hash) of rootfs_version; hot updates never touch it, full redeploys do. */
+    private fun inputsHash(version: String): String = version.substringAfterLast('-')
 
     /**
      * 当前生效的镜像前缀；「换源」判断以 (镜像, 自定义前缀) 二元组整体比较

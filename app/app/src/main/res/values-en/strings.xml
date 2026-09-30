@@ -728,6 +728,7 @@
     <string name="settings_runtime_check">Check Runtime update</string>
     <string name="settings_runtime_checking">Checking Runtime…</string>
     <string name="settings_runtime_current">Runtime is up to date with Latest</string>
+    <string name="settings_runtime_commit_only">New source available via hot update</string>
     <string name="settings_runtime_new_version">New version available; restart the app to choose an update</string>
     <string name="settings_runtime_check_failed">Check failed: %1$s</string>
     <string name="settings_app_check">Check for app update</string>
