@@ -1,17 +1,23 @@
 package com.azurpilot.ghio.ui
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -24,7 +30,9 @@ import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -105,12 +113,15 @@ import com.azurpilot.ghio.ui.settings.AdvancedSettingsPage
 import com.azurpilot.ghio.ui.settings.AboutSettingsPage
 import com.azurpilot.ghio.ui.settings.DisplaySettingsPage
 import com.azurpilot.ghio.ui.settings.KeepAliveSettingsPage
+import com.azurpilot.ghio.ui.settings.LicenseDetailPage
 import com.azurpilot.ghio.ui.settings.LogsSettingsPage
+import com.azurpilot.ghio.ui.settings.OpenSourceLicensesPage
 import com.azurpilot.ghio.ui.settings.RuntimeSettingsPage
 import com.azurpilot.ghio.ui.settings.VirtualDisplaySettingsPage
 import com.azurpilot.ghio.ui.settings.WidgetSettingsPage
 import com.azurpilot.ghio.ui.setup.ProvisionScreen
 import com.azurpilot.ghio.update.AppUpdateManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -234,9 +245,10 @@ fun AppRoot(
     val runtimeAvailable = runtimeCheck.checked && runtimeCheck.error == null &&
         runtimeCheck.latestVersion != null && runtimeCheck.latestVersion != installedRuntime
     val hotUpdateOn by appSettings.hotUpdateEnabled.collectAsStateWithLifecycle()
-    // 自动更新（热更/整包）开启时，不弹整包对话框、不挡 proot 启动，交给后台自动更新机制；
-    // 关掉开关即恢复整包提示（逃生门）。
-    val fullUpdatePending = runtimeAvailable && !hotUpdateOn
+    // 整包重部署只在「基础镜像有差异」时弹出：rootfs_version 仅上游提交前缀不同
+    // (commitOnly) 且热更开启时，源码差异交给热更通道，不弹整包。用户主动打开 App
+    // 时全量更新必须前台提示（每日定时自动更新只是兜底，不抢前台的知情权）。
+    val fullUpdatePending = runtimeAvailable && !(runtimeCheck.commitOnly && hotUpdateOn)
     LaunchedEffect(provisionState, runtimeCheck, runtimePromptDismissed, applyingRuntimeUpdate, hotUpdateOn) {
         if (!prootStarted && provisionState is ProvisionState.Ready && runtimeCheck.checked && !runtimeCheck.checking &&
             !applyingRuntimeUpdate && (!fullUpdatePending || runtimePromptDismissed)
@@ -278,11 +290,7 @@ fun AppRoot(
     val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
     val compatNoticeShown by appSettings.compatNoticeShown.collectAsStateWithLifecycle()
     var compatNoticeDismissed by rememberSaveable { mutableStateOf(false) }
-    // 排在所有更急的弹窗之后：更新引导、Shizuku 引导、部署门都退场了才轮到它，
-    // 否则首启时多个 AlertDialog 叠在一起
-    val showCompatNotice = settingsLoaded && !compatNoticeShown && !compatNoticeDismissed &&
-        !isAppLocked && !showProvision && !readiness.needsGuidance &&
-        appUpdateState.available == null && (!runtimeAvailable || runtimePromptDismissed)
+    var showCompatNoticeDialog by rememberSaveable { mutableStateOf(false) }
 
     AzurPilotTheme(darkTheme = darkTheme) {
         AppLockGate(
@@ -375,19 +383,89 @@ fun AppRoot(
             }
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
+        var exportKind by remember { mutableStateOf<LogExportKind?>(null) }
 
-        // 首启「机型支持列表」弹窗：确认键跳 GitHub 登记，两个按钮都落盘「已处理」，只弹这一次
-        if (showCompatNotice) {
+        val hostState: HostState = koinInject()
+        // 主页是否可见：HangarScreen 靠它决定要不要自动补一次环境拉起
+        val hangarActive = pagerState.currentPage == TopDestination.Hangar.ordinal
+
+        // 首启「机型支持列表」弹窗：进入主页后触发；弹窗状态一旦激活即保持展示，避免后台异步状态变动导致弹窗自动消失。
+        // 排序最末：必须等 App 更新与 Runtime 更新两项检查都出结果（否则更新弹窗会在它
+        // 触发后才落下，两个 AlertDialog 叠在一起）；Runtime 更新弹窗退场（稍后）后才轮到它。
+        // 勾选「不再弹出」才持久化抑制；点击「去提交」前往 GitHub 登记并标记已处理。
+        LaunchedEffect(
+            hangarActive,
+            onSubPage,
+            showProvision,
+            isAppLocked,
+            settingsLoaded,
+            compatNoticeShown,
+            compatNoticeDismissed,
+            readiness.needsGuidance,
+            appUpdateState,
+            runtimeCheck,
+            fullUpdatePending,
+            runtimePromptDismissed,
+        ) {
+            if (hangarActive &&
+                !onSubPage &&
+                !showProvision &&
+                !isAppLocked &&
+                settingsLoaded &&
+                !compatNoticeShown &&
+                !compatNoticeDismissed &&
+                !showCompatNoticeDialog &&
+                !readiness.needsGuidance &&
+                !appUpdateState.checking &&
+                appUpdateState.available == null &&
+                runtimeCheck.checked &&
+                !runtimeCheck.checking &&
+                (!fullUpdatePending || runtimePromptDismissed)
+            ) {
+                delay(300)
+                if (hangarActive && !onSubPage && !showProvision && !isAppLocked) {
+                    showCompatNoticeDialog = true
+                }
+            }
+        }
+
+        if (showCompatNoticeDialog) {
             val uriHandler = LocalUriHandler.current
+            var dontAskAgain by remember { mutableStateOf(false) }
             AlertDialog(
                 onDismissRequest = {
+                    showCompatNoticeDialog = false
                     compatNoticeDismissed = true
-                    scope.launch { appSettings.setCompatNoticeShown(true) }
+                    if (dontAskAgain) {
+                        scope.launch { appSettings.setCompatNoticeShown(true) }
+                    }
                 },
                 title = { Text(stringResource(R.string.compat_notice_title)) },
-                text = { Text(stringResource(R.string.compat_notice_message)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(stringResource(R.string.compat_notice_message))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { dontAskAgain = !dontAskAgain }
+                                .padding(vertical = 4.dp),
+                        ) {
+                            Checkbox(
+                                checked = dontAskAgain,
+                                onCheckedChange = { dontAskAgain = it },
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.compat_notice_dont_ask_again),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                },
                 confirmButton = {
                     TextButton(onClick = {
+                        showCompatNoticeDialog = false
                         compatNoticeDismissed = true
                         scope.launch { appSettings.setCompatNoticeShown(true) }
                         uriHandler.openUri(ProjectLinks.ISSUE_DEVICE_SUPPORT)
@@ -395,17 +473,15 @@ fun AppRoot(
                 },
                 dismissButton = {
                     TextButton(onClick = {
+                        showCompatNoticeDialog = false
                         compatNoticeDismissed = true
-                        scope.launch { appSettings.setCompatNoticeShown(true) }
+                        if (dontAskAgain) {
+                            scope.launch { appSettings.setCompatNoticeShown(true) }
+                        }
                     }) { Text(stringResource(R.string.compat_notice_later)) }
                 },
             )
         }
-        var exportKind by remember { mutableStateOf<LogExportKind?>(null) }
-
-        val hostState: HostState = koinInject()
-        // 主页是否可见：HangarScreen 靠它决定要不要自动补一次环境拉起
-        val hangarActive = pagerState.currentPage == TopDestination.Hangar.ordinal
 
         /**
          * 切到第 [index] 页
@@ -679,7 +755,28 @@ fun AppRoot(
                     RuntimeSettingsPage(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.SETTINGS_ABOUT) {
-                    AboutSettingsPage(onBack = { navController.popBackStack() })
+                    AboutSettingsPage(
+                        onOpenLicenses = { navController.navigate(Routes.SETTINGS_LICENSES) },
+                        onOpenLicenseDetail = { id -> navController.navigate(Routes.licenseDetail(id)) },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SETTINGS_LICENSES) {
+                    OpenSourceLicensesPage(
+                        onOpenDetail = { id -> navController.navigate(Routes.licenseDetail(id)) },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(
+                    route = Routes.SETTINGS_LICENSE_DETAIL,
+                    arguments = listOf(navArgument(Routes.SETTINGS_LICENSE_DETAIL_ARG) { type = NavType.StringType }),
+                ) { backStackEntry ->
+                    val componentId = backStackEntry.arguments?.getString(Routes.SETTINGS_LICENSE_DETAIL_ARG).orEmpty()
+                    LicenseDetailPage(
+                        componentId = componentId,
+                        onBack = { navController.popBackStack() },
+                        snackbarHostState = snackbarHostState,
+                    )
                 }
             }
         }

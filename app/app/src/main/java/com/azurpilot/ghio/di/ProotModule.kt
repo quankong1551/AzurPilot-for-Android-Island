@@ -18,7 +18,7 @@ import org.koin.dsl.module
  * gateway, preference store, and repository.
  */
 val prootModule = module {
-    single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get()) }
+    single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get(), get()) }
     single {
         val autoUpdater = get<com.azurpilot.ghio.provision.RuntimeAutoUpdater>()
         AzurPilotRunController(

@@ -33,6 +33,23 @@ internal val R8_CRITICAL_CLASSES = setOf(
 )
 
 /**
+ * R8 不能裁掉的无参构造器
+ *
+ * Room 2.2.5 的 consumer rule 只保留 [androidx.room.RoomDatabase] 实现类名，
+ * WorkManager 却用反射调用 [androidx.work.impl.WorkDatabase_Impl] 的无参构造器。
+ * 若构造器被裁掉，应用会在 androidx.startup 初始化阶段直接闪退。
+ *
+ * No-argument constructors R8 must retain.
+ *
+ * Room 2.2.5's consumer rule retains only [androidx.room.RoomDatabase] implementation
+ * class names, while WorkManager reflectively calls [androidx.work.impl.WorkDatabase_Impl]'s
+ * no-argument constructor. Removing it crashes the app during androidx.startup initialization.
+ */
+internal val R8_CRITICAL_NO_ARG_CONSTRUCTORS = setOf(
+    "androidx.work.impl.WorkDatabase_Impl",
+)
+
+/**
  * 断言 [R8_CRITICAL_CLASSES] 的 keep 规则仍然生效
  *
  * R8 不为保持原名的类输出映射：右侧出现别的名字意味着 keep 规则已失效；
@@ -54,14 +71,19 @@ abstract class VerifyR8KeepsTask : DefaultTask() {
     @get:Input
     abstract val criticalClasses: SetProperty<String>
 
+    /** 需要保留的无参构造器所属类 / Classes whose no-argument constructor must survive. */
+    @get:Input
+    abstract val criticalNoArgConstructors: SetProperty<String>
+
     @TaskAction
     fun verify() {
         val file = mapping.get().asFile
         if (!file.isFile) return
+        val lines = file.readLines()
 
         val renamed = mutableMapOf<String, String>()
-        file.forEachLine { line ->
-            if (line.startsWith(" ") || !line.endsWith(":")) return@forEachLine
+        lines.forEach { line ->
+            if (line.startsWith(" ") || !line.endsWith(":")) return@forEach
             val parts = line.dropLast(1).split(" -> ")
             if (parts.size == 2) renamed[parts[0]] = parts[1]
         }
@@ -72,16 +94,29 @@ abstract class VerifyR8KeepsTask : DefaultTask() {
                 name -> null
                 else -> "$name was renamed to $mapped"
             }
+        }.toMutableList()
+        criticalNoArgConstructors.get().forEach { name ->
+            val constructor = "    0:3:void <init>():"
+            val classStart = lines.indexOf("$name -> $name:")
+            val classEnd = if (classStart < 0) -1 else lines.subList(classStart + 1, lines.size)
+                .indexOfFirst { line -> !line.startsWith(" ") && line.endsWith(":") }
+                .let { index -> if (index < 0) lines.size else classStart + 1 + index }
+            if (classStart < 0 || lines.subList(classStart, classEnd).none { it.contains("void <init>():") }) {
+                broken += "$name no-argument constructor was shrunk away"
+            }
         }
         if (broken.isNotEmpty()) {
             throw GradleException(
                 buildString {
-                    appendLine("R8 broke a name that native code or another process looks up literally:")
+                    appendLine("R8 broke a name or reflective constructor required at runtime:")
                     broken.forEach { appendLine("  - $it") }
                     appendLine("Check the keep rules in app/proguard-rules.pro before shipping this.")
                 },
             )
         }
-        logger.lifecycle("R8 keeps verified: ${criticalClasses.get().size} classes kept under their own name")
+        logger.lifecycle(
+            "R8 keeps verified: ${criticalClasses.get().size} classes and " +
+                "${criticalNoArgConstructors.get().size} constructors retained",
+        )
     }
 }

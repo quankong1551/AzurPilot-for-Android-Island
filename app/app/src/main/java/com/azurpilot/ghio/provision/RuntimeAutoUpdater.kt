@@ -128,7 +128,13 @@ class RuntimeAutoUpdater(
     /**
      * 检查当前是否到达每日设定的更新时机。
      *
-     * Checks if the daily scheduled hour has arrived.
+     * 触发判据是「不早于设定时刻的当天首次 tick」：进程在设定整点没活着（被杀/Doze 压住）
+     * 或跨过了整点才醒来时照样补跑，而不是整天错过；设定时刻之前绝不提前触发。
+     *
+     * Checks if the daily scheduled hour has arrived. Fires on the first tick
+     * of the day at or after the configured hour: a process that was dead or
+     * dozing across the hour still catches up instead of missing the whole
+     * day, and never fires before the hour.
      */
     private suspend fun scheduledTick() {
         if (!settings.hotUpdateEnabled.value) return
@@ -143,7 +149,7 @@ class RuntimeAutoUpdater(
             now.get(Calendar.DAY_OF_MONTH),
         )
         val lastDate = prefs.getString(KEY_LAST_CHECK_DATE, null)
-        if (hour == targetHour && lastDate != today) {
+        if (hour >= targetHour && lastDate != today) {
             prefs.edit().putString(KEY_LAST_CHECK_DATE, today).apply()
             Timber.i("auto update: scheduled trigger at %02d:00 for %s", hour, today)
             checkAndApplyUpdate(force = false)
@@ -159,13 +165,21 @@ class RuntimeAutoUpdater(
      * @return 更新是否成功 / whether the update succeeded
      */
     suspend fun checkAndApplyUpdate(force: Boolean = false): Boolean = withContext(AppDispatchers.IO) {
+        // 与首启部署/手动整包更新（applyUpdate）共用同一把流水线锁：三条链都写 rootfs.tmp
+        // 并对 rootfs 做换名，并发会互相覆盖；抢不到锁直接让位
+        if (!provisioner.tryBeginPipeline()) {
+            Timber.d("auto update: provision pipeline busy, skipping")
+            return@withContext false
+        }
         if (!updateMutex.tryLock()) {
             Timber.d("auto update: another update is in progress, skipping")
+            provisioner.endPipeline()
             return@withContext false
         }
         _busy.value = true
         var staged = false
         var swapped = false
+        var wasActive = false
         val archive = File(app.filesDir, ARCHIVE_NAME)
 
         try {
@@ -189,10 +203,13 @@ class RuntimeAutoUpdater(
                 return@withContext false
             }
 
-            // 若仅上游提交差异（commitOnly），说明基础镜像无变化，交给轻量热更通道处理，不重复下载整包
+            // 若仅上游提交差异（commitOnly），说明基础镜像无变化，交给轻量热更通道处理，
+            // 不重复下载整包。但热更通道依赖运行时的 /android/update 接口：运行时没在跑或
+            // 版本太旧没有该接口时，commitOnly 永远无法送达——此时必须退回整包更新，
+            // 否则这次发布在该设备上永远装不上。
             val commitOnly = installed != null &&
                 runtime.version.substringAfterLast('-') == installed.substringAfterLast('-')
-            if (commitOnly && !force) {
+            if (commitOnly && !force && hotUpdateEndpointAlive()) {
                 Timber.i("auto update: commitOnly update detected, letting runtime hot-update handle it")
                 _state.value = AutoUpdateState.Idle
                 return@withContext false
@@ -229,10 +246,13 @@ class RuntimeAutoUpdater(
             archive.delete()
             staged = true
 
-            // 4. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单
+            // 4. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单。
+            // 挂起失败必须中止：suspend 同时负责写复活清单，硬着头皮换目录会把
+            // 运行中的调度器连根杀掉且更新后不再复活
             _state.value = AutoUpdateState.Suspending
-            if (prootHost.state.value.phase == ProotPhase.RUNNING) {
-                suspendRuntime()
+            wasActive = prootHost.startRequested || prootHost.state.value.phase != ProotPhase.IDLE
+            if (prootHost.state.value.phase == ProotPhase.RUNNING && !suspendRuntime()) {
+                throw IOException("运行时挂起失败，为保住运行中的任务已中止本次更新")
             }
 
             // 5. 停止旧会话并原子替换 rootfs
@@ -249,6 +269,11 @@ class RuntimeAutoUpdater(
             if (healthy) {
                 Timber.i("auto update succeeded: %s", runtime.version)
                 provisioner.cleanupPrevious()
+                if (!wasActive) {
+                    // 更新前会话本就没在跑：体检完恢复原状，别替用户把运行时拉起来
+                    prootHost.stopAndAwait()
+                }
+                provisioner.refreshUpdateCheck()
                 _state.value = AutoUpdateState.Completed(runtime.version)
                 true
             } else {
@@ -257,7 +282,14 @@ class RuntimeAutoUpdater(
                 prootHost.stopAndAwait()
                 provisioner.rollbackStaging()
                 prootHost.ensureStarted()
-                _state.value = AutoUpdateState.Failed("新版本启动超时，已自动回滚", rolledBack = true)
+                val restored = prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
+                if (!wasActive) prootHost.stopAndAwait()
+                provisioner.refreshUpdateCheck()
+                _state.value = if (restored) {
+                    AutoUpdateState.Failed("新版本启动超时，已自动回滚", rolledBack = true)
+                } else {
+                    AutoUpdateState.Failed("新版本启动超时，已回滚但旧版本未能恢复服务", rolledBack = true)
+                }
                 false
             }
         } catch (e: Exception) {
@@ -271,7 +303,10 @@ class RuntimeAutoUpdater(
                     prootHost.stopAndAwait()
                     provisioner.rollbackStaging()
                     prootHost.ensureStarted()
+                    prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
+                    if (!wasActive) prootHost.stopAndAwait()
                 }
+                provisioner.refreshUpdateCheck()
                 _state.value = AutoUpdateState.Failed(e.message ?: "自动更新异常，已回滚", rolledBack = true)
             } else {
                 _state.value = AutoUpdateState.Failed(e.message ?: "自动更新失败", rolledBack = false)
@@ -280,32 +315,75 @@ class RuntimeAutoUpdater(
         } finally {
             _busy.value = false
             updateMutex.unlock()
+            provisioner.endPipeline()
         }
     }
 
     /**
-     * 调用上游 API 安全挂起所有运行实例。
+     * 探测运行时是否具备热更私有接口（/android/update/status 200 即具备）。
      *
-     * Calls the upstream API to safely suspend all running instances.
+     * commitOnly 型发布只能经热更通道送达；接口不存在（太旧的运行时）或会话没在跑时
+     * 返回 false，让调用方退回整包更新。服务端要联网查上游提交，读超时放宽。
+     *
+     * Probes whether the runtime has the hot-update private API (a 200 from
+     * /android/update/status). Returns false when the API is missing (an
+     * older runtime) or the session is not running, so the caller falls back
+     * to a full update. The server queries the upstream commit over the
+     * network, hence the generous read timeout.
      */
-    private fun suspendRuntime() {
-        runCatching {
-            val url = URL("http://127.0.0.1:25548/android/update/suspend")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
+    private fun hotUpdateEndpointAlive(): Boolean {
+        if (prootHost.state.value.phase != ProotPhase.RUNNING) return false
+        return runCatching {
+            val conn = URL("http://127.0.0.1:25548/android/update/status")
+                .openConnection() as HttpURLConnection
             conn.setRequestProperty("X-AzurPilot-Android-Token", AndroidControlAuth.get(app))
             conn.connectTimeout = 3_000
-            conn.readTimeout = 15_000
-            val code = conn.responseCode
-            if (code == 200) {
-                val resp = conn.inputStream.use { it.readBytes().decodeToString() }
-                Timber.i("auto update: suspended instances: %s", resp)
-            } else {
-                Timber.w("auto update: suspend rejected with %d", code)
-            }
-        }.onFailure {
-            Timber.w(it, "auto update: suspend call failed, proceeding anyway")
+            conn.readTimeout = 20_000
+            (conn.responseCode == 200).also { conn.disconnect() }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 调用上游 API 安全挂起所有运行实例；失败重试一次后放弃并返回 false。
+     *
+     * 调用方收到 false 必须中止整包更新：suspend 同时负责写 reloadalas 复活清单，
+     * 继续换目录会把运行中的调度器连根杀掉且更新后不再复活。优雅停实例在运行时侧走
+     * SIGTERM→3s→SIGKILL，多实例时可能显著超过 15s，读超时放宽到 60s。
+     *
+     * Calls the upstream API to safely suspend all running instances; retries
+     * once on failure, then gives up and returns false.
+     *
+     * The caller must abort the full update on false: suspend also writes the
+     * reloadalas revival manifest, and proceeding with the swap would kill
+     * running schedulers that will not be revived afterwards. The graceful
+     * stop on the runtime side goes SIGTERM→3 s→SIGKILL per instance, which
+     * can exceed 15 s with several instances, hence the 60 s read timeout.
+     */
+    private suspend fun suspendRuntime(): Boolean {
+        repeat(2) { attempt ->
+            val ok = runCatching {
+                val url = URL("http://127.0.0.1:25548/android/update/suspend")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("X-AzurPilot-Android-Token", AndroidControlAuth.get(app))
+                conn.connectTimeout = 3_000
+                conn.readTimeout = 60_000
+                val code = conn.responseCode
+                if (code == 200) {
+                    val resp = conn.inputStream.use { it.readBytes().decodeToString() }
+                    Timber.i("auto update: suspended instances: %s", resp)
+                    true
+                } else {
+                    Timber.w("auto update: suspend rejected with %d", code)
+                    false
+                }
+            }.onFailure {
+                Timber.w(it, "auto update: suspend call failed (attempt %d)", attempt + 1)
+            }.getOrDefault(false)
+            if (ok) return true
+            if (attempt == 0) delay(2_000)
         }
+        return false
     }
 
     companion object {

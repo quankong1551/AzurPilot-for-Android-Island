@@ -138,7 +138,18 @@
     <string name="settings_about_license">開源授權</string>
     <string name="settings_about_repository">專案儲存庫</string>
     <string name="settings_about_source_project">來源專案</string>
-    <string name="settings_about_components">使用的開源元件與授權（點擊查看專案）</string>
+    <string name="settings_about_components">使用的開源組件與授權</string>
+    <string name="settings_about_components_summary">共 %1$d 個開源組件，點擊查看全部及授權原文</string>
+    <string name="settings_open_source_licenses">開源組件與授權</string>
+    <string name="settings_license_search_placeholder">搜尋組件名稱、組織或授權…</string>
+    <string name="settings_license_filter_all">全部</string>
+    <string name="settings_license_filter_core">核心與內建</string>
+    <string name="settings_license_filter_libs">執行庫</string>
+    <string name="settings_license_view_source">造訪專案首頁</string>
+    <string name="settings_license_text_title">授權原文</string>
+    <string name="settings_license_copied">已複製授權內文至剪貼簿</string>
+    <string name="settings_license_component_not_found">未找到該組件的開源資訊</string>
+    <string name="settings_license_spdx">開源授權</string>
     <string name="settings_about_all_dependencies">檢視完整 Android 相依清單</string>
     <string name="settings_feedback_bug">回報 Bug</string>
     <string name="settings_feedback_bug_desc">到 GitHub 回報問題或查看已知問題</string>
@@ -146,6 +157,7 @@
     <string name="settings_feedback_group_desc">加入 QQ 群，交流使用問題與建議</string>
     <string name="compat_notice_title">來登記你的機型</string>
     <string name="compat_notice_message">不同手機能否正常運作，差異很大。歡迎到 GitHub 的「機型支援列表」提交一筆：品牌、型號、系統版本、能不能用。你的一筆紀錄，能讓後來的人少踩坑。</string>
+    <string name="compat_notice_dont_ask_again">不再彈出</string>
     <string name="compat_notice_go">去提交</string>
     <string name="compat_notice_later">暫不</string>
     <string name="settings_hot_update">熱更新</string>
@@ -158,6 +170,7 @@
     <string name="settings_hot_update_updating">正在更新：%1$s</string>
     <string name="settings_hot_update_failed">上次更新失敗：%1$s</string>
     <string name="settings_hot_update_disabled">下載渠道未就緒，重啟執行環境後生效</string>
+    <string name="settings_hot_update_unreachable">執行環境未連線或版本較舊，暫無法增量更新；請先整包更新執行環境</string>
     <string name="settings_hot_update_phase_git">拉取源碼</string>
     <string name="settings_hot_update_phase_dist">下載頁面資源</string>
     <string name="settings_hot_update_phase_manifest">寫入版本資訊</string>

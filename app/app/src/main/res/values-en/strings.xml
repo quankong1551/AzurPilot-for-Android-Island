@@ -142,7 +142,18 @@
     <string name="settings_about_license">License</string>
     <string name="settings_about_repository">Repository</string>
     <string name="settings_about_source_project">Source Project</string>
-    <string name="settings_about_components">Open-source components and licenses (tap to view)</string>
+    <string name="settings_about_components">Open-source components and licenses</string>
+    <string name="settings_about_components_summary">%1$d open-source components; tap to view all and full texts</string>
+    <string name="settings_open_source_licenses">Open-source components and licenses</string>
+    <string name="settings_license_search_placeholder">Search components, groups, or licenses…</string>
+    <string name="settings_license_filter_all">All</string>
+    <string name="settings_license_filter_core">Core &amp; Bundled</string>
+    <string name="settings_license_filter_libs">Libraries</string>
+    <string name="settings_license_view_source">Visit project homepage</string>
+    <string name="settings_license_text_title">Full license text</string>
+    <string name="settings_license_copied">License text copied to clipboard</string>
+    <string name="settings_license_component_not_found">Open-source component not found</string>
+    <string name="settings_license_spdx">License</string>
     <string name="settings_about_all_dependencies">View all Android dependencies</string>
     <string name="settings_feedback_bug">Report a Bug</string>
     <string name="settings_feedback_bug_desc">Open GitHub to file an issue or browse known ones</string>
@@ -150,6 +161,7 @@
     <string name="settings_feedback_group_desc">Join the QQ group to share questions and suggestions</string>
     <string name="compat_notice_title">Add your device to the list</string>
     <string name="compat_notice_message">Whether the app runs well differs a lot between phones. Please add one entry — brand, model, system version, working or not — to the device support list on GitHub. Your single record saves others a lot of trial and error.</string>
+    <string name="compat_notice_dont_ask_again">Don\'t show again</string>
     <string name="compat_notice_go">Open the list</string>
     <string name="compat_notice_later">Not now</string>
     <string name="settings_hot_update">Hot update</string>
@@ -162,6 +174,7 @@
     <string name="settings_hot_update_updating">Updating: %1$s</string>
     <string name="settings_hot_update_failed">Last update failed: %1$s</string>
     <string name="settings_hot_update_disabled">Download source not ready; takes effect after the runtime restarts</string>
+    <string name="settings_hot_update_unreachable">Runtime not connected or outdated; incremental update unavailable — install the full Runtime update first</string>
     <string name="settings_hot_update_phase_git">Fetching source</string>
     <string name="settings_hot_update_phase_dist">Downloading web assets</string>
     <string name="settings_hot_update_phase_manifest">Writing version info</string>

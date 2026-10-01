@@ -46,6 +46,22 @@ object Routes {
     const val SETTINGS_ABOUT = "settings/about"
 
     /**
+     * 开源组件与许可证列表二级页
+     *
+     * Open-source components and licenses list sub-page.
+     */
+    const val SETTINGS_LICENSES = "settings/licenses"
+
+    /**
+     * 单个开源组件协议原文详情页；id 是组件唯一标识
+     *
+     * Detail page for one open-source component's full license text; id is the component identifier.
+     */
+    const val SETTINGS_LICENSE_DETAIL = "settings/licenses/{id}"
+    const val SETTINGS_LICENSE_DETAIL_ARG = "id"
+    fun licenseDetail(id: String) = "settings/licenses/${Uri.encode(id)}"
+
+    /**
      * 启动器日志（`log/` 目录递归：app.log 系列 / session.log / crash）
      *
      * Launcher logs (recursive `log/` walk: app.log family / session.log / crash).

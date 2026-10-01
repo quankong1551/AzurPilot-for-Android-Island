@@ -179,6 +179,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
                                 variant.artifacts.get(SingleArtifact.OBFUSCATION_MAPPING_FILE),
                             )
                             criticalClasses.set(R8_CRITICAL_CLASSES)
+                            criticalNoArgConstructors.set(R8_CRITICAL_NO_ARG_CONSTRUCTORS)
                         }
                         tasks.matching { it.name == "assembleRelease" }
                             .configureEach { finalizedBy(verify) }

@@ -214,7 +214,9 @@ class AzurPilotRunController(
 
     /** 拉取并解析 /android/update/status；不可达返回 null（保留上次已知态） / Fetches and parses /android/update/status; null when unreachable (the last known state is kept). */
     private fun fetchHotUpdateState(): HotUpdateState? = parseHotUpdate(
-        get("$BASE/update/status", HTTP_TIMEOUT_MS),
+        // 服务端 status() 要联网查上游提交并探测 dist，1.5s 探针超时必然不够
+        // （实测真机每次 read timeout），热更状态请求单独放宽
+        get("$BASE/update/status", HOT_UPDATE_HTTP_TIMEOUT_MS),
     )
 
     /** 手动刷新热更状态（设置页「检查更新」按钮） / Manually refreshes the hot-update status (the settings "check" button). */
@@ -470,6 +472,14 @@ class AzurPilotRunController(
 
         /** 热更状态检查间隔 / Interval between hot-update status checks. */
         const val HOT_UPDATE_CHECK_MS = 30 * 60_000L
+
+        /**
+         * 热更状态 GET 的超时：服务端 status() 要联网查上游提交并探测 dist 资产，
+         * 不同于毫秒级的本地探针 / Timeout for the hot-update status GET: the
+         * server side queries the upstream commit and probes the dist asset
+         * over the network, unlike the millisecond-level local probes.
+         */
+        const val HOT_UPDATE_HTTP_TIMEOUT_MS = 12_000
 
         /** 手动热更后的轮询上限：600 × 3s = 30 分钟 / Poll cap after a manual apply: 600 × 3 s = 30 minutes. */
         const val HOT_UPDATE_POLL_LIMIT = 600

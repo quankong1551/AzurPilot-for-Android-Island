@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.azurpilot.ghio.domain.license.LicenseRepository
 import org.koin.compose.koinInject
 import androidx.fragment.app.FragmentActivity
 import android.content.ComponentName
@@ -177,16 +178,17 @@ fun SettingsScreen(
 }
 
 /**
- * 渲染设置二级页骨架：返回栏 + 标题 + 滚动内容
+ * 渲染设置二级页骨架：返回栏 + 标题 + 滚动或填充内容
  *
- * Renders the settings sub-page skeleton: back bar + title + scrolling content.
+ * Renders the settings sub-page skeleton: back bar + title + scrolling or fill content.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsSubPage(
-    titleRes: Int,
+internal fun SettingsSubPage(
+    title: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    scrollable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -197,7 +199,7 @@ private fun SettingsSubPage(
     ) {
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
         TopAppBar(
-            title = { Text(stringResource(titleRes)) },
+            title = { Text(title) },
             // 二级页盖在 AppRoot 的 Scaffold 之外，没人替它吃状态栏 inset，顶栏自己处理
             scrollBehavior = scrollBehavior,
             navigationIcon = {
@@ -209,23 +211,57 @@ private fun SettingsSubPage(
                 }
             },
         )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .imePadding()
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
-                .verticalScroll(rememberScrollState())
-                .padding(
-                    start = AppTokens.Spacing.lg,
-                    end = AppTokens.Spacing.lg,
-                    top = AppTokens.Spacing.sm,
-                    bottom = AppTokens.Spacing.lg,
-                ),
-            verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
-            content = content,
-        )
+        if (scrollable) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .imePadding()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection)
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        start = AppTokens.Spacing.lg,
+                        end = AppTokens.Spacing.lg,
+                        top = AppTokens.Spacing.sm,
+                        bottom = AppTokens.Spacing.lg,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
+                content = content,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .imePadding()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection)
+                    .padding(
+                        start = AppTokens.Spacing.lg,
+                        end = AppTokens.Spacing.lg,
+                        top = AppTokens.Spacing.sm,
+                        bottom = AppTokens.Spacing.lg,
+                    ),
+                content = content,
+            )
+        }
     }
+}
+
+@Composable
+internal fun SettingsSubPage(
+    titleRes: Int,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    scrollable: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    SettingsSubPage(
+        title = stringResource(titleRes),
+        onBack = onBack,
+        modifier = modifier,
+        scrollable = scrollable,
+        content = content,
+    )
 }
 
 /**
@@ -778,17 +814,22 @@ fun WidgetSettingsPage(
 }
 
 /**
- * 渲染关于二级页：版本信息、许可证与仓库链接、第三方组件清单
+ * 渲染关于二级页：版本信息、许可证与仓库链接、第三方开源组件清单
  *
  * Renders the about page: version info, license and repository links, and the
- * third-party component list.
+ * third-party open-source component list.
  *
+ * @param onOpenLicenses 打开全部开源组件列表回调 / Callback opening full open-source licenses list
+ * @param onOpenLicenseDetail 打开特定组件协议原文详情页回调 / Callback opening license detail page
  * @param onBack 返回回调 / back callback
  */
 @Composable
 fun AboutSettingsPage(
+    onOpenLicenses: () -> Unit,
+    onOpenLicenseDetail: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    licenseRepository: LicenseRepository = koinInject(),
 ) {
     val uriHandler = LocalUriHandler.current
     SettingsSubPage(titleRes = R.string.settings_cat_about, onBack = onBack, modifier = modifier) {
@@ -804,7 +845,7 @@ fun AboutSettingsPage(
             AppNavigationRow(
                 label = stringResource(R.string.settings_about_license),
                 description = "AGPL-3.0",
-                onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/LICENSE") },
+                onClick = { onOpenLicenseDetail("alas-aos") },
             )
             AppNavigationRow(
                 label = stringResource(R.string.settings_about_repository),
@@ -819,22 +860,24 @@ fun AboutSettingsPage(
         }
         AppCard {
             AppFieldLabel(stringResource(R.string.settings_about_components))
-            val components = listOf(
-                Triple("AzurPilot", "GPL-3.0", "https://github.com/wess09/AzurPilot"),
-                Triple("PRoot", "GPL-2.0", "https://github.com/proot-me/proot"),
-                Triple("Shizuku", "Apache-2.0", "https://github.com/RikkaApps/Shizuku"),
-                Triple("libsu", "Apache-2.0", "https://github.com/topjohnwu/libsu"),
-                Triple("Koin", "Apache-2.0", "https://github.com/InsertKoinIO/koin"),
-                Triple("Timber", "Apache-2.0", "https://github.com/JakeWharton/timber"),
-                Triple("Apache Commons Compress", "Apache-2.0", "https://github.com/apache/commons-compress"),
-            )
-            components.forEach { (name, license, url) ->
-                AppNavigationRow(label = name, description = license, onClick = { uriHandler.openUri(url) })
-            }
+            val allComponents = remember { licenseRepository.getAllComponents() }
+            val coreComponents = remember { licenseRepository.getCoreComponents() }
+
+            // 查看完整列表入口（包含组件总数与协议原文提示）
             AppNavigationRow(
-                label = stringResource(R.string.settings_about_all_dependencies),
-                onClick = { uriHandler.openUri("https://github.com/wess09/AzurPilot-for-Android/blob/main/app/gradle/libs.versions.toml") },
+                label = stringResource(R.string.settings_open_source_licenses),
+                description = stringResource(R.string.settings_about_components_summary, allComponents.size),
+                onClick = onOpenLicenses,
             )
+
+            // 核心组件快捷入口：点击直接进入该组件的协议原文
+            coreComponents.take(4).forEach { comp ->
+                AppNavigationRow(
+                    label = comp.name,
+                    description = comp.licenseId,
+                    onClick = { onOpenLicenseDetail(comp.id) },
+                )
+            }
         }
     }
 }
@@ -952,7 +995,13 @@ fun RuntimeSettingsPage(
             }
             val hot = hotUpdate
             when {
-                hot == null -> {}
+                // 状态拿不到：运行时没起来或版本太旧没有增量更新接口，「立即更新」按钮
+                // 因此置灰——不说清楚用户只会觉得这个功能不存在
+                hot == null -> Text(
+                    stringResource(R.string.settings_hot_update_unreachable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 hot.busy && phaseText != null -> Text(
                     stringResource(R.string.settings_hot_update_updating, phaseText),
                     style = MaterialTheme.typography.bodySmall,

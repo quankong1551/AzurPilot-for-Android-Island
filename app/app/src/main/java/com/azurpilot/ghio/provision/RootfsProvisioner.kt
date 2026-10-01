@@ -291,6 +291,29 @@ class RootfsProvisioner(
     /** 部署/更新流水线的互斥位 / The mutex flag around the provision/update pipeline. */
     private val running = AtomicBoolean(false)
 
+    /**
+     * 尝试独占部署/更新流水线；首启部署、手动整包更新（[applyUpdate]）与自动整包更新
+     * （[RuntimeAutoUpdater]）三链共用同一把锁。
+     *
+     * 三条链都写 `rootfs.tmp` 并对 `rootfs` 做原子换名，并发会互相覆盖；抢锁失败的
+     * 一方必须直接让位（自动更新跳过本次，手动更新按既有语义静默忽略）。
+     *
+     * Tries to take exclusive ownership of the deploy/update pipeline; the
+     * first-boot deploy, the manual full update ([applyUpdate]) and the
+     * automatic full update ([RuntimeAutoUpdater]) all share this one lock.
+     *
+     * All three write `rootfs.tmp` and atomically rename `rootfs`, so
+     * concurrent runs would overwrite each other; the caller that fails to
+     * take the lock must yield (auto-update skips the round, manual update is
+     * silently ignored per its existing semantics).
+     */
+    internal fun tryBeginPipeline(): Boolean = running.compareAndSet(false, true)
+
+    /** 释放 [tryBeginPipeline] 取得的流水线锁 / Releases the pipeline lock taken by [tryBeginPipeline]. */
+    internal fun endPipeline() {
+        running.set(false)
+    }
+
     private val rootDir: File get() = File(app.filesDir, "rootfs")
     private val tmpDir: File get() = File(app.filesDir, "rootfs.tmp")
 
@@ -319,6 +342,19 @@ class RootfsProvisioner(
      */
     fun installedVersion(): String? =
         runCatching { markerFile.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+
+    /**
+     * 用当前已装版本刷新更新检查缓存；整包更新落地或回滚后调用，
+     * 让前台更新弹窗与设置页对齐新状态（自动更新链不写 [_updateCheck]，不刷会一直显示旧结论）。
+     *
+     * Refreshes the update-check cache from the installed version; called
+     * after a full update lands or rolls back so the foreground prompt and the
+     * settings page reflect the new state (the auto-update chain never writes
+     * [_updateCheck] itself, and a stale one keeps showing the old verdict).
+     */
+    internal fun refreshUpdateCheck() {
+        _updateCheck.value = RuntimeUpdateCheck(checked = true, latestVersion = installedVersion())
+    }
 
     /**
      * 首启流水线主体：恢复上次中断的部署、按需解压、最后查更新

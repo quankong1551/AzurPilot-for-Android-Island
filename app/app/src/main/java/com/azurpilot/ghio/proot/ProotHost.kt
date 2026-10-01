@@ -5,6 +5,7 @@ import android.os.Build
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.AppPaths
 import com.azurpilot.ghio.provision.RuntimeArch
+import com.azurpilot.ghio.provision.RootfsProvisioner
 import com.azurpilot.ghio.service.RunForegroundService
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.update.ReleaseUrls
@@ -62,6 +63,7 @@ class ProotHost(
     private val app: Application,
     private val scope: CoroutineScope,
     private val settings: AppSettingsManager,
+    private val provisioner: RootfsProvisioner,
 ) {
 
     private val _state = MutableStateFlow(ProotSnapshot())
@@ -197,6 +199,10 @@ class ProotHost(
         if (awaitServices(SERVICES_UP_MS)) {
             setState(ProotPhase.RUNNING)
             Timber.i("proot session up: AzurPilot ready on %d", WEBUI_PORT)
+            // 会话健康 = 新 rootfs 体检通过：统一在此回收旧版备份。手动整包更新链
+            // （applyUpdate）不像自动更新链那样自带体检后清理，不做这步的话
+            // rootfs.previous（约 2.4GB）会永久滞留且没有任何 UI 能回收
+            provisioner.cleanupPrevious()
         } else {
             setState(ProotPhase.STARTING, "等待 AzurPilot 服务就绪")
             Timber.w("AzurPilot WebUI not ready within %dms", SERVICES_UP_MS)
@@ -359,6 +365,8 @@ class ProotHost(
                     backoff = RESTART_BACKOFF_INIT_MS
                     setState(ProotPhase.RUNNING)
                     Timber.i("proot session respawned, wrapper ready")
+                    // 与 startLocked 同理：会话健康即回收旧版 rootfs 备份
+                    provisioner.cleanupPrevious()
                 }
             }
             Timber.i("proot supervisor exited")
@@ -382,7 +390,10 @@ class ProotHost(
     internal suspend fun awaitServices(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            if (httpOk("http://127.0.0.1:$WEBUI_PORT/android/status") &&
+            // 无 config 参数时运行时按「首个存活实例或 alas」解析实例名，调度器不在跑而
+            // 默认实例是 ap 时会回 400，被误判成服务未就绪（90s 超时、phase 卡 STARTING，
+            // 自动更新的健康检查也会因此永远失败回滚）；显式带上播种的默认实例名。
+            if (httpOk("http://127.0.0.1:$WEBUI_PORT/android/status?config=${AzurPilotRunState.DEFAULT_CONFIG}") &&
                 httpOk("http://127.0.0.1:$WEBUI_PORT/healthz")
             ) {
                 return true

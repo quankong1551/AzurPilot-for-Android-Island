@@ -117,7 +117,9 @@ jobs:
               version_code="$previous_version_code"
               version_name="$previous_version_name"
             else
-              version_code="$((previous_version_code + 1))"
+              # 既要高于上一发布版，也要不低于当前提交时间。只取上一版 +1 会让
+              # 历史上由本地构建（按提交时间编号）安装的包拒绝 CI 更新为“降级”。
+              version_code="$(( previous_version_code >= version_code ? previous_version_code + 1 : version_code ))"
               # 版本格式为 1.2.<X>；X 由 GitVersion.kt 的 VERSION_SCHEME_START_COUNT
               # 对提交数做基线平移，版本计算本身不因发布次数递增。
               version_name="$version_name"

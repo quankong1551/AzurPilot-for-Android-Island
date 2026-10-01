@@ -11,6 +11,8 @@ import com.azurpilot.ghio.config.UserConfigurationSerializer
 import com.azurpilot.ghio.config.UserConfigurationStore
 import com.azurpilot.ghio.constant.DataStoreFile
 import com.azurpilot.ghio.domain.UserConfiguration
+import com.azurpilot.ghio.domain.license.AssetLicenseRepository
+import com.azurpilot.ghio.domain.license.LicenseRepository
 import com.azurpilot.ghio.i18n.LocalizedTextRenderer
 import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.settings.AppSettingsGateway
@@ -78,4 +80,5 @@ val coreModule = module {
     single { AppUpdateManager(androidContext(), get(named<AppCoroutineScope>()), get<AppSettingsManager>()) }
     single { KeepAliveManager(androidContext(), get(), get(named<AppCoroutineScope>())) }
     single { AppLockManager(get()) }
+    single<LicenseRepository> { AssetLicenseRepository(androidContext()) }
 }

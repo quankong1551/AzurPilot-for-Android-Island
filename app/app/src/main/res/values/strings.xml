@@ -138,7 +138,18 @@
     <string name="settings_about_license">开源许可</string>
     <string name="settings_about_repository">项目仓库</string>
     <string name="settings_about_source_project">来源项目</string>
-    <string name="settings_about_components">使用的开源组件与许可（点击查看项目）</string>
+    <string name="settings_about_components">使用的开源组件与许可</string>
+    <string name="settings_about_components_summary">共 %1$d 个开源组件，点击查看全部及协议原文</string>
+    <string name="settings_open_source_licenses">开源组件与许可证</string>
+    <string name="settings_license_search_placeholder">搜索组件名、组织或协议…</string>
+    <string name="settings_license_filter_all">全部</string>
+    <string name="settings_license_filter_core">核心与内置</string>
+    <string name="settings_license_filter_libs">运行库</string>
+    <string name="settings_license_view_source">访问项目主页</string>
+    <string name="settings_license_text_title">协议原文</string>
+    <string name="settings_license_copied">已复制协议正文到剪贴板</string>
+    <string name="settings_license_component_not_found">未找到该组件的开源信息</string>
+    <string name="settings_license_spdx">开源协议</string>
     <string name="settings_about_all_dependencies">查看完整 Android 依赖清单</string>
     <string name="settings_feedback_bug">反馈 Bug</string>
     <string name="settings_feedback_bug_desc">到 GitHub 提交问题或查看已知问题</string>
@@ -146,6 +157,7 @@
     <string name="settings_feedback_group_desc">加入 QQ 群，交流使用问题和建议</string>
     <string name="compat_notice_title">来登记你的机型</string>
     <string name="compat_notice_message">不同手机能不能正常运行，差别很大。欢迎到 GitHub 的「机型支持列表」提交一条：品牌、型号、系统版本、能不能用。你的一条记录，能让后来的人少踩坑。</string>
+    <string name="compat_notice_dont_ask_again">不再弹出</string>
     <string name="compat_notice_go">去提交</string>
     <string name="compat_notice_later">暂不</string>
     <string name="settings_hot_update">热更新</string>
@@ -158,6 +170,7 @@
     <string name="settings_hot_update_updating">正在更新：%1$s</string>
     <string name="settings_hot_update_failed">上次更新失败：%1$s</string>
     <string name="settings_hot_update_disabled">下载渠道未就绪，重启运行时后生效</string>
+    <string name="settings_hot_update_unreachable">运行时未连接或版本较旧，暂无法增量更新；请先整包更新运行时</string>
     <string name="settings_hot_update_phase_git">拉取源码</string>
     <string name="settings_hot_update_phase_dist">下载页面资源</string>
     <string name="settings_hot_update_phase_manifest">写入版本信息</string>

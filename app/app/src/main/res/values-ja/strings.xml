@@ -138,7 +138,18 @@
     <string name="settings_about_license">オープンソースライセンス</string>
     <string name="settings_about_repository">リポジトリ</string>
     <string name="settings_about_source_project">元プロジェクト</string>
-    <string name="settings_about_components">使用しているオープンソースコンポーネントとライセンス（タップで表示）</string>
+    <string name="settings_about_components">使用しているオープンソースコンポーネントとライセンス</string>
+    <string name="settings_about_components_summary">全 %1$d 件のコンポーネント。タップして一覧とライセンス原文を表示</string>
+    <string name="settings_open_source_licenses">オープンソースライセンス</string>
+    <string name="settings_license_search_placeholder">コンポーネント名、組織、ライセンスを検索…</string>
+    <string name="settings_license_filter_all">すべて</string>
+    <string name="settings_license_filter_core">コアとバンドル</string>
+    <string name="settings_license_filter_libs">ライブラリ</string>
+    <string name="settings_license_view_source">プロジェクトのホームページ</string>
+    <string name="settings_license_text_title">ライセンス原文</string>
+    <string name="settings_license_copied">ライセンス原文をクリップボードにコピーしました</string>
+    <string name="settings_license_component_not_found">コンポーネントが見つかりません</string>
+    <string name="settings_license_spdx">ライセンス</string>
     <string name="settings_about_all_dependencies">Android の依存関係一覧を表示</string>
     <string name="settings_feedback_bug">バグを報告</string>
     <string name="settings_feedback_bug_desc">GitHub で問題の報告や既知の確認ができます</string>
@@ -146,6 +157,7 @@
     <string name="settings_feedback_group_desc">QQ グループで質問や提案を共有できます</string>
     <string name="compat_notice_title">お使いの機種を登録しませんか</string>
     <string name="compat_notice_message">動作の可否は機種によって大きく異なります。GitHub の「機種サポートリスト」に、ブランド・型番・システムバージョン・動作結果を一件投稿してください。あなたの記録が、これから使う人の参考になります。</string>
+    <string name="compat_notice_dont_ask_again">今後表示しない</string>
     <string name="compat_notice_go">リストを開く</string>
     <string name="compat_notice_later">後で</string>
     <string name="settings_hot_update">ホットアップデート</string>
@@ -158,6 +170,7 @@
     <string name="settings_hot_update_updating">更新中：%1$s</string>
     <string name="settings_hot_update_failed">前回の更新に失敗：%1$s</string>
     <string name="settings_hot_update_disabled">ダウンロード経路未準備。ランタイム再起動後に有効</string>
+    <string name="settings_hot_update_unreachable">ランタイムに接続できないかバージョンが古いため、増分更新はできません。先にランタイムを更新してください</string>
     <string name="settings_hot_update_phase_git">ソース取得中</string>
     <string name="settings_hot_update_phase_dist">アセット取得中</string>
     <string name="settings_hot_update_phase_manifest">バージョン情報書き込み中</string>
