@@ -508,3 +508,58 @@ jobs:
           fi
           gh release upload azurpilot-android-latest "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Prune stale release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_NAME: ${{ needs.apk.outputs.version_name }}
+          AP_REF: ${{ needs.resolve.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # 滚动 release 的 APK / frontend 资产名带版本号或上游提交，--clobber 只覆盖
+          # 同名文件，历史资产会无限堆积，而 GitHub 不会自动清理 release 资产。发布
+          # 后按名删旧：保留 latest.json、全部 rootfs-<abi>.tar.xz、当前上游提交的
+          # frontend 包（运行时热更按提交探测）与最近 3 个版本的 APK（留回滚余地）；
+          # 旧版本 APK、旧提交 frontend、多架构改造前的遗留 rootfs.tar.xz 一律删除。
+          # 未识别的文件不动，避免误删手动上传的资产。
+          # frontend 提交取 BUILD_MANIFEST：复用旧 rootfs run 时它可能落后于 AP_REF，
+          # 刚上传的 frontend 资产名以 BUILD_MANIFEST 为准，不能按 AP_REF 清掉。
+          ap_commit="$(jq -r '.azurpilot_commit // empty' .tmp/publish-rootfs/arm64-v8a/BUILD_MANIFEST 2>/dev/null || true)"
+          ap_commit="${ap_commit:-$AP_REF}"
+          assets_json="$(gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --json assets)"
+          # 现存资产里的版本号并上当前版本，取最高 3 个；版本名由提交数推出，单调递增。
+          versions="$(
+            {
+              jq -r '.assets[].name' <<<"$assets_json" |
+                sed -n 's/^AzurPilot-Android-\([0-9][0-9.]*\)-.*\.apk$/\1/p'
+              echo "$VERSION_NAME"
+            } | sort -uV | tail -n 3
+          )"
+          jq -r '.assets[].name' <<<"$assets_json" | while IFS= read -r name; do
+            delete=false
+            case "$name" in
+              # 多架构改造前的扁平 rootfs 资产，latest.json 早已改指 rootfs-<abi>.tar.xz
+              rootfs.tar.xz)
+                delete=true
+                ;;
+              frontend-*.tar.xz | frontend-*.tar.xz.sha256)
+                if [[ "$name" != "frontend-$ap_commit.tar.xz" &&
+                      "$name" != "frontend-$ap_commit.tar.xz.sha256" ]]; then
+                  delete=true
+                fi
+                ;;
+              AzurPilot-Android-*.apk)
+                v="${name#AzurPilot-Android-}"
+                v="${v%%-*}"
+                if [[ "$v" =~ ^[0-9][0-9.]*$ ]] && ! grep -Fxq -- "$v" <<<"$versions"; then
+                  delete=true
+                fi
+                ;;
+            esac
+            if [[ "$delete" == true ]]; then
+              # 单个删除失败只告警不阻塞：发布已完成，残留资产下一轮会再被清理。
+              gh release delete-asset azurpilot-android-latest "$name" --repo "$GITHUB_REPOSITORY" --yes \
+                || echo "::warning::failed to delete asset $name"
+            else
+              echo "keep: $name"
+            fi
+          done
