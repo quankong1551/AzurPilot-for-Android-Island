@@ -17,6 +17,7 @@ import com.azurpilot.ghio.i18n.LocalizedTextRenderer
 import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.settings.AppSettingsGateway
 import com.azurpilot.ghio.settings.AppSettingsManager
+import com.azurpilot.ghio.report.DeviceReportClient
 import com.azurpilot.ghio.update.AppUpdateManager
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +75,7 @@ val coreModule = module {
     single<UserConfigurationStore> { DataStoreUserConfigurationStore(get()) }
 
     single { AppSettingsManager(androidContext()) }
+    single { DeviceReportClient(androidContext()) }
     single<AppSettingsGateway> { get<AppSettingsManager>() }
 
     single { LocalizedTextRenderer(androidContext()) }

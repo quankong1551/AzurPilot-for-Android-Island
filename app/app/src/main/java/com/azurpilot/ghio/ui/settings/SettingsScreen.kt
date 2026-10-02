@@ -107,6 +107,7 @@ enum class SettingsSection(val route: String, val titleRes: Int, val descRes: In
     Advanced(Routes.SETTINGS_ADVANCED, R.string.settings_cat_advanced, R.string.settings_cat_advanced_desc),
     Widget(Routes.SETTINGS_WIDGET, R.string.settings_cat_widget, R.string.settings_cat_widget_desc),
     Runtime(Routes.SETTINGS_RUNTIME, R.string.settings_cat_runtime, R.string.settings_cat_runtime_desc),
+    DeviceReport(Routes.SETTINGS_DEVICE_REPORT, R.string.device_report_title, R.string.device_report_description),
     About(Routes.SETTINGS_ABOUT, R.string.settings_cat_about, R.string.settings_cat_about_desc),
 }
 

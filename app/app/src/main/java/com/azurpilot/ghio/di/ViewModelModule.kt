@@ -5,6 +5,8 @@ import com.azurpilot.ghio.log.AzurPilotLogViewModel
 import com.azurpilot.ghio.log.AppLogViewModel
 import com.azurpilot.ghio.log.LogTailViewModel
 import com.azurpilot.ghio.settings.SettingsViewModel
+import com.azurpilot.ghio.report.DeviceReportViewModel
+import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
@@ -17,6 +19,7 @@ import org.koin.dsl.module
  * error detail) and the settings screen.
  */
 val viewModelModule = module {
+    viewModel { DeviceReportViewModel(androidContext(), get(), get(), get()) }
     viewModelOf(::AppLogViewModel)
     viewModelOf(::LogTailViewModel)
     viewModelOf(::AzurPilotLogViewModel)

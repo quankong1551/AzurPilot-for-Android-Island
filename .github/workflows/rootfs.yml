@@ -274,6 +274,29 @@ jobs:
           mkdir -p .tmp/signing
           # macOS 的 base64 不支持 -d，两个镜像都自带 python3。
           printf '%s' "$KEYSTORE_BASE64" | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > .tmp/signing/azurpilot.jks
+      - name: Build offline device name catalog
+        run: |
+          python3 app/scripts/test_build_device_catalog.py
+          python3 app/scripts/build_device_catalog.py
+
+      - name: Inject device reporting mTLS credentials
+        env:
+          REPORT_CERT_BASE64: ${{ secrets.AZURPILOT_DEVICE_REPORT_CERT_BASE64 }}
+          REPORT_KEY_BASE64: ${{ secrets.AZURPILOT_DEVICE_REPORT_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$REPORT_CERT_BASE64" && test -n "$REPORT_KEY_BASE64" || {
+            echo 'Device reporting mTLS secrets are missing' >&2
+            exit 1
+          }
+          mkdir -p .tmp/report-credentials
+          umask 077
+          printf '%s' "$REPORT_CERT_BASE64" | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read(), validate=True))' > .tmp/report-credentials/client-cert.pem
+          printf '%s' "$REPORT_KEY_BASE64" | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read(), validate=True))' > .tmp/report-credentials/client-key.pem
+          openssl x509 -in .tmp/report-credentials/client-cert.pem -checkend 0 -noout
+          openssl x509 -in .tmp/report-credentials/client-cert.pem -pubkey -noout | openssl pkey -pubin -outform DER > .tmp/report-credentials/cert-public.der
+          openssl pkey -in .tmp/report-credentials/client-key.pem -pubout -outform DER > .tmp/report-credentials/key-public.der
+          cmp .tmp/report-credentials/cert-public.der .tmp/report-credentials/key-public.der
       - name: Bundle runtime and build APKs
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/.tmp/gradle-home
@@ -291,7 +314,7 @@ jobs:
           # 此处已 cd 到 Gradle 工程根（仓库的 app/），:app 模块在 app/ 子目录
           mkdir -p ../dist app/src/main/assets/rootfs
           # 编译期 Kotlin/KSP/Compose 吃内存：给足堆，Kotlin 守护进程单独定额
-          gradle_args=(--console=plain --stacktrace)
+          gradle_args=(--console=plain --stacktrace --no-build-cache)
           if [ "$RUNNER_OS" = "macOS" ]; then
             # 7GB 的 M1 runner：默认 4GB 堆加 Kotlin 守护进程会互相挤爆
             gradle_args+=("-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1g" "-Pkotlin.daemon.jvmargs=-Xmx1536m")
@@ -322,6 +345,14 @@ jobs:
           cp "app/build/outputs/apk/$variant/"*.apk ../dist/azurpilot-update.apk
           # 增量包只有个位数 MB：兜住「增量重打包没生效、把完整包当增量包发出去」
           test "$(wc -c < ../dist/azurpilot-update.apk)" -lt 50000000
+          python3 scripts/verify_device_report_assets.py --credentials-dir ../.tmp/report-credentials ../dist/*.apk
+      - name: Clear temporary device reporting credentials
+        if: always()
+        run: |
+          rm -f .tmp/report-credentials/client-cert.pem .tmp/report-credentials/client-key.pem \
+            .tmp/report-credentials/cert-public.der .tmp/report-credentials/key-public.der \
+            app/app/build/generated/deviceReportCredentials/device-report/client-cert.pem \
+            app/app/build/generated/deviceReportCredentials/device-report/client-key.pem
       - name: Read version from build output
         id: version
         run: |

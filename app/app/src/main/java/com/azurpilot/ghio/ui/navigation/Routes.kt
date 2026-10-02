@@ -45,6 +45,9 @@ object Routes {
     const val SETTINGS_RUNTIME = "settings/runtime"
     const val SETTINGS_ABOUT = "settings/about"
 
+    /** 机型报告预览与提交页。 / Device report preview and submission page. */
+    const val SETTINGS_DEVICE_REPORT = "settings/device_report"
+
     /**
      * 开源组件与许可证列表二级页
      *

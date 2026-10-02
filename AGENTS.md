@@ -76,7 +76,7 @@ Key subsystems:
 
 ### Kotlin / Compose
 - **DI**: Koin (module files in `di/`). No Hilt/Dagger.
-- **Theme**: dual UI style — Material 3 and Miuix (HyperOS); controlled by `UiStyle` enum. Auto mode picks Miuix on Xiaomi devices.
+- **Theme**: Material 3 only. Reuse the existing app theme and Material 3 components.
 - **DataStore preferences**: annotate with `@PrefSchema`; KSP generates accessors. Keys follow camelToSnakeCase mapping (`useGithubMirror` → `use_github_mirror`). Migrations must use the snake_case raw key strings.
 - **Logging**: Timber. No `Log.d/i/w/e` directly.
 - **Serialization**: `kotlinx.serialization` (JSON). No Gson/Moshi.

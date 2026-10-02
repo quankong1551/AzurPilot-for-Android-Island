@@ -117,6 +117,7 @@ import com.azurpilot.ghio.ui.settings.LicenseDetailPage
 import com.azurpilot.ghio.ui.settings.LogsSettingsPage
 import com.azurpilot.ghio.ui.settings.OpenSourceLicensesPage
 import com.azurpilot.ghio.ui.settings.RuntimeSettingsPage
+import com.azurpilot.ghio.ui.settings.DeviceReportSettingsPage
 import com.azurpilot.ghio.ui.settings.VirtualDisplaySettingsPage
 import com.azurpilot.ghio.ui.settings.WidgetSettingsPage
 import com.azurpilot.ghio.ui.setup.ProvisionScreen
@@ -760,6 +761,9 @@ fun AppRoot(
                         onOpenLicenseDetail = { id -> navController.navigate(Routes.licenseDetail(id)) },
                         onBack = { navController.popBackStack() },
                     )
+                }
+                composable(Routes.SETTINGS_DEVICE_REPORT) {
+                    DeviceReportSettingsPage(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.SETTINGS_LICENSES) {
                     OpenSourceLicensesPage(

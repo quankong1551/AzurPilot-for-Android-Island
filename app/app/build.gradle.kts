@@ -13,6 +13,8 @@ android {
             // proot 九件套（libproot/libproot-loader/libtalloc/busybox/shim 等，Spike A 钉版产物）；
             // 与 src/main/jniLibs/（上游框架的拉取件，gitignore）分开放，本目录是构建输入要入库
             jniLibs.srcDir("src/main/prootLibs")
+            // CI 下载的公开机型表用于离线匹配商品名，缺失时退回系统公开名称。
+            assets.directories.add(rootDir.parentFile.resolve(".tmp/device-catalog").absolutePath)
         }
     }
 
@@ -40,6 +42,8 @@ android {
         // rootfs.tar.xz 已压缩且要按字节读进度（assets.openFd 只对未压缩资产生效）
         noCompress += "zip"
         noCompress += "xz"
+        // 机型目录已使用 gzip 压缩，独立扩展名阻止资产合并器自动解压。
+        noCompress += "catalog"
     }
 }
 
@@ -75,9 +79,63 @@ val syncAndroidHostOverlay = tasks.register<SyncAndroidHostOverlayTask>("syncAnd
     outputDir.set(layout.buildDirectory.dir("generated/androidHostOverlay"))
 }
 
+/**
+ * 从被忽略的本地目录注入提交证书，避免将共享私钥放进源码。
+ *
+ * Injects reporting credentials from an ignored local directory, keeping the shared key out of source.
+ */
+@org.gradle.work.DisableCachingByDefault(because = "Contains private client credentials")
+abstract class SyncDeviceReportCredentialsTask : DefaultTask() {
+    /** 只允许 GitHub Actions 打包共享私钥。 / Only GitHub Actions may bundle the shared private key. */
+    @get:Input
+    abstract val githubActionsBuild: Property<Boolean>
+    /** 构建时凭据来源。 / Build-time credential source. */
+    @get:Internal
+    abstract val credentialsDir: DirectoryProperty
+
+    /** 只有这两个白名单文件可进入 APK。 / Only these allowlisted files may enter the APK. */
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val credentialFiles: FileTree
+        get() = credentialsDir.asFileTree.matching {
+            include("client-cert.pem", "client-key.pem")
+        }
+
+    /** 生成资产目录。 / Generated asset directory. */
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    /** 同步成对凭据，缺失时清理旧资产。 / Copies paired credentials, clearing stale assets when absent. */
+    @TaskAction
+    fun sync() {
+        val source = credentialsDir.get().asFile
+        val cert = source.resolve("client-cert.pem")
+        val key = source.resolve("client-key.pem")
+        check(cert.isFile == key.isFile) { "Device report certificate and key must be provided together" }
+        check(!cert.isFile || githubActionsBuild.get()) { "Device report credentials may only be bundled by GitHub Actions" }
+        val out = outputDir.get().asFile.resolve("device-report")
+        out.deleteRecursively()
+        if (cert.isFile) {
+            out.mkdirs()
+            cert.copyTo(out.resolve(cert.name), overwrite = true)
+            key.copyTo(out.resolve(key.name), overwrite = true)
+        } else {
+            outputDir.get().asFile.mkdirs()
+            logger.warn("Device reporting is unavailable: build credentials are absent")
+        }
+    }
+}
+
+val syncDeviceReportCredentials = tasks.register<SyncDeviceReportCredentialsTask>("syncDeviceReportCredentials") {
+    githubActionsBuild.set(providers.environmentVariable("GITHUB_ACTIONS").map { it == "true" }.orElse(false))
+    credentialsDir.set(rootDir.parentFile.resolve(".tmp/report-credentials"))
+    outputDir.set(layout.buildDirectory.dir("generated/deviceReportCredentials"))
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(syncAndroidHostOverlay) { it.outputDir }
+        variant.sources.assets?.addGeneratedSourceDirectory(syncDeviceReportCredentials) { it.outputDir }
     }
 }
 
