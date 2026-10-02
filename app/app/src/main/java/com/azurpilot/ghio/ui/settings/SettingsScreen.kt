@@ -1162,28 +1162,7 @@ fun RuntimeSettingsPage(
                 }
             }
         }
-        // Runtime 重启卡片：改完开关/镜像后的生效入口，也是会话卡死时的手动恢复。
-        // 重启会先请运行时优雅停掉实例，任务不跨重启恢复，所以先弹确认
-        AppCard {
-            Button(
-                onClick = { showRestartConfirm = true },
-                enabled = !sessionBusy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    stringResource(
-                        if (sessionBusy) R.string.settings_runtime_restarting
-                        else R.string.settings_runtime_restart
-                    )
-                )
-            }
-            Text(
-                text = stringResource(R.string.settings_runtime_restart_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        // 远程访问卡片：开关（默认关）+ 经 WS settings.get 的状态/地址回显 + 口令。
+        // 远程访问卡片：与局域网控制同为网络暴露面开关，相邻放置。
         // 隧道由上游 localshare 中转（SSH 兜底、P2P 升级），改动要重启 Runtime 生效；
         // 口令与 WebUI 同一份，拿到地址+口令即可从公网控制，务必保管好
         AppCard {
@@ -1234,6 +1213,27 @@ fun RuntimeSettingsPage(
                     AppInfoRow(stringResource(R.string.settings_remote_access_password), remotePassword)
                 }
             }
+        }
+        // Runtime 重启卡片：改完上面开关/镜像后的生效入口，也是会话卡死时的手动恢复。
+        // 重启会先请运行时优雅停掉实例，任务不跨重启恢复，所以先弹确认
+        AppCard {
+            Button(
+                onClick = { showRestartConfirm = true },
+                enabled = !sessionBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    stringResource(
+                        if (sessionBusy) R.string.settings_runtime_restarting
+                        else R.string.settings_runtime_restart
+                    )
+                )
+            }
+            Text(
+                text = stringResource(R.string.settings_runtime_restart_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         AppCard {
             Text(
