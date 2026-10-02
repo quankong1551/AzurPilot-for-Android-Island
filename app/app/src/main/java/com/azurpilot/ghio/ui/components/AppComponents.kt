@@ -261,10 +261,13 @@ fun AppFieldLabel(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 渲染标签/值信息行：标签占四成宽，值右对齐占六成宽，用于只读的键值展示
+ * 渲染标签/值信息行：标签与右对齐的值各占一半宽。曾用 4:6 比例，长标签
+ * （如保活页的机制名）会被短值挤压成两三行，对半分后常规标签单行可容纳
  *
- * Renders a label/value info row: the label takes 40% of the width and the
- * right-aligned value 60%, for read-only key-value display.
+ * Renders a label/value info row: the label and the right-aligned value each
+ * take half the width. A previous 4:6 ratio squeezed long labels (such as the
+ * keep-alive mechanism names) into two or three lines next to short values;
+ * an even split fits common labels on one line.
  */
 @Composable
 fun AppInfoRow(label: String, value: String) {
@@ -277,13 +280,13 @@ fun AppInfoRow(label: String, value: String) {
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(0.4f),
+            modifier = Modifier.weight(0.5f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.End,
-            modifier = Modifier.weight(0.6f),
+            modifier = Modifier.weight(0.5f),
         )
     }
 }

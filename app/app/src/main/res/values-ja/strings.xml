@@ -727,8 +727,8 @@
     <string name="settings_runtime">Runtime</string>
     <string name="settings_runtime_commit">AzurPilot のコミット</string>
     <string name="settings_runtime_unknown">不明</string>
-    <string name="settings_runtime_installed">インストール済み Runtime のバージョン</string>
-    <string name="settings_runtime_latest">Latest の Runtime バージョン</string>
+    <string name="settings_runtime_installed">インストール済みバージョン</string>
+    <string name="settings_runtime_latest">Latest バージョン</string>
     <string name="runtime_update_title">Runtime の更新があります</string>
     <string name="runtime_update_message">インストール済み：%1$s\nLatest：%2$s\n今すぐ Runtime をダウンロードして更新しますか？</string>
     <string name="runtime_update_now">今すぐ更新</string>
@@ -976,18 +976,18 @@
     <!-- バックグラウンド維持 -->
     <string name="settings_section_keepalive">バックグラウンド維持</string>
     <string name="settings_keepalive_title">持続的バックグラウンド維持</string>
-    <string name="settings_keepalive_desc">無音オーディオ、1px極小オーバーレイ、コンパニオンサービス、アクセシビリティ、CPU WakeLock、正確なアラーム、JobScheduler、二重プロセス相互監視などを統合し、バックグラウンド終了を徹底的に防止します。</string>
-    <string name="settings_keepalive_audio">24時間無音オーディオ再生</string>
+    <string name="settings_keepalive_desc">無音オーディオ、1pxフォアグラウンドオーバーレイ、コンパニオンサービス、アクセシビリティ、CPU WakeLock、定期ジョブとアラーム、二重プロセス監視の七つの常駐機構を統合し、バックグラウンドでの強制終了を防ぎます。</string>
+    <string name="settings_keepalive_audio">無音オーディオ</string>
     <string name="settings_keepalive_audio_desc">音量ゼロの無音データをループ再生し、アプリをアクティブなメディア再生プロセスとして認識させます</string>
-    <string name="settings_keepalive_pixel">前台1px極小オーバーレイ</string>
+    <string name="settings_keepalive_pixel">1px オーバーレイ</string>
     <string name="settings_keepalive_pixel_desc">1x1の透明オーバーレイを表示し、プロセスを可視ウィンドウ優先度に引き上げます（要オーバーレイ権限）</string>
-    <string name="settings_keepalive_wakelock">CPU スリープ防止 WakeLock</string>
+    <string name="settings_keepalive_wakelock">CPU WakeLock</string>
     <string name="settings_keepalive_wakelock_desc">Partial WakeLock を保持して CPU を常時稼働させ、画面消灯時のディープスリープを防止します</string>
-    <string name="settings_keepalive_alarm_job">システム定期ジョブと正確なアラーム</string>
+    <string name="settings_keepalive_alarm_job">定期ジョブとアラーム</string>
     <string name="settings_keepalive_alarm_job_desc">JobScheduler と AlarmManager を組み合わせて Doze モード下でも周期的にプロセスを起動します</string>
-    <string name="settings_keepalive_daemon_broadcast">二重プロセス相互監視とシステムブロードキャスト</string>
+    <string name="settings_keepalive_daemon_broadcast">二重プロセス監視</string>
     <string name="settings_keepalive_daemon_broadcast_desc">独立した監視プロセスと主プロセスが Binder 死亡を相互監視して復元し、起動時や電源イベントも検知します</string>
-    <string name="settings_keepalive_companion">コンパニオンデバイスサービス</string>
+    <string name="settings_keepalive_companion">コンパニオンサービス</string>
     <string name="settings_keepalive_companion_desc">コンパニオンデバイスコンポーネントを登録し、システムレベルの実行とネットワーク免除を獲得します</string>
     <string name="settings_keepalive_accessibility">アクセシビリティ監視連携</string>
     <string name="settings_keepalive_accessibility_desc">システムのアクセシビリティ機能を利用し、異常終了時にシステムによって自動再起動します</string>

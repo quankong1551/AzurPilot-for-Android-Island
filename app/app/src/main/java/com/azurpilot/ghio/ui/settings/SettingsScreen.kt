@@ -731,7 +731,6 @@ fun AdvancedSettingsPage(
             )
         }
         AppCard {
-            AppFieldLabel(stringResource(R.string.settings_app_lock_title))
             AppLabeledControlRow(
                 label = stringResource(R.string.settings_app_lock_title),
                 trailing = {
@@ -866,7 +865,7 @@ fun AboutSettingsPage(
             )
         }
         AppCard {
-            AppFieldLabel(stringResource(R.string.settings_about_components))
+            // 开源组件入口行自带标题与计数，不再叠一层区块标题（曾与首行几乎同文重复）
             val allComponents = remember { licenseRepository.getAllComponents() }
             val coreComponents = remember { licenseRepository.getCoreComponents() }
 
