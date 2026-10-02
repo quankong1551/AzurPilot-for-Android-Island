@@ -744,6 +744,25 @@
     <string name="settings_runtime_new_version">發現新版本；重新啟動 App 時可選擇更新</string>
     <string name="settings_runtime_check_failed">檢查失敗：%1$s</string>
     <string name="settings_app_check">檢查 App 更新</string>
+    <string name="settings_lan_control">區域網路控制</string>
+    <string name="settings_lan_control_desc">開啟後，同一 Wi-Fi 下的電腦可用瀏覽器開啟下方位址控制掛機。變更需重啟 Runtime 生效；存取密碼會自動產生。</string>
+    <string name="settings_lan_control_address">區域網路位址</string>
+    <string name="settings_lan_control_password">存取密碼</string>
+    <string name="settings_lan_control_password_hint">重啟 Runtime 後自動產生存取密碼</string>
+    <string name="settings_runtime_restart">重啟 Runtime</string>
+    <string name="settings_runtime_restart_desc">重啟執行時程序；執行中的任務會停止，不會自動恢復。</string>
+    <string name="settings_runtime_restart_title">重啟 Runtime？</string>
+    <string name="settings_runtime_restart_message">執行中的任務會被中斷，確定繼續嗎？</string>
+    <string name="settings_runtime_restarting">正在重啟 Runtime…</string>
+    <string name="settings_remote_access">遠端存取</string>
+    <string name="settings_remote_access_desc">開啟並重啟 Runtime 後，會產生一條可從網際網路存取的入口，出門也能用瀏覽器控制掛機。存取密碼務必保管好，洩漏即等於交出控制權。</string>
+    <string name="settings_remote_access_state">連線狀態</string>
+    <string name="settings_remote_access_address">遠端存取位址</string>
+    <string name="settings_remote_access_password">存取密碼</string>
+    <string name="settings_remote_state_ready">已就緒</string>
+    <string name="settings_remote_state_waiting">正在建立連線…</string>
+    <string name="settings_remote_state_stopped">未連線</string>
+    <string name="settings_remote_state_unreachable">Runtime 未就緒</string>
     <!-- AzurPilot 原生界面（原 WebUI 的功能面） -->
     <string name="ap_section_overview">總覽</string>
     <string name="ap_section_config">設定</string>

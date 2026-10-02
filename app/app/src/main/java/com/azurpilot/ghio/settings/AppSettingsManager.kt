@@ -129,6 +129,16 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /** 允许运行时热更新 / Whether runtime hot updates are allowed. */
     val hotUpdateEnabled: StateFlow<Boolean> = _hotUpdateEnabled.asStateFlow()
 
+    private val _lanControlEnabled = MutableStateFlow(defaults.lanControlEnabled.toBoolean())
+
+    /** 局域网控制（重启 Runtime 生效）/ Whether LAN control is on (effective after a Runtime restart). */
+    val lanControlEnabled: StateFlow<Boolean> = _lanControlEnabled.asStateFlow()
+
+    private val _remoteAccessEnabled = MutableStateFlow(defaults.remoteAccessEnabled.toBoolean())
+
+    /** 远程访问（重启 Runtime 生效）/ Whether remote access is on (effective after a Runtime restart). */
+    val remoteAccessEnabled: StateFlow<Boolean> = _remoteAccessEnabled.asStateFlow()
+
     private val _autoUpdateHour = MutableStateFlow(defaults.autoUpdateHour.toIntOrNull()?.coerceIn(0, 23) ?: 8)
 
     /** 每日自动更新检查时刻（0~23）/ The hour of day (0–23) for the daily auto-update check. */
@@ -163,6 +173,8 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
                 _appLockEnabled.value = s.appLockEnabled.toBoolean()
                 _compatNoticeShown.value = s.compatNoticeShown.toBoolean()
                 _hotUpdateEnabled.value = s.hotUpdateEnabled.toBoolean()
+                _lanControlEnabled.value = s.lanControlEnabled.toBoolean()
+                _remoteAccessEnabled.value = s.remoteAccessEnabled.toBoolean()
                 _autoUpdateHour.value = s.autoUpdateHour.toIntOrNull()?.coerceIn(0, 23) ?: 8
                 _githubMirror.value = s.githubMirror
                 _githubMirrorCustom.value = s.githubMirrorCustom
@@ -249,6 +261,16 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /** 写入「允许运行时热更新」 / Writes the "runtime hot updates allowed" flag. */
     suspend fun setHotUpdateEnabled(enabled: Boolean) = with(AppSettingsSchema) {
         context.dataStore.edit { it[hotUpdateEnabled] = enabled.toString() }
+    }
+
+    /** 写入「局域网控制」 / Writes the "LAN control" flag. */
+    suspend fun setLanControlEnabled(enabled: Boolean) = with(AppSettingsSchema) {
+        context.dataStore.edit { it[lanControlEnabled] = enabled.toString() }
+    }
+
+    /** 写入「远程访问」 / Writes the "remote access" flag. */
+    suspend fun setRemoteAccessEnabled(enabled: Boolean) = with(AppSettingsSchema) {
+        context.dataStore.edit { it[remoteAccessEnabled] = enabled.toString() }
     }
 
     /** 写入每日自动更新检查时刻 / Writes the daily auto-update check hour (0–23). */

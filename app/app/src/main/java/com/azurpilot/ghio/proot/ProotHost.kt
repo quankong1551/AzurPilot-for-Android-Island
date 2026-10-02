@@ -124,6 +124,31 @@ class ProotHost(
     }
 
     /**
+     * 重启会话：先请运行时优雅停掉运行中的实例（AP 现有的 update/suspend 协议），
+     * 再走完整停起链；会话本就没跑时等价于启动。
+     *
+     * 实例不会在重启后自动恢复：恢复清单 reloadalas 会在下次 startLocked 的
+     * cleanupStale 里被清掉，这是「重启」而非「热更」的语义差别。
+     *
+     * Restarts the session: asks the runtime to gracefully stop any running
+     * instances first (the existing AP update/suspend protocol), then runs the
+     * full stop/start chain; a no-op when the session is down (acts as start).
+     *
+     * Instances do not auto-resume after the restart: the reloadalas recovery
+     * manifest is wiped by cleanupStale on the next startLocked — that is the
+     * semantic difference from a hot update. IO 调度器上执行 / Runs on the IO
+     * dispatcher.
+     */
+    fun restart() {
+        wantRunning = true
+        scope.launch(AppDispatchers.IO) {
+            suspendGuestInstances()
+            stopAndAwait()
+            ensureStarted()
+        }
+    }
+
+    /**
      * 协调式停会话：挂起直到进程完全退出。
      *
      * 供 [com.azurpilot.ghio.provision.RuntimeAutoUpdater] 在 rootfs 切换前调用：
@@ -178,6 +203,7 @@ class ProotHost(
         setState(ProotPhase.PREPARING, "清理残留")
         cleanupStale()
         writeResolvConf()
+        ensureGuestUserEntry()
 
         setState(ProotPhase.PREPARING, "播种实例配置")
         runGuest(
@@ -188,6 +214,11 @@ class ProotHost(
         }
 
         setState(ProotPhase.STARTING, "拉起 proot 会话")
+        // LAN 开关与镜像设置都经 baseEnv 注入会话环境：先等一拍读盘完成，
+        // 否则设置刚改完立刻重启时拿到的还是旧值
+        awaitSettingsLoaded()
+        syncHostOverlay()
+        writeRemoteAccessConfig()
         val proc = runCatching { spawnSession() }.getOrElse {
             fail("exec proot: ${it.message}")
             return@withLock
@@ -287,6 +318,9 @@ class ProotHost(
         "AZURPILOT_ROOT" to GUEST_INSTALL_ROOT,
         "AZURPILOT_ANDROID" to "1",
         "AZURPILOT_ANDROID_TOKEN" to AndroidControlAuth.get(app),
+        // 局域网控制开关：android_host.py 读此位决定 gui.py 绑 0.0.0.0 还是 127.0.0.1。
+        // 公网监听下上游自动生成 WebUI 访问口令；/android 薄接口的回环校验不受影响
+        "AZURPILOT_ANDROID_LAN" to if (settings.lanControlEnabled.value) "1" else "0",
         // 热更预构建前端的下载基址：ghproxy 形态镜像前缀 + Release 基址，运行时按
         // frontend-<commit>.tar.xz 探测/下载；镜像设置变更后下次会话生效
         "AZURPILOT_ANDROID_DIST_BASE" to
@@ -412,6 +446,203 @@ class ProotHost(
         conn.inputStream.use { it.readBytes() }
         conn.responseCode == 200
     }.getOrDefault(false)
+
+    /**
+     * 重启前请运行时优雅停掉全部运行实例：POST `/android/update/suspend`（AP 现有
+     * 协议，整包/热更挂起实例用的同一条），实例有序收尾并落恢复清单。会话不在跑、
+     * 运行时已僵死或接口不可达都不阻塞重启——杀会话本身兜底一切。
+     *
+     * Asks the runtime to gracefully stop every running instance before the
+     * restart: POST `/android/update/suspend` (the existing AP protocol also
+     * used by full/hot updates to suspend instances), letting them wind down in
+     * order and drop the recovery manifest. A down session, a wedged runtime or
+     * an unreachable API never blocks the restart — killing the session is the
+     * fallback that always works.
+     */
+    private suspend fun suspendGuestInstances() {
+        if (session?.isAlive != true) return
+        runCatching {
+            val conn = URL("http://127.0.0.1:$WEBUI_PORT/android/update/suspend").openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("X-AzurPilot-Android-Token", AndroidControlAuth.get(app))
+            conn.connectTimeout = SUSPEND_CONNECT_TIMEOUT_MS
+            conn.readTimeout = SUSPEND_READ_TIMEOUT_MS
+            conn.inputStream.use { it.readBytes() }
+            Timber.i("proot restart: guest instances suspended")
+        }.onFailure { Timber.w(it, "proot restart: suspend instances failed, continuing") }
+    }
+
+    /**
+     * 等设置读盘落位（最多一拍）；等不到就用当前值继续——LAN 开关与镜像地址
+     * 宁可拿到本次默认值也不把启动链卡死。
+     *
+     * Awaits the settings disk load (one beat at most); proceeds with whatever
+     * is loaded otherwise — better a stale LAN toggle or mirror address than a
+     * wedged start chain.
+     */
+    private suspend fun awaitSettingsLoaded() {
+        withTimeoutOrNull(SETTINGS_LOADED_WAIT_MS) {
+            settings.loaded.first { it }
+        }
+    }
+
+    /**
+     * 用 APK 内置资产覆盖 rootfs 里的 android_host.py（内容一致则跳过）。
+     *
+     * 该文件是 app↔运行时的边界契约（拉起参数、stdin EOF 契约、绑定地址开关），
+     * 以 APK 资产为准：热更只 git 重置上游源码、不更新这个 untracked 文件，
+     * 不随 APK 同步的话小包更新的用户永远拿不到新 overlay。
+     *
+     * 覆盖失败（如老包无此资产）只记日志，沿用 rootfs 既有副本。
+     *
+     * Overwrites the rootfs's android_host.py with the APK-bundled asset
+     * (skipped when the content already matches).
+     *
+     * The file is the app↔runtime boundary contract (spawn arguments, the stdin
+     * EOF contract, the bind-address switch) and the APK asset wins: hot
+     * updates only git-reset the upstream source and never touch this
+     * untracked file, so without syncing from the APK, slim-update users would
+     * never receive a new overlay. A failed overwrite (an older APK without the
+     * asset, say) only logs and keeps the rootfs's existing copy.
+     */
+    private fun syncHostOverlay() {
+        runCatching {
+            val target = File(installDir, HOST_OVERLAY_NAME)
+            val tmp = File(installDir, "$HOST_OVERLAY_NAME.tmp")
+            app.assets.open("overlays/$HOST_OVERLAY_NAME").use { input ->
+                tmp.outputStream().use { input.copyTo(it) }
+            }
+            if (target.isFile && target.readBytes().contentEquals(tmp.readBytes())) {
+                tmp.delete()
+            } else {
+                target.delete()
+                if (!tmp.renameTo(target)) error("rename to $target failed")
+                Timber.i("android_host.py overlay synced from APK asset")
+            }
+        }.onFailure { Timber.w(it, "sync android_host.py overlay failed") }
+    }
+
+    /**
+     * 把远程访问开关同步进 rootfs 的 deploy.yaml（App 开关是唯一事实源）。
+     *
+     * 上游的 RemoteAccess 段（localshare SSH 中转 + P2P 信令）由 rootfs 出厂预填，
+     * 这里只做行级改写：翻转 `EnableRemoteAccess`；开启时再补三件事——
+     * WebUI 口令为空则生成 32 位强随机（远程入口没有口令等于公开控制权）、
+     * `SSHServer`/`SSHExecutable` 缺失或为 null 时落出厂默认。运行时进程此刻
+     * 尚未拉起，无并发写者；失败仅记日志（沿用盘上现状，不阻塞启动链）。
+     *
+     * Syncs the remote-access toggle into the rootfs's deploy.yaml (the App
+     * toggle is the single source of truth).
+     *
+     * The upstream RemoteAccess section (localshare SSH relay + P2P signaling)
+     * ships pre-filled in the rootfs, so only line-level edits are needed:
+     * flip `EnableRemoteAccess`, and when on, additionally — generate a 32-char
+     * random WebUI password if empty (a passwordless remote entry hands control
+     * to anyone with the URL) and fill factory defaults for `SSHServer` /
+     * `SSHExecutable` when missing or null. The runtime process is not up yet,
+     * so there is no concurrent writer; failures only log and keep the on-disk
+     * state rather than wedging the start chain.
+     */
+    private fun writeRemoteAccessConfig() {
+        val enabled = settings.remoteAccessEnabled.value
+        runCatching {
+            val file = File(installDir, DEPLOY_YAML_PATH)
+            if (!file.isFile) return
+            val tmp = File(installDir, "$DEPLOY_YAML_PATH.tmp")
+            tmp.parentFile?.mkdirs()
+            tmp.writeText(renderRemoteAccessConfig(file.readText(), enabled))
+            file.delete()
+            if (!tmp.renameTo(file)) error("rename to $file failed")
+            Timber.i("deploy.yaml remote access synced: %s", if (enabled) "on" else "off")
+        }.onFailure { Timber.w(it, "sync remote access config failed") }
+    }
+
+    /**
+     * deploy.yaml 的远程访问行级改写：见 [writeRemoteAccessConfig]
+     *
+     * Line-level remote-access rewrite of deploy.yaml; see
+     * [writeRemoteAccessConfig].
+     */
+    private fun renderRemoteAccessConfig(text: String, enabled: Boolean): String {
+        var lines = text.lines().toMutableList()
+        lines = setYamlKey(lines, "EnableRemoteAccess", enabled.toString())
+        if (enabled) {
+            if (yamlValue(lines, "Password").isNullOrEmpty()) {
+                lines = setYamlKey(lines, "Password", generateWebUiPassword())
+            }
+            if (yamlValue(lines, "SSHServer").isNullOrEmpty()) {
+                lines = setYamlKey(lines, "SSHServer", DEFAULT_SSH_SERVER)
+            }
+            if (yamlValue(lines, "SSHExecutable").isNullOrEmpty()) {
+                lines = setYamlKey(lines, "SSHExecutable", DEFAULT_SSH_EXECUTABLE)
+            }
+            if (yamlValue(lines, "RemoteAccessMode").isNullOrEmpty()) {
+                lines = setYamlKey(lines, "RemoteAccessMode", "auto")
+            }
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** 取某键的标量值（首个匹配行，剥行内注释；null/空归一为 null）/ Reads a key's scalar (first match, inline comment stripped; null and empty normalize to null). */
+    private fun yamlValue(lines: List<String>, key: String): String? {
+        val regex = Regex("^\\s*${Regex.escape(key)}:\\s*(.*)$")
+        for (line in lines) {
+            val m = regex.find(line) ?: continue
+            val value = m.groupValues[1].substringBefore(" #").trim()
+            return value.takeUnless { it.isEmpty() || it.equals("null", ignoreCase = true) || it == "\"\"" || it == "''" }
+        }
+        return null
+    }
+
+    /**
+     * 行级 set-or-append：改首个 `Key:` 行的值；键不存在则插进所在段尾，
+     * 段也没有时整体追加。缩进沿用原行（新行用四格，段用两格——与出厂模板一致）
+     *
+     * Line-level set-or-append: rewrites the first `Key:` line; appends into the
+     * key's section (or a new section at EOF) when absent. Rewritten lines keep
+     * their original indent; new lines use four spaces (two for sections) to
+     * match the factory template.
+     */
+    private fun setYamlKey(lines: MutableList<String>, key: String, value: String): MutableList<String> {
+        val keyRegex = Regex("^(\\s*)${Regex.escape(key)}:.*$")
+        val keyIndex = lines.indexOfFirst { keyRegex.matches(it) }
+        if (keyIndex >= 0) {
+            lines[keyIndex] = "${lines[keyIndex].takeWhile { it == ' ' }}$key: $value"
+            return lines
+        }
+        // 键不存在：定位所属段（RemoteAccess 键归 RemoteAccess 段，其余归 Webui 段）
+        val section = if (key == "EnableRemoteAccess" || key == "SSHServer" ||
+            key == "SSHExecutable" || key == "RemoteAccessMode"
+        ) {
+            "RemoteAccess"
+        } else {
+            "Webui"
+        }
+        val sectionHeader = Regex("^\\s{2}${Regex.escape(section)}:\\s*$")
+        val sectionIndex = lines.indexOfFirst { sectionHeader.matches(it) }
+        if (sectionIndex < 0) {
+            lines.addAll(listOf("", "  $section:", "    $key: $value"))
+            return lines
+        }
+        var insertAt = lines.size
+        for (i in sectionIndex + 1 until lines.size) {
+            val line = lines[i]
+            val isSectionHeader = line.length >= 2 && line[0] == ' ' && line[1] != ' ' && line.trimEnd().endsWith(":")
+            if (isSectionHeader) {
+                insertAt = i
+                break
+            }
+        }
+        lines.add(insertAt, "    $key: $value")
+        return lines
+    }
+
+    /** 32 位强随机 WebUI 口令，字符集与上游 generate_webui_password 一致 / A 32-char strong WebUI password; the alphabet matches upstream's generate_webui_password. */
+    private fun generateWebUiPassword(): String {
+        val alphabet = ('A'..'Z') + ('a'..'z') + ('0'..'9')
+        val random = java.security.SecureRandom()
+        return buildString(32) { repeat(32) { append(alphabet[random.nextInt(alphabet.size)]) } }
+    }
 
     /**
      * 一次性 proot 执行的结果
@@ -571,6 +802,41 @@ class ProotHost(
         }.onFailure { Timber.w(it, "write resolv.conf failed") }
     }
 
+    /**
+     * 确保 guest 的 /etc/passwd 里有 App uid 的条目。
+     *
+     * proot 不做 uid 映射：guest 内进程的 uid 就是宿主 App uid（如 10244），而出厂
+     * rootfs 的 /etc/passwd 只有无机条目。OpenSSH 启动时无条件 getpwuid(getuid())，
+     * 查不到即 fatal「No user exists for uid N」——远程访问的 SSH 反向隧道因此在
+     * 注册前退出。补一行 android 条目（HOME 指向 rootfs 内可写的 /tmp）后 ssh 与
+     * 上游的 ~ 展开都恢复正常；幂等，uid 变了（重装 App）会补新条目。
+     *
+     * Ensures the guest /etc/passwd carries an entry for the App's uid.
+     *
+     * proot does no uid mapping: guest processes run with the host App's uid
+     * (e.g. 10244), which the factory rootfs's /etc/passwd knows nothing about.
+     * OpenSSH unconditionally calls getpwuid(getuid()) at startup and fatals
+     * with "No user exists for uid N" when it misses — the remote-access SSH
+     * reverse tunnel died before registering because of this. Appending an
+     * android entry (HOME pointing at the writable in-rootfs /tmp) fixes both
+     * ssh and upstream's ~ expansion; idempotent, and a new entry is appended
+     * when the uid changes (an app reinstall).
+     */
+    private fun ensureGuestUserEntry() {
+        runCatching {
+            val uid = android.os.Process.myUid()
+            val file = File(rootfsDir, "etc/passwd")
+            val existing = if (file.isFile) file.readText() else ""
+            val entryRegex = Regex("(?m)^[^:]*:x?:$uid:")
+            if (entryRegex.containsMatchIn(existing)) return
+            // 顺带把旧 uid 的 android 条目清掉，避免重装后条目无限堆积
+            val cleaned = existing.replace(Regex("(?m)^android:x:\\d+:.*\\n?"), "")
+            file.parentFile?.mkdirs()
+            file.writeText(cleaned + "android:x:$uid:$uid:android:/tmp:/bin/false\n")
+            Timber.i("guest /etc/passwd: appended android entry for uid %d", uid)
+        }.onFailure { Timber.w(it, "ensure guest user entry failed") }
+    }
+
     /** 落盘时间戳的锁：SimpleDateFormat 非线程安全，所有 [host] 行经它串行化 / Guards the on-disk timestamps: SimpleDateFormat is not thread-safe, so every [host] line serializes through it. */
     private val sessionLogLock = Any()
 
@@ -624,6 +890,24 @@ class ProotHost(
 
         /** rootfs 内的安装根，proot `-w` 的 guest 工作目录 / The install root inside the rootfs, proot's guest `-w` directory. */
         private const val GUEST_INSTALL_ROOT = "/opt/azurpilot"
+
+        /** app↔运行时边界 overlay 的文件名（APK 资产与 rootfs 内路径同名）/ The boundary-overlay file name (same in the APK assets and inside the rootfs). */
+        private const val HOST_OVERLAY_NAME = "android_host.py"
+
+        /** rootfs 内上游部署配置的相对路径（相对安装根）/ The upstream deploy config's path relative to the install root. */
+        private const val DEPLOY_YAML_PATH = "config/deploy.yaml"
+
+        /** 远程访问 SSH 中转的出厂默认（上游 localshare 公共服务）/ The factory-default SSH relay (upstream's localshare public service). */
+        private const val DEFAULT_SSH_SERVER = "remote.nanoda.work:1022"
+
+        /** rootfs 内系统 ssh 的路径（CI 安装的 openssh-client）/ The in-rootfs system ssh path (openssh-client installed by CI). */
+        private const val DEFAULT_SSH_EXECUTABLE = "/usr/bin/ssh"
+
+        /** 重启前 suspend 实例的连接超时 / The connect timeout for the pre-restart instance suspend. */
+        private const val SUSPEND_CONNECT_TIMEOUT_MS = 2_000
+
+        /** 重启前 suspend 实例的读超时：实例有序收尾可能要数秒 / The read timeout for the pre-restart instance suspend: an orderly wind-down can take seconds. */
+        private const val SUSPEND_READ_TIMEOUT_MS = 15_000
 
         /** 等服务就绪的上限：冷启 import + 首次播种余量大 / The ceiling for awaiting services: generous for cold-start imports and a first seed. */
         private const val SERVICES_UP_MS = 90_000L

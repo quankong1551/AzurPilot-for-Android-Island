@@ -124,6 +124,37 @@ data class AppSettings(
     val hotUpdateEnabled: String = "true",
 
     /**
+     * 局域网控制：开启后（重启 Runtime 生效）WebUI 绑 0.0.0.0，同一局域网的浏览器
+     * 可访问网页控制端；上游对非本机连接自动启用访问口令，/android 薄接口始终仅回环
+     * 可达。默认关——把控制面暴露给局域网要用户先点头。
+     *
+     * LAN control: when on (effective after a Runtime restart) the WebUI binds
+     * 0.0.0.0 so browsers on the same LAN can reach the web console; upstream
+     * auto-enables the access password for non-local clients, and the /android
+     * thin API stays loopback-only. Off by default — exposing the control plane
+     * to the LAN needs the user's explicit consent first.
+     */
+    @PrefKey(default = "false")
+    val lanControlEnabled: String = "false",
+
+    /**
+     * 远程访问：开启后（重启 Runtime 生效）运行时经上游 localshare 公共中转建 SSH
+     * 反向隧道（auto 模式再叠加 P2P 直连），生成可从公网访问的 WebUI 入口。
+     * 上游 SSHServer/SSHExecutable 由 rootfs 出厂预填；开启时 App 确保 WebUI
+     * 访问口令非空——没有口令的远程入口任何拿到链接的人都能控制。默认关。
+     *
+     * Remote access: when on (effective after a Runtime restart) the runtime
+     * builds an SSH reverse tunnel via upstream's localshare public relay
+     * (auto mode adds P2P on top) and publishes a publicly reachable WebUI
+     * entry. SSHServer/SSHExecutable ship pre-filled in the rootfs; when
+     * turning it on the App ensures the WebUI access password is non-empty —
+     * a passwordless remote entry lets anyone with the URL take over. Off by
+     * default.
+     */
+    @PrefKey(default = "false")
+    val remoteAccessEnabled: String = "false",
+
+    /**
      * 自动更新检查时刻（24 小时制整点，0~23）；到达该小时后若调度器空闲则
      * 自动检查并部署整包 Runtime 更新。默认早上 8 点。
      *

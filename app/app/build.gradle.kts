@@ -43,6 +43,44 @@ android {
     }
 }
 
+/**
+ * android_host.py 资产同步任务：该文件是 app↔运行时的边界 overlay，以仓库
+ * rootfs/overlays/ 为单一来源，构建期复制进 assets/overlays/，ProotHost 每次拉起
+ * 会话前覆盖到 rootfs。不随 APK 同步的话，只走热更的用户拿不到 overlay 更新
+ * （热更不触碰 untracked 文件），依赖 overlay 新行为的开关（如局域网控制）会静默失效
+ *
+ * Copies the android_host.py boundary overlay from the repo's rootfs/overlays/
+ * (the single source) into the APK assets at build time; ProotHost overwrites
+ * the rootfs copy from the asset before every session spawn.
+ */
+abstract class SyncAndroidHostOverlayTask : DefaultTask() {
+    /** 仓库内单一来源 / The single in-repo source. */
+    @get:InputFile
+    abstract val overlayFile: RegularFileProperty
+
+    /** 资产根（内含 overlays/android_host.py）/ The asset root (containing overlays/android_host.py). */
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun sync() {
+        val out = File(outputDir.get().asFile, "overlays/android_host.py")
+        out.parentFile.mkdirs()
+        overlayFile.get().asFile.copyTo(out, overwrite = true)
+    }
+}
+
+val syncAndroidHostOverlay = tasks.register<SyncAndroidHostOverlayTask>("syncAndroidHostOverlay") {
+    overlayFile.set(rootDir.parentFile.resolve("rootfs/overlays/android_host.py"))
+    outputDir.set(layout.buildDirectory.dir("generated/androidHostOverlay"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(syncAndroidHostOverlay) { it.outputDir }
+    }
+}
+
 // 捆绑运行时校验：rootfs.tar.xz（300MB+）与 BUILD_MANIFEST 由 CI 的 rootfs workflow 产出、
 // 不入库，本地缺失时所有 package/assemble 任务在此明确失败，避免打出没有运行时的残缺包；
 // azurpilot.slimApk=true 的精简构建跳过该校验

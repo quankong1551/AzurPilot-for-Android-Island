@@ -64,6 +64,13 @@ import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.i18n.AppLocales
 import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.proot.AzurPilotRunController
+import com.azurpilot.ghio.proot.AzurPilotGateway
+import com.azurpilot.ghio.proot.ProotHost
+import com.azurpilot.ghio.proot.ProotPhase
+import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.util.Collections
 import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
@@ -883,10 +890,21 @@ fun AboutSettingsPage(
 }
 
 /**
- * 渲染运行时二级页：启动时由宿主更新完整 rootfs，上游 git 热更仍由 Android 关闭。
+ * 远程访问状态快照（WS `settings.get` → `remote` 字段）
  *
- * Renders the runtime page: the host updates the full rootfs at startup; upstream
- * git hot-updates stay disabled by the Android shell.
+ * Snapshot of the remote-access state (WS `settings.get` → the `remote` field).
+ */
+private data class RemoteAccessUiState(
+    val state: String = "",
+    val address: String = "",
+    val error: String = "",
+)
+
+/**
+ * 渲染运行时二级页：版本信息、热更与镜像、局域网控制、远程访问与会话重启
+ *
+ * Renders the runtime page: version info, hot update and mirror, LAN control,
+ * remote access, and the session restart.
  *
  * @param onBack 返回回调 / back callback
  */
@@ -899,8 +917,11 @@ fun RuntimeSettingsPage(
     updateManager: AppUpdateManager = koinInject(),
     settings: AppSettingsManager = koinInject(),
     runController: AzurPilotRunController = koinInject(),
+    prootHost: ProotHost = koinInject(),
+    gateway: AzurPilotGateway = koinInject(),
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val updater by repository.updater.collectAsStateWithLifecycle()
     val provisionState by provisioner.state.collectAsStateWithLifecycle()
     val runtimeCheck by provisioner.updateCheck.collectAsStateWithLifecycle()
@@ -909,9 +930,70 @@ fun RuntimeSettingsPage(
     val githubMirrorCustom by settings.githubMirrorCustom.collectAsStateWithLifecycle()
     val hotUpdateEnabled by settings.hotUpdateEnabled.collectAsStateWithLifecycle()
     val autoUpdateHour by settings.autoUpdateHour.collectAsStateWithLifecycle()
+    val lanControlEnabled by settings.lanControlEnabled.collectAsStateWithLifecycle()
     val hotUpdate by runController.hotUpdate.collectAsStateWithLifecycle()
+    val prootState by prootHost.state.collectAsStateWithLifecycle()
     var showHourDialog by remember { mutableStateOf(false) }
+    var showRestartConfirm by remember { mutableStateOf(false) }
     val installedVersion = provisioner.installedVersion()
+    // 会话正处在准备/启动链上即视为忙：重启按钮置灰并切到「正在重启」文案
+    val sessionBusy = prootState.phase == ProotPhase.PREPARING ||
+        prootState.phase == ProotPhase.UPDATING ||
+        prootState.phase == ProotPhase.STARTING
+    // 局域网地址取本机站点内 IPv4；口令是上游公网监听时自动生成的 password.txt。
+    // 两者都以 phase 为 key：重启完成状态一变就重算，不用退出页面重进
+    val lanAddress = remember(lanControlEnabled, prootState.phase) {
+        if (!lanControlEnabled) return@remember null
+        runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@remember null
+            Collections.list(interfaces).asSequence()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { Collections.list(it.inetAddresses).asSequence() }
+                .filterIsInstance<Inet4Address>()
+                .firstOrNull { it.isSiteLocalAddress }
+                ?.hostAddress
+                ?.let { "http://$it:${ProotHost.WEBUI_PORT}" }
+        }.getOrNull()
+    }
+    val webUiPassword = remember(lanControlEnabled, prootState.phase) {
+        if (!lanControlEnabled) return@remember null
+        // 与 ProotHost 的 installDir 同约定：guest 的 /opt/azurpilot 映射到 files/rootfs/opt/azurpilot
+        runCatching {
+            File(context.filesDir, "rootfs/opt/azurpilot/password.txt").readText()
+                .trim().takeIf { it.isNotEmpty() }
+        }.getOrNull()
+    }
+    val remoteAccessEnabled by settings.remoteAccessEnabled.collectAsStateWithLifecycle()
+    var remoteStatus by remember { mutableStateOf<RemoteAccessUiState?>(null) }
+    // 远程入口的访问口令与 WebUI 是同一个（App 在开启时确保非空）；LAN 开启时
+    // password.txt 与它一致，这里直接读 deploy.yaml 的权威值
+    val remotePassword = remember(remoteAccessEnabled, prootState.phase) {
+        if (!remoteAccessEnabled) return@remember null
+        runCatching {
+            val text = File(context.filesDir, "rootfs/opt/azurpilot/config/deploy.yaml").readText()
+            Regex("^\\s*Password:\\s*(\\S.*)$", RegexOption.MULTILINE).find(text)
+                ?.groupValues?.get(1)?.substringBefore(" #")?.trim()
+                ?.takeUnless { it.isEmpty() || it.equals("null", true) }
+        }.getOrNull()
+    }
+    // 重启完成（phase 变化）后 gateway 重连与隧道注册都要一拍，稍候再取状态
+    LaunchedEffect(remoteAccessEnabled, prootState.phase) {
+        if (!remoteAccessEnabled) {
+            remoteStatus = null
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(2_000)
+        val remote = runCatching {
+            gateway.request("settings.get")?.optJSONObject("remote")
+        }.getOrNull()
+        remoteStatus = remote?.let {
+            RemoteAccessUiState(
+                state = it.optString("state"),
+                address = it.optString("address"),
+                error = it.optString("error"),
+            )
+        }
+    }
     SettingsSubPage(titleRes = R.string.settings_cat_runtime, onBack = onBack, modifier = modifier) {
         AppCard {
             AppInfoRow(
@@ -1045,6 +1127,114 @@ fun RuntimeSettingsPage(
                 }
             }
         }
+        // 局域网控制卡片：开关（默认关）+ 局域网地址与访问口令回显。
+        // 绑定地址经会话环境（AZURPILOT_ANDROID_LAN）注入，改动要重启 Runtime 才生效；
+        // 口令由上游公网监听时自动生成，非本机连接才需要，App 内嵌界面不受影响
+        AppCard {
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_lan_control),
+                trailing = {
+                    Switch(
+                        checked = lanControlEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { settings.setLanControlEnabled(enabled) }
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_lan_control_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (lanControlEnabled) {
+                lanAddress?.let {
+                    AppInfoRow(stringResource(R.string.settings_lan_control_address), it)
+                }
+                if (webUiPassword != null) {
+                    AppInfoRow(stringResource(R.string.settings_lan_control_password), webUiPassword)
+                } else {
+                    Text(
+                        text = stringResource(R.string.settings_lan_control_password_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        // Runtime 重启卡片：改完开关/镜像后的生效入口，也是会话卡死时的手动恢复。
+        // 重启会先请运行时优雅停掉实例，任务不跨重启恢复，所以先弹确认
+        AppCard {
+            Button(
+                onClick = { showRestartConfirm = true },
+                enabled = !sessionBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    stringResource(
+                        if (sessionBusy) R.string.settings_runtime_restarting
+                        else R.string.settings_runtime_restart
+                    )
+                )
+            }
+            Text(
+                text = stringResource(R.string.settings_runtime_restart_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // 远程访问卡片：开关（默认关）+ 经 WS settings.get 的状态/地址回显 + 口令。
+        // 隧道由上游 localshare 中转（SSH 兜底、P2P 升级），改动要重启 Runtime 生效；
+        // 口令与 WebUI 同一份，拿到地址+口令即可从公网控制，务必保管好
+        AppCard {
+            AppLabeledControlRow(
+                label = stringResource(R.string.settings_remote_access),
+                trailing = {
+                    Switch(
+                        checked = remoteAccessEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { settings.setRemoteAccessEnabled(enabled) }
+                        },
+                    )
+                },
+            )
+            Text(
+                text = stringResource(R.string.settings_remote_access_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (remoteAccessEnabled) {
+                val status = remoteStatus
+                AppInfoRow(
+                    stringResource(R.string.settings_remote_access_state),
+                    stringResource(
+                        when {
+                            status == null -> R.string.settings_remote_state_unreachable
+                            status.address.isNotEmpty() -> R.string.settings_remote_state_ready
+                            status.state == "stopped" || status.state == "failed" ||
+                                status.state == "dependency_missing" -> R.string.settings_remote_state_stopped
+                            else -> R.string.settings_remote_state_waiting
+                        }
+                    ),
+                )
+                if (status?.address?.isNotEmpty() == true) {
+                    AppInfoRow(stringResource(R.string.settings_remote_access_address), status.address)
+                }
+                // error 只在没拿到地址时展示：上游 WebRTC provider 首轮等 SSH 回包
+                // 超时后重试成功也不清 error 字段，地址已就绪时它是陈旧残留
+                val remoteError = status?.error?.takeIf { status.address.isEmpty() }
+                if (remoteError?.isNotEmpty() == true) {
+                    Text(
+                        text = remoteError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (remotePassword != null) {
+                    AppInfoRow(stringResource(R.string.settings_remote_access_password), remotePassword)
+                }
+            }
+        }
         AppCard {
             Text(
                 text = stringResource(R.string.settings_github_mirror),
@@ -1085,6 +1275,24 @@ fun RuntimeSettingsPage(
                 Text(stringResource(R.string.settings_app_check))
             }
         }
+    }
+    if (showRestartConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestartConfirm = false },
+            title = { Text(stringResource(R.string.settings_runtime_restart_title)) },
+            text = { Text(stringResource(R.string.settings_runtime_restart_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestartConfirm = false
+                    prootHost.restart()
+                }) { Text(stringResource(R.string.dialog_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestartConfirm = false }) {
+                    Text(stringResource(R.string.dialog_cancel))
+                }
+            },
+        )
     }
     if (showHourDialog) {
         AlertDialog(

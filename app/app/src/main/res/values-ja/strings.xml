@@ -744,6 +744,25 @@
     <string name="settings_runtime_new_version">新しいバージョンがあります。アプリを再起動すると更新を選べます</string>
     <string name="settings_runtime_check_failed">確認に失敗：%1$s</string>
     <string name="settings_app_check">アプリの更新を確認</string>
+    <string name="settings_lan_control">LAN 制御</string>
+    <string name="settings_lan_control_desc">オンにすると、同じ Wi-Fi のパソコンからブラウザーで下のアドレスを開き、自動化を操作できます。変更は Runtime の再起動後に有効になり、アクセス用パスワードは自動生成されます。</string>
+    <string name="settings_lan_control_address">LAN アドレス</string>
+    <string name="settings_lan_control_password">アクセス用パスワード</string>
+    <string name="settings_lan_control_password_hint">Runtime 再起動後にアクセス用パスワードが自動生成されます</string>
+    <string name="settings_runtime_restart">Runtime を再起動</string>
+    <string name="settings_runtime_restart_desc">ランタイムのプロセスを再起動します。実行中のタスクは停止し、自動的には再開されません。</string>
+    <string name="settings_runtime_restart_title">Runtime を再起動しますか？</string>
+    <string name="settings_runtime_restart_message">実行中のタスクは中断されます。続行しますか？</string>
+    <string name="settings_runtime_restarting">Runtime を再起動中…</string>
+    <string name="settings_remote_access">リモートアクセス</string>
+    <string name="settings_remote_access_desc">オンにして Runtime を再起動すると、公網からアクセスできる入口が生成され、外出先でもブラウザーで操作できます。アクセス用パスワードは厳重に管理してください。漏洩すると制御権を渡すことになります。</string>
+    <string name="settings_remote_access_state">接続状態</string>
+    <string name="settings_remote_access_address">リモートアドレス</string>
+    <string name="settings_remote_access_password">アクセス用パスワード</string>
+    <string name="settings_remote_state_ready">準備完了</string>
+    <string name="settings_remote_state_waiting">接続を確立中…</string>
+    <string name="settings_remote_state_stopped">未接続</string>
+    <string name="settings_remote_state_unreachable">Runtime が準備できていません</string>
     <!-- AzurPilot 原生界面（原 WebUI 的功能面） -->
     <string name="ap_section_overview">概要</string>
     <string name="ap_section_config">設定</string>

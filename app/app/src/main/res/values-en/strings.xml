@@ -749,6 +749,25 @@
     <string name="settings_runtime_new_version">New version available; restart the app to choose an update</string>
     <string name="settings_runtime_check_failed">Check failed: %1$s</string>
     <string name="settings_app_check">Check for app update</string>
+    <string name="settings_lan_control">LAN control</string>
+    <string name="settings_lan_control_desc">When on, a computer on the same Wi-Fi can open the address below in a browser to control the automation. Restart the Runtime to apply; the access password is generated automatically.</string>
+    <string name="settings_lan_control_address">LAN address</string>
+    <string name="settings_lan_control_password">Access password</string>
+    <string name="settings_lan_control_password_hint">The access password is generated after a Runtime restart</string>
+    <string name="settings_runtime_restart">Restart Runtime</string>
+    <string name="settings_runtime_restart_desc">Restarts the runtime process; running tasks stop and do not resume automatically.</string>
+    <string name="settings_runtime_restart_title">Restart Runtime?</string>
+    <string name="settings_runtime_restart_message">Running tasks will be interrupted. Continue?</string>
+    <string name="settings_runtime_restarting">Restarting Runtime…</string>
+    <string name="settings_remote_access">Remote access</string>
+    <string name="settings_remote_access_desc">When on and the Runtime restarts, a publicly reachable entry is created so you can control the automation from the web anywhere. Guard the access password: anyone who has it controls your device.</string>
+    <string name="settings_remote_access_state">Connection state</string>
+    <string name="settings_remote_access_address">Remote address</string>
+    <string name="settings_remote_access_password">Access password</string>
+    <string name="settings_remote_state_ready">Ready</string>
+    <string name="settings_remote_state_waiting">Establishing connection…</string>
+    <string name="settings_remote_state_stopped">Not connected</string>
+    <string name="settings_remote_state_unreachable">Runtime not ready</string>
     <!-- AzurPilot 原生界面（原 WebUI 的功能面） -->
     <string name="ap_section_overview">Overview</string>
     <string name="ap_section_config">Config</string>

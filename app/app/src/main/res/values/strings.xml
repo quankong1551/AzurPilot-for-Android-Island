@@ -744,6 +744,25 @@
     <string name="settings_runtime_new_version">发现新版本；重启 App 时可选择更新</string>
     <string name="settings_runtime_check_failed">检查失败：%1$s</string>
     <string name="settings_app_check">检查 App 更新</string>
+    <string name="settings_lan_control">局域网控制</string>
+    <string name="settings_lan_control_desc">开启后，同一 Wi-Fi 下的电脑可用浏览器打开下面的地址控制挂机。改动需重启 Runtime 生效；访问口令会自动生成。</string>
+    <string name="settings_lan_control_address">局域网访问地址</string>
+    <string name="settings_lan_control_password">访问口令</string>
+    <string name="settings_lan_control_password_hint">重启 Runtime 后自动生成访问口令</string>
+    <string name="settings_runtime_restart">重启 Runtime</string>
+    <string name="settings_runtime_restart_desc">重启运行时进程；正在运行的任务会停止，不会自动恢复。</string>
+    <string name="settings_runtime_restart_title">重启 Runtime？</string>
+    <string name="settings_runtime_restart_message">正在运行的任务会被中断，确定继续吗？</string>
+    <string name="settings_runtime_restarting">正在重启 Runtime…</string>
+    <string name="settings_remote_access">远程访问</string>
+    <string name="settings_remote_access_desc">开启并重启 Runtime 后，会生成一条可从公网访问的入口，出门也能用网页控制挂机。访问口令务必保管好，泄露即等于交出控制权。</string>
+    <string name="settings_remote_access_state">连接状态</string>
+    <string name="settings_remote_access_address">远程访问地址</string>
+    <string name="settings_remote_access_password">访问口令</string>
+    <string name="settings_remote_state_ready">已就绪</string>
+    <string name="settings_remote_state_waiting">正在建立连接…</string>
+    <string name="settings_remote_state_stopped">未连接</string>
+    <string name="settings_remote_state_unreachable">运行时未就绪</string>
     <!-- AzurPilot 原生界面（原 WebUI 的功能面） -->
     <string name="ap_section_overview">总览</string>
     <string name="ap_section_config">配置</string>

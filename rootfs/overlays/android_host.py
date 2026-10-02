@@ -2,17 +2,27 @@
 """让 Android App 成为 WebUI 进程树的生命周期属主。
 
 rootfs 的入口进程：由 app 侧 ProotHost 经 PRoot 拉起，chdir 到 /opt/azurpilot 后
-以 venv Python 启动上游 gui.py（WebUI 与 WebSocket 网关，监听 127.0.0.1:25548）。
+以 venv Python 启动上游 gui.py（WebUI 与 WebSocket 网关，默认监听 127.0.0.1:25548）。
 本进程退出或父进程消亡（stdin 管道 EOF）都会终结整棵子进程组，运行时因此不会
 在 app 侧死亡后变成孤儿。
+
+局域网控制（环境变量 AZURPILOT_ANDROID_LAN=1）改绑 0.0.0.0：绑定地址由 App 侧
+设置开关经 ProotHost 注入。公网监听下上游会自动生成 WebUI 访问口令（password.txt），
+而 /android 薄接口的回环校验不随绑定变化，控制通道不会因此暴露到局域网。
 
 Makes the Android app the lifecycle owner of the WebUI process tree.
 
 This is the rootfs entry process: spawned by the app-side ProotHost through
 PRoot, it chdirs to /opt/azurpilot and starts the upstream gui.py with the venv
-Python (WebUI and WebSocket gateway listening on 127.0.0.1:25548). Its own exit
-or the parent's death (EOF on the stdin pipe) tears down the whole child
-process group, so the runtime cannot outlive the app as an orphan.
+Python (WebUI and WebSocket gateway listening on 127.0.0.1:25548 by default).
+Its own exit or the parent's death (EOF on the stdin pipe) tears down the whole
+child process group, so the runtime cannot outlive the app as an orphan.
+
+LAN control (environment variable AZURPILOT_ANDROID_LAN=1) rebinds to 0.0.0.0:
+the bind address is injected by the app-side settings toggle through ProotHost.
+With a public bind, upstream auto-generates the WebUI access password
+(password.txt), while the /android thin API's loopback check is bind-independent,
+so the control channel is never exposed to the LAN.
 """
 
 import os
@@ -21,6 +31,15 @@ import stat
 import subprocess
 import sys
 import threading
+
+
+def bind_host():
+    """解析 WebUI 绑定地址：AZURPILOT_ANDROID_LAN=1 时公网，否则仅回环。
+
+    Resolves the WebUI bind address: public when AZURPILOT_ANDROID_LAN=1,
+    loopback-only otherwise.
+    """
+    return '0.0.0.0' if os.environ.get('AZURPILOT_ANDROID_LAN') == '1' else '127.0.0.1'
 
 
 def main():
@@ -33,7 +52,7 @@ def main():
     # 上游按相对路径解析 config / frontend 等资源，必须先落到安装目录再启动。
     os.chdir(root)
     child = subprocess.Popen(
-        [os.path.join(root, '.venv/bin/python'), 'gui.py', '--host', '127.0.0.1', '--port', '25548'],
+        [os.path.join(root, '.venv/bin/python'), 'gui.py', '--host', bind_host(), '--port', '25548'],
         cwd=root, stdin=subprocess.DEVNULL, start_new_session=True,
     )
     closing = threading.Event()
