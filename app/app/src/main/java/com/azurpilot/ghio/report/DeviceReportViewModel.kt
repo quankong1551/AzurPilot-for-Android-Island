@@ -70,7 +70,7 @@ class DeviceReportViewModel(
     /** 更新用户声明的使用结果。 / Updates the user-declared compatibility result. */
     fun selectCompatibility(value: String) {
         if (state.value.sending || state.value.result != null ||
-            value !in setOf("untested", "working", "not_working")
+            value !in setOf("working", "not_working")
         ) return
         state.update { it.copy(report = it.report?.copy(compatibility = value), errorRes = null) }
     }
@@ -79,6 +79,10 @@ class DeviceReportViewModel(
     fun submit() {
         val report = state.value.report ?: return
         if (state.value.sending || state.value.result != null) return
+        if (report.compatibility !in setOf("working", "not_working")) {
+            state.update { it.copy(errorRes = R.string.device_report_test_required) }
+            return
+        }
         state.update { it.copy(sending = true, errorRes = null) }
         viewModelScope.launch {
             try {

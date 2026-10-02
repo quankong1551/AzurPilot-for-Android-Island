@@ -40,7 +40,8 @@ import kotlin.math.roundToInt
  * @property memoryGiB 四舍五入的内存容量。 / Rounded memory capacity.
  * @property appVersion App 版本名称。 / App version name.
  * @property appVersionCode App 版本号。 / App version code.
- * @property compatibility 用户声明的使用结果。 / User-declared compatibility result.
+ * @property compatibility 用户明确选择的实测结果，空值表示尚未选择。
+ *     / Explicit tested result, empty before selection.
  * @property backend 当前配置的提权后端。 / Currently configured privilege backend.
  * @property runMode 当前配置的运行模式。 / Currently configured run mode.
  */
@@ -71,7 +72,7 @@ data class DeviceReport(
     val memoryGiB: Int,
     val appVersion: String,
     val appVersionCode: Int,
-    val compatibility: String = "untested",
+    val compatibility: String = "",
     val backend: String,
     val runMode: String,
 ) {

@@ -1050,7 +1050,6 @@
     <string name="device_report_memory">記憶體</string>
     <string name="device_report_memory_value">約 %1$d GiB</string>
     <string name="device_report_compatibility">使用結果</string>
-    <string name="device_report_untested">未測試</string>
     <string name="device_report_working">可正常使用</string>
     <string name="device_report_not_working">無法正常使用</string>
     <string name="device_report_consent">我同意將以上資訊公開到 GitHub</string>
@@ -1076,4 +1075,5 @@
     <string name="device_report_build_display">建置編號</string>
     <string name="device_report_complete_title">提交成功</string>
     <string name="device_report_done">完成</string>
+    <string name="device_report_test_required">請實際測試後，選擇使用結果再提交。</string>
 </resources>

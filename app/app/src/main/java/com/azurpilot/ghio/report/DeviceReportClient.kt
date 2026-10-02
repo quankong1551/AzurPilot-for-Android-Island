@@ -114,11 +114,14 @@ class DeviceReportClient(private val context: Context) {
     }
 
     /**
-     * 发送用户已确认的预览快照；不自动重试写请求。
+     * 只发送用户已选择实测结果的快照；不自动重试写请求。
      *
-     * Sends the preview snapshot confirmed by the user without automatic write retries.
+     * Sends only snapshots with an explicitly selected tested result, without automatic write retries.
      */
     suspend fun submit(report: DeviceReport): DeviceReportResult = withContext(Dispatchers.IO) {
+        if (report.compatibility !in setOf("working", "not_working")) {
+            throw DeviceReportException(R.string.device_report_test_required)
+        }
         val auth = credentials
         val body = json.encodeToString(report).toByteArray(Charsets.UTF_8)
         val timestamp = (System.currentTimeMillis() / 1000).toString()

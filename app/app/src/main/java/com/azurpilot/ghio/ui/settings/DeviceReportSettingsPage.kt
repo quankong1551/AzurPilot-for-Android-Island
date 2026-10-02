@@ -140,9 +140,10 @@ internal fun DeviceReportSettingsContent(
                 AppCard {
                     Text(stringResource(R.string.device_report_compatibility),
                         style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.device_report_test_required),
+                        style = MaterialTheme.typography.bodyMedium)
                     AppSingleChoiceFlow(
                         options = listOf(
-                            "untested" to stringResource(R.string.device_report_untested),
                             "working" to stringResource(R.string.device_report_working),
                             "not_working" to stringResource(R.string.device_report_not_working),
                         ),
@@ -162,7 +163,7 @@ internal fun DeviceReportSettingsContent(
                     }
                     Button(
                         onClick = onSubmit,
-                        enabled = consent,
+                        enabled = consent && report.compatibility in setOf("working", "not_working"),
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(stringResource(R.string.device_report_submit)) }
                 }

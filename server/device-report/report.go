@@ -80,7 +80,7 @@ func (r *Report) validate() error {
 		r.MemoryGiB < 1 || r.MemoryGiB > 1024 || r.AppVersionCode < 1 {
 		return errors.New("invalid numeric field")
 	}
-	if r.Compatibility != "untested" && r.Compatibility != "working" &&
+	if r.Compatibility != "working" &&
 		r.Compatibility != "not_working" {
 		return errors.New("invalid compatibility")
 	}
@@ -127,8 +127,8 @@ func (r Report) issueBody(id string) string {
 		return strings.ReplaceAll(html.EscapeString(s), "|", "&#124;")
 	}
 	status := map[string]string{
-		"untested": "未测试 / Untested", "working": "可正常使用 / Working",
-		"not_working": "无法正常使用 / Not working",
+		"working":     "✅ 可正常使用 / Working",
+		"not_working": "❌ 无法正常使用 / Not working",
 	}[r.Compatibility]
 	rows := [][2]string{
 		{"机型 / Device name", r.MarketingName},

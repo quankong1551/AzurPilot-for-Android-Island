@@ -32,7 +32,7 @@ func validReport() Report {
 		AndroidRelease: "16", SdkInt: 36, SecurityPatch: "2026-09-01",
 		SupportedAbis: []string{"arm64-v8a"}, ScreenWidth: 1080, ScreenHeight: 2400,
 		DensityDpi: 420, RefreshRate: 120, MemoryGiB: 8, AppVersion: "1.2.58",
-		AppVersionCode: 100, Compatibility: "untested"}
+		AppVersionCode: 100, Compatibility: "working"}
 }
 
 func fixture(t *testing.T, githubHandler http.HandlerFunc) (*service, *rsa.PrivateKey) {
@@ -254,5 +254,32 @@ func TestVendorMetadataRedactionAndEscaping(t *testing.T) {
 	if !strings.HasPrefix(body, "## <code>[link](https://example.org)&lt;img src=x&gt;</code>") ||
 		strings.Contains(body, "private-device-value") || strings.Contains(body, "<img") {
 		t.Fatal("device metadata introduced active markup or private identifiers")
+	}
+}
+
+func TestOnlyTestedCompatibilityResults(t *testing.T) {
+	s, key := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("untested report reached GitHub")
+		w.WriteHeader(500)
+	})
+	for _, value := range []string{"", "untested", "unknown"} {
+		report := validReport()
+		report.Compatibility = value
+		body, _ := json.Marshal(report)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, signedRequest(t, s, key, body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("result %q: got %d, want 400", value, w.Code)
+		}
+	}
+	if len(s.state.records) != 0 {
+		t.Fatal("untested report consumed persistent state or quota")
+	}
+	for _, value := range []string{"working", "not_working"} {
+		report := validReport()
+		report.Compatibility = value
+		if err := report.validate(); err != nil {
+			t.Fatalf("tested result %q rejected: %v", value, err)
+		}
 	}
 }

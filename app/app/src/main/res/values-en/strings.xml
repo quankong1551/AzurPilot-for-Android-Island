@@ -1055,7 +1055,6 @@
     <string name="device_report_memory">Memory</string>
     <string name="device_report_memory_value">About %1$d GiB</string>
     <string name="device_report_compatibility">Compatibility result</string>
-    <string name="device_report_untested">Untested</string>
     <string name="device_report_working">Works correctly</string>
     <string name="device_report_not_working">Does not work correctly</string>
     <string name="device_report_consent">I agree to publish these details on GitHub</string>
@@ -1081,4 +1080,5 @@
     <string name="device_report_build_display">Build display ID</string>
     <string name="device_report_complete_title">Submission complete</string>
     <string name="device_report_done">Done</string>
+    <string name="device_report_test_required">Test the app first, then select the actual result before submitting.</string>
 </resources>

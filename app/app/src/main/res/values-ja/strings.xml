@@ -1050,7 +1050,6 @@
     <string name="device_report_memory">メモリ</string>
     <string name="device_report_memory_value">約 %1$d GiB</string>
     <string name="device_report_compatibility">使用結果</string>
-    <string name="device_report_untested">未テスト</string>
     <string name="device_report_working">正常に動作</string>
     <string name="device_report_not_working">正常に動作しない</string>
     <string name="device_report_consent">上記の情報を GitHub に公開することに同意します</string>
@@ -1076,4 +1075,5 @@
     <string name="device_report_build_display">ビルド番号</string>
     <string name="device_report_complete_title">送信完了</string>
     <string name="device_report_done">完了</string>
+    <string name="device_report_test_required">実際に動作を確認してから、使用結果を選んで送信してください。</string>
 </resources>

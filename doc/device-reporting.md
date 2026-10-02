@@ -14,6 +14,9 @@ GitHub 后提交。报告追加到 [机型支持列表 Issue #1](https://github.
 ABI、主屏参数、约整 GiB 内存、App 版本、配置的 Shizuku/Root 后端及前台/后台模式、
 用户声明的使用结果。配置模式不代表已成功运行。
 
+只接受用户实际使用后的“可正常使用”或“无法正常使用”。页面不预选结果，用户未明确
+选择时提交按钮不可用；服务器拒绝空结果及“未测试”，且不写入状态或消耗提交配额。
+
 商品名称优先取只读 `ro.product.marketname` 及其 vendor 变体，缺失时按品牌、型号和
 代号精确匹配 CI 打包的 Google 公开机型目录；有歧义或无匹配时保留型号代码。
 目录来自 [Google 支持的 Android 设备](https://support.google.com/googleplay/answer/1727131)，
@@ -145,6 +148,10 @@ full incremental build, build display ID, product/device codenames, hardware/SoC
 Android release and security patch, ABIs, main display parameters, memory rounded to GiB, app
 version, configured Shizuku/Root backend, foreground/background mode and user-declared result.
 Configured modes do not imply successful operation.
+
+Only explicitly selected working/not-working results after actual use are accepted. No result is
+preselected. Submission stays disabled until a choice is made, and the server rejects empty or
+untested results without persisting state or consuming submission quota.
 
 Marketing names use read-only market-name properties, then exact brand/model/codename matching
 against Google's public supported-device catalog bundled by CI. Ambiguous or unknown names retain
