@@ -31,7 +31,9 @@
 - **AzurPilotGateway**（`proot/`）：对 Runtime 的 WebSocket 富接口订阅方，
   全局唯一订阅，承载配置、日志、统计的实时推送。
 - **特权服务**（`privileged/`、`remote/`）：经 Shizuku 或 root 以 `app_process`
-  拉起独立进程，承载虚拟屏管理、桥接截屏与注入（`bridge/` 下的 native 代码）。
+  拉起独立进程，承载虚拟屏管理、桥接截屏与注入（`bridge/` 下的 native 代码）；
+  游戏运行期间由 `SdkTaskRepatriator` 把厂商/渠道 SDK 弹在主屏的登录、实名、
+  支付页搬回虚拟屏（部分定制 ROM 会把这类 Activity 重定向回默认显示器）。
 
 ### proot Runtime
 
@@ -90,7 +92,11 @@ Runtime 在 `127.0.0.1:25548` 同时暴露三类接口：
   runtime's rich API; carries live config, log, and statistics pushes.
 - **Privileged service** (`privileged/`, `remote/`): a separate process started
   through Shizuku or root via `app_process`. It owns virtual display
-  management and the bridge capture/input native code (`bridge/`).
+  management and the bridge capture/input native code (`bridge/`). While the
+  game is running, `SdkTaskRepatriator` moves vendor/channel-SDK login,
+  real-name, and payment pages popped onto the primary display back onto the
+  virtual display (some customized ROMs redirect such activities to the default
+  display).
 
 ### proot runtime
 

@@ -15,6 +15,7 @@ import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.remote.internal.PowerController
 import com.azurpilot.ghio.remote.internal.PrimaryDisplayManager
 import com.azurpilot.ghio.remote.internal.ScreenManager
+import com.azurpilot.ghio.remote.internal.SdkTaskRepatriator
 import com.azurpilot.ghio.constant.PrivilegedGrant
 import com.azurpilot.ghio.remote.internal.VirtualDisplayManager
 import com.azurpilot.ghio.remote.internal.WakeUnlockController
@@ -184,6 +185,8 @@ class RemoteServiceImpl : RemoteService.Stub() {
      */
     override fun setVirtualDisplayMode(mode: Int): Boolean = when (mode) {
         DisplayMode.PRIMARY -> {
+            // 主屏模式下游戏与 SDK 弹页同屏，搬屏盯防没有意义，停掉
+            SdkTaskRepatriator.stop()
             VirtualDisplayManager.stop()
             virtualDisplayMode.set(mode)
             true
@@ -219,15 +222,18 @@ class RemoteServiceImpl : RemoteService.Stub() {
         DisplayMode.BACKGROUND -> VirtualDisplayManager.start().also { displayId ->
             if (displayId != DefaultDisplayConfig.DISPLAY_NONE) {
                 PowerController.startUserActivityKeepAlive(displayId)
+                // 屏建好了才可能跑自动化，SDK 弹页盯防随之启动
+                SdkTaskRepatriator.start()
             }
         }
 
         else -> DefaultDisplayConfig.DISPLAY_NONE
     }
 
-    /** 停显示：连同看门狗与 userActivity 保活一起撤 / Stops the display along with the watchdog and the userActivity keep-alive */
+    /** 停显示：连同看门狗、SDK 弹页盯防与 userActivity 保活一起撤 / Stops the display along with the watchdog, the SDK-popup watcher and the userActivity keep-alive */
     override fun stopVirtualDisplay() {
         AppWatchdog.stopWatching()
+        SdkTaskRepatriator.stop()
         when (virtualDisplayMode.get()) {
             DisplayMode.PRIMARY -> PrimaryDisplayManager.stop()
             DisplayMode.BACKGROUND -> {
@@ -416,6 +422,7 @@ class RemoteServiceImpl : RemoteService.Stub() {
      * says a size change was applied.
      */
     private fun cleanup() {
+        step("sdk task repatriator") { SdkTaskRepatriator.stop() }
         step("bridge server") { BridgeServer.stop() }
         step("screen size") { ScreenManager.destroy() }
         step("power") { PowerController.destroy() }
