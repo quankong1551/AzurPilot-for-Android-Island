@@ -227,9 +227,12 @@ fun LogsSection(repository: AzurPilotRepository) {
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-        // 空态与列表之间交叉淡入；列表状态提到分支外面，换态时不会丢滚动位置
+        // 空态与列表之间交叉淡入；列表状态提到分支外面，换态时不会丢滚动位置。
+        // 必须吃 weight：不带它 Crossfade 会按父列的完整高度量列表，视口比剩余空间
+        // 高出一截搜索栏，列表末尾几行永远沉在屏幕底下滚不上来
         val listState = rememberLazyListState()
         Crossfade(
+            modifier = Modifier.weight(1f),
             targetState = ordered.isEmpty(),
             animationSpec = ApMotion.effects(ApMotion.Medium2, ApMotion.EmphasizedDecelerate),
             label = "logsEmpty",

@@ -173,7 +173,10 @@ fun OpenSourceLicensesPage(
         if (filteredComponents.isEmpty()) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    // 占满剩余空间而不是 fillMaxSize：普通 Column 会按完整剩余高量它，
+                    // 叠上搜索框与筛选行后中心点会沉到屏幕外
+                    .weight(1f)
                     .padding(AppTokens.Spacing.xl),
                 contentAlignment = Alignment.Center,
             ) {
@@ -185,7 +188,9 @@ fun OpenSourceLicensesPage(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                // 必须吃 weight：fillMaxSize 会让列表视口比剩余空间高出一截头部，
+                // 尾部几张组件卡永远沉在屏幕底下滚不上来
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.sm),
             ) {
                 items(filteredComponents, key = { it.id }) { component ->
