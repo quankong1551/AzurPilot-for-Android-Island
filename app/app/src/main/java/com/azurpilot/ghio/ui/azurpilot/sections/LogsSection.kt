@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -53,6 +52,7 @@ import com.azurpilot.ghio.R
 import com.azurpilot.ghio.proot.AzurPilotLogEntry
 import com.azurpilot.ghio.proot.AzurPilotRepository
 import com.azurpilot.ghio.theme.AppTokens
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import com.azurpilot.ghio.ui.azurpilot.ApEmptyState
 import com.azurpilot.ghio.ui.azurpilot.apContentWidth
 import com.azurpilot.ghio.ui.azurpilot.ApMotion
@@ -246,7 +246,7 @@ fun LogsSection(repository: AzurPilotRepository) {
                         hint = stringResource(R.string.ap_logs_empty_hint),
                     )
                 } else {
-                    CircularProgressIndicator()
+                    ExpressiveLoadingIndicator()
                 }
             }
         } else {

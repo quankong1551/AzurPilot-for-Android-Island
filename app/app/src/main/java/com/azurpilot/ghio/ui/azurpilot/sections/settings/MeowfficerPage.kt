@@ -11,7 +11,6 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import com.azurpilot.ghio.ui.azurpilot.ApSectionColumn
 import com.azurpilot.ghio.ui.azurpilot.ApStatusPill
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import kotlinx.coroutines.delay
 
 /**
@@ -138,7 +138,7 @@ fun MeowfficerPage(repository: AzurPilotRepository) {
         when {
             loading && cats.isEmpty() -> AppCard {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator()
+                    ExpressiveLoadingIndicator()
                 }
             }
 

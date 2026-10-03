@@ -30,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -74,6 +73,7 @@ import com.azurpilot.ghio.ui.azurpilot.ApSectionColumn
 import com.azurpilot.ghio.ui.azurpilot.prettyCell
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 
 /** 「近 N 天」的候选档位 / The choices offered for the "last N days" filter. */
 private val DAY_CHOICES = listOf(1, 7, 30, 90, 365)
@@ -200,7 +200,7 @@ fun StatisticsSection(repository: AzurPilotRepository) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
-                    ) { CircularProgressIndicator() }
+                    ) { ExpressiveLoadingIndicator() }
                 }
 
                 StatsStage.Error -> AppCard {

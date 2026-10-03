@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +69,7 @@ import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
 import com.azurpilot.ghio.ui.components.AppLabeledControlRow
 import com.azurpilot.ghio.ui.components.AppNavigationRow
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -139,7 +139,7 @@ fun ConfigSection(repository: AzurPilotRepository, onOpenTask: (String) -> Unit)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
-                ) { CircularProgressIndicator() }
+                ) { ExpressiveLoadingIndicator() }
             }
 
             else -> {
@@ -349,7 +349,7 @@ fun TaskConfigPage(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
-                    ) { CircularProgressIndicator() }
+                    ) { ExpressiveLoadingIndicator() }
                 }
             }
         }

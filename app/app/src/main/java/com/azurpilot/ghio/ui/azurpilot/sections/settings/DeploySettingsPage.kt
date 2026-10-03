@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -59,6 +58,7 @@ import com.azurpilot.ghio.ui.azurpilot.ApErrorState
 import com.azurpilot.ghio.ui.azurpilot.ApSectionColumn
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 
 /**
  * 部署设置（`config/deploy.yaml`）
@@ -97,7 +97,7 @@ fun DeploySettingsPage(repository: AzurPilotRepository) {
             if (loading) {
                 AppCard(modifier = Modifier.apEnter(0)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                        CircularProgressIndicator()
+                        ExpressiveLoadingIndicator()
                     }
                 }
                 return@ApSectionColumn

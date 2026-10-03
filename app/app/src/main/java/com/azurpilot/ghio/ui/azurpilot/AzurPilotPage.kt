@@ -18,7 +18,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -53,6 +52,7 @@ import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.theme.AppTokens
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import com.azurpilot.ghio.ui.azurpilot.sections.ConfigSection
 import com.azurpilot.ghio.ui.azurpilot.sections.LogsSection
 import com.azurpilot.ghio.ui.azurpilot.sections.OverviewSection
@@ -165,7 +165,7 @@ private fun RuntimeGate(reachable: Boolean, phase: ProotPhase, detail: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        CircularProgressIndicator()
+        ExpressiveLoadingIndicator()
         Text(
             text = when {
                 phase == ProotPhase.FAILED -> stringResource(R.string.proot_phase_failed, detail)

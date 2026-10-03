@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PhoneAndroid
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -58,6 +57,7 @@ import com.azurpilot.ghio.constant.DefaultDisplayConfig
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.theme.AppTokens
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import com.azurpilot.ghio.ui.components.ToolSlotColumn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -281,9 +281,8 @@ fun ScreenPage(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.sm),
                         ) {
-                            CircularProgressIndicator(
+                            ExpressiveLoadingIndicator(
                                 modifier = Modifier.size(AppTokens.IconSize.md),
-                                strokeWidth = AppTokens.Border.marker,
                             )
                             Text(
                                 text = stringResource(R.string.screen_waiting),

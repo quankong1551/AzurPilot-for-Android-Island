@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +37,7 @@ import com.azurpilot.ghio.ui.azurpilot.ApSectionColumn
 import com.azurpilot.ghio.ui.azurpilot.ApStatusPill
 import com.azurpilot.ghio.ui.azurpilot.apEnter
 import com.azurpilot.ghio.ui.components.AppCard
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 
 /** 提交列表的分页大小 / The commit-list page size. */
 private const val COMMIT_PAGE = 50
@@ -84,7 +84,7 @@ fun UpdaterPage(repository: AzurPilotRepository) {
             val data = updater
             if (data == null) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator()
+                    ExpressiveLoadingIndicator()
                 }
                 return@AppCard
             }
@@ -99,7 +99,7 @@ fun UpdaterPage(repository: AzurPilotRepository) {
                     content = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
                 if (data.busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(AppTokens.IconSize.md))
+                    ExpressiveLoadingIndicator(modifier = Modifier.size(AppTokens.IconSize.md))
                 }
             }
             ApKeyValueRow(stringResource(R.string.ap_updater_local), data.localHead?.take(12) ?: "—")

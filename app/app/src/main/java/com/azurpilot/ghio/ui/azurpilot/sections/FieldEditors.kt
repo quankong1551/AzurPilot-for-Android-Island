@@ -3,7 +3,6 @@ package com.azurpilot.ghio.ui.azurpilot.sections
 
 import androidx.compose.foundation.layout.Arrangement
 import com.azurpilot.ghio.ui.azurpilot.ApMotion
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
@@ -56,6 +55,7 @@ import com.azurpilot.ghio.proot.AzurPilotSchema
 import com.azurpilot.ghio.proot.prettyText
 import com.azurpilot.ghio.proot.sameValueAs
 import com.azurpilot.ghio.theme.AppTokens
+import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -302,9 +302,8 @@ private fun StatusIndicator(status: ApFieldStatus) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.xs),
             ) {
-                CircularProgressIndicator(
+                ExpressiveLoadingIndicator(
                     modifier = Modifier.size(12.dp),
-                    strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
