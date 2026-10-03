@@ -1,68 +1,84 @@
 package com.azurpilot.ghio.ui
 
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
 import android.graphics.Outline
-import android.graphics.drawable.AnimatedVectorDrawable
-import android.os.Build
 import android.view.Gravity
 import android.view.View
-import android.view.ViewOutlineProvider
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreenViewProvider
 import com.azurpilot.ghio.R
 
 /**
- * 启动画面退出阶段的探头动画调度
+ * 启动画面退出阶段探头弹入动画调度器
  *
- * 职责按系统版本分治：
- * - API 31+：`windowSplashScreenAnimatedIcon` 的 AVD 已随启动画面自动播放完毕，
- *   退出保持系统默认节奏，立即移除即可
- * - API < 31：compat 启动画面只渲染 AVD 的静态基态（人物居中），从不自动播放；
- *   在退出时叠一份同尺寸的 AVD 实例到系统图标位上补播"探头→回中"，再整体淡出。
- *   帧位与静态图标完全重合，衔接无跳变
+ * 在启动画面退出阶段驱动人物自圆形遮罩左下角边缘探头并斜向弹入就位。
+ * 舞台采用自带圆形裁切的外层容器 ([ViewOutlineProvider.setOval] + [View.setClipToOutline])，
+ * 内部叠加两层：
+ * 1. [R.drawable.splash_icon_backdrop]：包含冷蓝灰渐变底色、几何多边形装饰、圆角终端窗口与 `>_` 提示符；
+ * 2. [R.drawable.launcher_character]：原版高清人物位图，按自适应图标 72dp 圆形构图精确对齐。
  *
- * Dispatches the peek animation during the splash screen exit.
+ * 构图坐标完全与官方自适应图标规范 (preview/circle.png) 像素级一致：
+ * - 相对 720px 圆形可见区，人物尺寸为 820px，基准左上角落在 (-120px, -10px)；
+ * - 初始探头帧向左下大幅度偏移 (-175px, +175px)，猫耳、呆毛沿圆弧边缘探出；
+ * - 动画沿对角线斜向归零，配合超调插值器产生轻快自然的大行程弹性探头入场效果；
+ * - 圆形外框自裁彻底消除视口外裁剪导致的断头截断，所有边缘平滑过渡。
  *
- * Responsibilities per platform:
- * - API 31+: the icon AVD already played while the splash screen was showing;
- *   exit keeps the system default rhythm by removing immediately
- * - API < 31: the compat splash only renders the AVD's static base state
- *   (character centered) and never auto-plays; overlay an equal-sized AVD
- *   instance on the system icon slot to replay "peek out and spring back",
- *   then fade the whole splash view out. Frame 0 coincides with the static
- *   icon pixel-for-pixel, so the handoff has no visible jump
+ * Dispatches the spring peek entrance animation during splash exit.
+ *
+ * In the splash screen exit phase, animates the character peeking in from the
+ * bottom-left mask edge diagonally into her official adaptive icon resting pose.
+ * The stage uses an oval-clipped FrameLayout stacking the circular backdrop and the
+ * high-resolution character bitmap. Ratios strictly match the 72dp circular mask metrics
+ * from preview/circle.png (size = 820/720, left = -120/720, top = -10/720), smoothly
+ * masked by the circular boundary to eliminate any rectangular clipping artifacts.
  */
 object SplashExitAnimator {
 
-    /** 与 splash_icon_avd.xml 的 android:duration 对齐 / Matches the AVD duration. */
-    private const val AVD_DURATION_MS = 700L
+    /** 探头动画时长 (毫秒) / Duration of the spring peek animation in milliseconds. */
+    private const val ANIMATION_DURATION_MS = 680L
+
+    /** 退出渐隐时长 (毫秒) / Duration of splash screen fade out in milliseconds. */
     private const val FADE_DURATION_MS = 160L
 
-    fun run(provider: SplashScreenViewProvider) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            provider.remove()
-            return
-        }
+    /** 超调回弹张力 / Tension for the OvershootInterpolator. */
+    private const val OVERSHOOT_TENSION = 1.35f
 
+    /**
+     * 运行启动画面退出过渡动画
+     *
+     * @param provider 由 androidx.core.splashscreen 注入的启动画面视图提供者
+     */
+    fun run(provider: SplashScreenViewProvider) {
         val splash = provider.view
         val icon = provider.iconView
-        // 尚未布局完成拿不到图标位几何：直接放行，宁可少一次动画也不挡启动
+
+        // 尚未布局完成时抛入队列延迟执行，避免尺寸为 0 导致跳过
         if (icon.width == 0 || icon.height == 0) {
-            provider.remove()
+            icon.post { run(provider) }
             return
         }
-        val drawable = icon.context.getDrawable(R.drawable.splash_icon_avd)
-        if (drawable !is AnimatedVectorDrawable) {
+
+        val container = splash as? ViewGroup ?: run {
             provider.remove()
             return
         }
 
-        // 图标画的是满幅 432 场景，compat 的图标位按 fitCenter 缩放；舞台复制同一几何与圆形
-        // 裁切，保证与静态帧一致。AVD 需要独立实例，mutate 分离共享态避免影响其他引用
-        val stageDrawable = drawable.mutate() as AnimatedVectorDrawable
-        val stage = ImageView(splash.context).apply {
-            setImageDrawable(stageDrawable)
+        val size = icon.width.coerceAtLeast(icon.height)
+
+        // 基于自适应图标 720px 圆形构图的精准比例
+        val charSize = (size * 820f / 720f).toInt()
+        val charLeft = (-120f / 720f * size).toInt()
+        val charTop = (-10f / 720f * size).toInt()
+        val offset = 175f / 720f * size
+
+        // 圆形裁切舞台：确保人物进入和超出边缘时严格遵循圆弧轮廓，杜绝直角切边断头
+        val stage = FrameLayout(splash.context).apply {
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
@@ -70,28 +86,71 @@ object SplashExitAnimator {
                 }
             }
         }
-        val params = FrameLayout.LayoutParams(icon.width, icon.height).apply {
+
+        // 底图层：包含终端窗口与 >_ 提示符
+        val backdrop = ImageView(splash.context).apply {
+            setImageResource(R.drawable.splash_icon_backdrop)
+            scaleType = ImageView.ScaleType.FIT_XY
+        }
+
+        // 人物层：原版高清 PNG，初始置于左下探头偏移行程
+        val character = ImageView(splash.context).apply {
+            setImageResource(R.drawable.launcher_character)
+            scaleType = ImageView.ScaleType.FIT_XY
+            translationX = -offset
+            translationY = offset
+        }
+
+        stage.addView(backdrop, FrameLayout.LayoutParams(size, size))
+        stage.addView(
+            character,
+            FrameLayout.LayoutParams(charSize, charSize).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = charLeft
+                topMargin = charTop
+            }
+        )
+
+        // 精确对齐系统 iconView 的屏幕坐标
+        val locIcon = IntArray(2)
+        val locContainer = IntArray(2)
+        icon.getLocationInWindow(locIcon)
+        container.getLocationInWindow(locContainer)
+        val stageLeft = locIcon[0] - locContainer[0]
+        val stageTop = locIcon[1] - locContainer[1]
+
+        val params = FrameLayout.LayoutParams(size, size).apply {
             gravity = Gravity.TOP or Gravity.START
-            leftMargin = if (icon.parent === splash) icon.left else (splash.width - icon.width) / 2
-            topMargin = if (icon.parent === splash) icon.top else (splash.height - icon.height) / 2
+            leftMargin = if (stageLeft > 0 || stageTop > 0) stageLeft else (container.width - size) / 2
+            topMargin = if (stageLeft > 0 || stageTop > 0) stageTop else (container.height - size) / 2
         }
-        // provider.view 声明为 View，实际是容器；叠舞台前收窄成 ViewGroup
-        val container = splash as? ViewGroup
-        if (container == null) {
-            provider.remove()
-            return
-        }
+
         container.addView(stage, params)
         icon.visibility = View.INVISIBLE
-        stageDrawable.start()
 
-        // AVD 播完先静止一拍再淡出：回中构图与静态图标相同，淡出即自然交接到应用内容
-        stage.postDelayed({
+        // 斜向自左下往右上弹入目标位置
+        val animator = AnimatorSet().apply {
+            duration = ANIMATION_DURATION_MS
+            interpolator = OvershootInterpolator(OVERSHOOT_TENSION)
+            playTogether(
+                ObjectAnimator.ofFloat(character, View.TRANSLATION_X, -offset, 0f),
+                ObjectAnimator.ofFloat(character, View.TRANSLATION_Y, offset, 0f),
+            )
+        }
+
+        animator.doOnEnd {
             splash.animate()
                 .alpha(0f)
                 .setDuration(FADE_DURATION_MS)
-                .withEndAction { provider.remove() }
+                .withEndAction {
+                    try {
+                        provider.remove()
+                    } catch (_: Throwable) {
+                    }
+                }
                 .start()
-        }, AVD_DURATION_MS)
+        }
+
+        animator.start()
     }
 }

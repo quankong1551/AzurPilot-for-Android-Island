@@ -12,7 +12,7 @@
     -->
     <style name="Theme.AzurPilotApp.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/ic_launcher_base</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_avd</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_starting</item>
         <item name="postSplashScreenTheme">@style/Theme.AzurPilotApp</item>
     </style>
 </resources>
