@@ -18,6 +18,7 @@ import com.azurpilot.ghio.keepalive.KeepAliveManager
 import com.azurpilot.ghio.settings.AppSettingsGateway
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.report.DeviceReportClient
+import com.azurpilot.ghio.ui.shortcut.ShortcutRequests
 import com.azurpilot.ghio.update.AppUpdateManager
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -83,4 +84,5 @@ val coreModule = module {
     single { KeepAliveManager(androidContext(), get(), get(named<AppCoroutineScope>())) }
     single { AppLockManager(get()) }
     single<LicenseRepository> { AssetLicenseRepository(androidContext()) }
+    single { ShortcutRequests() }
 }

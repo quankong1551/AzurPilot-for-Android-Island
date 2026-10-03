@@ -53,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -102,6 +101,7 @@ import com.azurpilot.ghio.ui.components.ShizukuReadinessDialog
 import com.azurpilot.ghio.ui.hangar.HangarScreen
 import com.azurpilot.ghio.ui.navigation.Routes
 import com.azurpilot.ghio.ui.screen.ScreenPage
+import com.azurpilot.ghio.ui.shortcut.ShortcutRequests
 import com.azurpilot.ghio.ui.logs.AzurPilotErrorDetailScreen
 import com.azurpilot.ghio.ui.logs.AzurPilotLogDetailScreen
 import com.azurpilot.ghio.ui.logs.AzurPilotLogScreen
@@ -151,29 +151,6 @@ private enum class TopDestination(
     // （pager 会预组合相邻页，主页的邻居只该是 AzurPilot）
     Screen(R.string.nav_screen, Icons.Outlined.PhoneAndroid, Icons.Filled.PhoneAndroid),
 }
-
-/**
- * 拦截二级页面盖在主 tab 之上时落到这层的指针输入
- *
- * 主 tab 那层还活着只是被盖住，不截断命中测试就能隔着二级页横滑切页、点到底栏
- *
- * Consumes every pointer event reaching this modifier while a second-level page
- * overlays the main tabs.
- *
- * The main-tab layer stays alive underneath, merely covered: without cutting off hit
- * testing here, pager swipes and bottom-bar taps would act through the second-level
- * page.
- */
-@Composable
-private fun Modifier.subPageOverlayInput(): Modifier = this
-    .pointerInput(Unit) {
-        awaitPointerEventScope {
-            // Main pass 排在子节点之后，二级页自己的手势先走，这里只收剩下的
-            while (true) {
-                awaitPointerEvent().changes.forEach { it.consume() }
-            }
-        }
-    }
 
 /**
  * 拉起应用根 Composable：组装主题、应用锁、导航与全局对话框，是整个 UI 树的入口
@@ -502,6 +479,9 @@ fun AppRoot(
          */
         fun goToPage(index: Int) {
             selectedPage = index
+            // 二级页已降为普通页面（不再遮底栏）：从二级页直接切 tab 时先把 NavHost
+            // 弹回主 tab 根路由，否则旧二级页会继续盖在新 tab 的内容区上
+            if (onSubPage) navController.popBackStack(Routes.HANGAR, inclusive = false)
             scope.launch {
                 val touchesScreen = index == TopDestination.Screen.ordinal ||
                     pagerState.currentPage == TopDestination.Screen.ordinal
@@ -510,6 +490,23 @@ fun AppRoot(
                 } else {
                     pagerState.animateScrollToPage(index)
                 }
+            }
+        }
+
+        // 桌面快捷方式的跳转请求：MainActivity 收到后登记到总线，这里消费。
+        // 部署门未放行或应用锁未解时先挂着（NavHost 未组合时 navigate 会炸，
+        // 锁定状态下也不该在遮罩背后偷偷换页），就绪后收集器一起来就补执行
+        val shortcutRequests: ShortcutRequests = koinInject()
+        LaunchedEffect(showProvision, isAppLocked) {
+            if (showProvision || isAppLocked) return@LaunchedEffect
+            shortcutRequests.requests.collect { id ->
+                when (id) {
+                    ShortcutRequests.OPEN_SCREEN -> goToPage(TopDestination.Screen.ordinal)
+                    ShortcutRequests.OPEN_RUNNER_LOG -> navController.navigate(Routes.AZURPILOT_LOG) {
+                        launchSingleTop = true
+                    }
+                }
+                shortcutRequests.consume()
             }
         }
 
@@ -611,8 +608,12 @@ fun AppRoot(
                 }
                 HorizontalPager(
                     state = pagerState,
-                    // AzurPilot 页内网页手势不与切页冲突；其余页面允许手势滑动
-                    userScrollEnabled = TopDestination.entries[pagerState.currentPage] != TopDestination.AzurPilot,
+                    // 整页横滑一律禁用：切页手势与页内竖向列表同链竞争轴锁（按哪个轴先过
+                    // touch slop 判定），慢速斜拖时横向漂移有概率先过 slop，拖动被 pager
+                    // 截走，表现为「慢滑有概率无效、只有快滑才动」——AzurPilot 页此前已
+                    // 单独禁用，其余页同样中招，索性全禁。pager 只当页面容器用（预组合
+                    // 相邻页 + rememberSaveable 保状态），切页唯一入口是底栏
+                    userScrollEnabled = false,
                     beyondViewportPageCount = 1,
                     modifier = Modifier.weight(1f),
                 ) { page ->
@@ -644,13 +645,19 @@ fun AppRoot(
             }
         }
 
-        // 二级页面自成一层：留在 Scaffold 体内会被底栏从高度里扣掉一截，盖不住它；
-        // inset 也随之归各页自己吃
-        // imePadding 排在指针修饰符之后，命中区仍是整屏，只有内容被压
+        // 二级页不再全屏接管：只让出底栏高度，底栏在二级页上仍然可见可点，
+        // 二级页由此成为与主 tab 同级的普通页面（从二级页点底栏可直切其他 tab）。
+        // 状态栏 inset 依旧归各页顶栏自己吃（顶栏垫进状态栏底下），这里只垫底栏；
+        // 让出的高度要同步声明为已消费 inset，否则页内 imePadding 会把它重复算一遍
+        // 不再挂指针拦截层：对祖先节点的全量 consume 会杀死子级慢速拖动（快甩没事、
+        // 慢滑全灭，真机实测）；它防的横滑切页与底栏穿透如今均不存在——pager 横滑已
+        // 全局禁用，命中测试也会剪掉被盖住的兄弟层，二级页空白处点击不会落到下层
+        val subPageBottomInset = if (isLandscape) 0.dp else bottomBarHeight
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (onSubPage) Modifier.subPageOverlayInput() else Modifier)
+                .padding(bottom = subPageBottomInset)
+                .consumeWindowInsets(WindowInsets(bottom = subPageBottomInset))
                 .imePadding(),
         ) {
             NavHost(
@@ -785,12 +792,13 @@ fun AppRoot(
             }
         }
 
-        // 挂在二级页面之上，否则整屏的二级页一盖，snackbar 就没人看得见
+        // 押在最外层：二级页仍在它底下，消息不会被页面盖住；二级页不遮底栏后，
+        // portrait 下 snackbar 恒按底栏高度让位
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (onSubPage || isLandscape) 0.dp else bottomBarHeight),
+                .padding(bottom = if (isLandscape) 0.dp else bottomBarHeight),
         )
 
         // 全屏预览宿主已随虚屏画面一并移除：native 预览是旁路分叉，拆掉不影响截图/识别

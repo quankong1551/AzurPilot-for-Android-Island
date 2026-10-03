@@ -86,6 +86,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              桌面长按快捷方式的隐式入口：shortcuts.xml 的 intent 不写 targetPackage，
+              applicationId 会被构建 profile 追加后缀（基准测试还有 .benchmark 变体），
+              写死包名会指错目标，按 action 匹配则包名怎么变都能命中
+            -->
+            <intent-filter>
+                <action android:name="com.azurpilot.ghio.action.SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- 静态快捷方式清单：长按桌面图标时由桌面读取 -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!-- API 32- 的 per-app locale 由 appcompat 持久化并在 Activity 附着前回放（33+ 走系统） -->
