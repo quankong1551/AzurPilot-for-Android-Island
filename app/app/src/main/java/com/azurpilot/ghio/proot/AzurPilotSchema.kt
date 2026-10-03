@@ -134,13 +134,6 @@ class AzurPilotSchema(
     private val translations: Map<String, ApValue>,
 ) {
 
-    /**
-     * 任务是否可单独运行（`tasks.run` 的合法名字集合）
-     *
-     * Tasks runnable on their own (the legal name set of `tasks.run`).
-     */
-    val runnableTasks: Set<String> = menu.flatMapTo(LinkedHashSet()) { it.tasks }
-
     /** 工具页里的任务集合 / The set of tasks living on tool pages. */
     val toolTasks: Set<String> = menu.filter { it.isTool }.flatMapTo(LinkedHashSet()) { it.tasks }
 
@@ -226,14 +219,6 @@ class AzurPilotSchema(
 
     /** 菜单标题 / A menu's title. */
     fun menuTitle(menu: String): String = translateOr("Menu.$menu.name", menu)
-
-    /**
-     * 部署设置（`Gui.DeploySetting.*`）不在 schema 里，单独走这个取词器
-     *
-     * Deploy settings (`Gui.DeploySetting.*`) live outside the schema; they
-     * resolve through this dedicated accessor.
-     */
-    fun translateGui(path: String): String = translate(path)
 
     companion object {
         /**

@@ -188,24 +188,6 @@ fun ApErrorState(message: String, onRetry: (() -> Unit)? = null) {
 }
 
 /**
- * 小圆点：状态在列表里靠它一眼分辨，不靠读文字
- *
- * A small dot: status is told apart at a glance inside lists, without reading
- * any text.
- *
- * @param color 状态语义色 / the status's semantic color
- * @param modifier 应用于圆点的修饰符 / the modifier applied to the dot
- */
-@Composable
-fun ApStatusDot(color: Color, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(AppTokens.Indicator.dot)
-            .background(color, CircleShape),
-    )
-}
-
-/**
  * 状态标签：把一句话压成一个可扫的色块
  *
  * A status pill: a sentence compressed into one scannable colored chip.

@@ -1,14 +1,9 @@
 package com.azurpilot.ghio.third.wrappers
 
 import android.annotation.SuppressLint
-import android.content.Context
-import android.hardware.camera2.CameraManager
 import android.os.IBinder
 import android.os.IInterface
 
-import com.azurpilot.ghio.third.FakeContext
-
-import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 
 /**
@@ -53,9 +48,7 @@ object ServiceManager {
     private var displayManager: DisplayManager? = null
     private var inputManager: InputManager? = null
     private var powerManager: PowerManager? = null
-    private var statusBarManager: StatusBarManager? = null
     private var activityManager: ActivityManager? = null
-    private var cameraManager: CameraManager? = null
 
     /**
      * 按名取 binder 服务并包成 [IInterface]
@@ -110,44 +103,11 @@ object ServiceManager {
         return powerManager!!
     }
 
-    /** 懒加载 [StatusBarManager] 包装 / Lazily creates the [StatusBarManager] wrapper. */
-    fun getStatusBarManager(): StatusBarManager {
-        if (statusBarManager == null) {
-            statusBarManager = StatusBarManager.create()
-        }
-        return statusBarManager!!
-    }
-
     /** 懒加载 [ActivityManager] 包装 / Lazily creates the [ActivityManager] wrapper. */
     fun getActivityManager(): ActivityManager {
         if (activityManager == null) {
             activityManager = ActivityManager.create()
         }
         return activityManager!!
-    }
-
-    /**
-     * 懒加载真实 [CameraManager] 实例
-     *
-     * CameraManager 不走 binder 直取，而是用隐藏 `CameraManager(Context)`
-     * 构造器配 [FakeContext] 实例化；失败抛 [AssertionError]。
-     *
-     * Lazily creates a real [CameraManager] instance.
-     *
-     * CameraManager is not fetched as a raw binder; instead the hidden
-     * `CameraManager(Context)` constructor is instantiated with [FakeContext].
-     * Failure raises [AssertionError].
-     */
-    fun getCameraManager(): CameraManager {
-        if (cameraManager == null) {
-            try {
-                val ctor: Constructor<CameraManager> = CameraManager::class.java
-                    .getDeclaredConstructor(Context::class.java)
-                cameraManager = ctor.newInstance(FakeContext.get())
-            } catch (e: Exception) {
-                throw AssertionError(e)
-            }
-        }
-        return cameraManager!!
     }
 }

@@ -69,16 +69,6 @@ class AppLockManager(
     }
 
     /**
-     * 判断当前是否可直接通行：无需验证，或已解锁
-     * Whether the app can be entered right away: lock not required, or
-     * already unlocked.
-     */
-    fun canAccess(context: Context): Boolean {
-        if (!isLockRequired(context)) return true
-        return _isUnlocked.value
-    }
-
-    /**
      * 标记为已解锁 / Marks the app as unlocked.
      */
     fun markUnlocked() {

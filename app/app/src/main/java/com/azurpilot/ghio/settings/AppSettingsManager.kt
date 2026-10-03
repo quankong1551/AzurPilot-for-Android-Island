@@ -224,11 +224,6 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
         context.dataStore.edit { it[skipShizukuCheck] = skip.toString() }
     }
 
-    /** 写入 Shizuku 管理器包名 / Writes the Shizuku manager package name. */
-    suspend fun setShizukuLaunchPackage(packageName: String) = with(AppSettingsSchema) {
-        context.dataStore.edit { it[shizukuLaunchPackage] = packageName }
-    }
-
     override suspend fun setRunMode(mode: RunMode): Unit = with(AppSettingsSchema) {
         context.dataStore.edit { it[runMode] = mode.name }
     }

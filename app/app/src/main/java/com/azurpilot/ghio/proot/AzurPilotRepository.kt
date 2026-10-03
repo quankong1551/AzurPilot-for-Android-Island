@@ -648,25 +648,6 @@ class AzurPilotRepository(
         }
     }
 
-    /**
-     * 列出可导入的配置文件（网关回的是裸数组）
-     *
-     * Lists the importable config files (the gateway answers with a bare
-     * array). IO 调度器上执行 / Runs on the IO dispatcher.
-     */
-    suspend fun importableFiles(): List<AzurPilotImportable> =
-        when (val reply = gateway.call("instances.importable")) {
-            // 同样是裸数组
-            is AzurPilotGateway.Reply.Ok -> reply.array?.let { array ->
-                List(array.length()) { index ->
-                    val item = array.optJSONObject(index) ?: return@List null
-                    AzurPilotImportable(item.optString("name"), item.optDouble("modified"))
-                }.filterNotNull()
-            }.orEmpty()
-
-            else -> emptyList()
-        }
-
     /** 导入一份配置文件内容；成功后回调拿到实例名 / Imports one config file's content; the callback receives the instance name on success. */
     fun importConfig(name: String, content: String, onImported: (String) -> Unit = {}) {
         scope.launch(AppDispatchers.IO) {
@@ -686,16 +667,6 @@ class AzurPilotRepository(
      * revision). IO 调度器上执行 / Runs on the IO dispatcher.
      */
     suspend fun exportConfig(instance: String): AzurPilotConfig? =
-        (gateway.call("config.get", JSONObject().put("instance", instance)) as? AzurPilotGateway.Reply.Ok)
-            ?.obj?.let(::parseConfig)
-
-    /**
-     * 拉一份实例配置；不触发界面状态，编辑器与导出共用
-     *
-     * Fetches one instance's config; touches no UI state, shared by the editor
-     * and export. IO 调度器上执行 / Runs on the IO dispatcher.
-     */
-    suspend fun loadConfig(instance: String): AzurPilotConfig? =
         (gateway.call("config.get", JSONObject().put("instance", instance)) as? AzurPilotGateway.Reply.Ok)
             ?.obj?.let(::parseConfig)
 
@@ -819,37 +790,6 @@ class AzurPilotRepository(
                 }.filterNotNull()
             }.orEmpty(),
         )
-        )
-    }
-
-    /**
-     * 拉单资源的历史曲线
-     *
-     * Fetches one resource's historical curve. IO 调度器上执行 / Runs on the IO dispatcher.
-     */
-    suspend fun statisticsResources(resource: String, days: Int): Result<AzurPilotStatistics> {
-        val instance = _selectedInstance.value
-            ?: return Result.failure(AzurPilotException("NOT_FOUND", "未选择实例"))
-        val params = JSONObject().put("instance", instance).put("resource", resource).put("days", days)
-        val reply = gateway.call("statistics.resources", params)
-        if (reply !is AzurPilotGateway.Reply.Ok) return reply.asFailure()
-        val data = reply.obj
-        return Result.success(
-            AzurPilotStatistics(
-                instance = data.optString("instance"),
-                resource = data.optString("resource"),
-                points = data.optJSONArray("points")?.let { points ->
-                    List(points.length()) { index ->
-                        val point = points.optJSONObject(index) ?: return@List null
-                        AzurPilotStatPoint(
-                            time = point.optString("time"),
-                            value = (point.opt("value") as? Number)?.toDouble() ?: 0.0,
-                            source = null,
-                        )
-                    }.filterNotNull()
-                }.orEmpty(),
-                truncated = data.optBoolean("truncated"),
-            )
         )
     }
 

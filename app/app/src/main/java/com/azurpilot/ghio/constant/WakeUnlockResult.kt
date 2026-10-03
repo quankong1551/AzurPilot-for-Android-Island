@@ -31,7 +31,4 @@ object WakeUnlockResult {
 
     /** 主动上锁失败 / Re-locking the screen failed. */
     const val LOCK_FAILED = 6
-
-    /** IPC 本身失败，只在 app 侧产生 / The IPC itself failed; produced only on the app side. */
-    const val IPC_FAILED = -1
 }

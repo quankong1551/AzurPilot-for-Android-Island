@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
@@ -623,32 +622,3 @@ private fun readOnlyHint(field: AzurPilotField): Boolean = field.readOnly
 
 /** 文本提交的防抖时长（毫秒） / The text-commit debounce, in milliseconds. */
 private const val DEBOUNCE_MS = 600L
-
-/**
- * 未连接的提示条：网关掉线时说明为什么内容不刷新
- *
- * The offline banner: explains why content stops refreshing when the gateway
- * drops.
- *
- * @param modifier 应用于提示条的修饰符 / the modifier applied to the banner
- */
-@Composable
-fun ApOfflineNotice(modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.sm),
-    ) {
-        Icon(
-            imageVector = Icons.Filled.CloudOff,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(AppTokens.IconSize.md),
-        )
-        Text(
-            text = stringResource(R.string.ap_offline),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-        )
-    }
-}

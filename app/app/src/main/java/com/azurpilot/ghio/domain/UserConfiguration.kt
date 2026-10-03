@@ -52,7 +52,7 @@ data class UserConfiguration(
     val configurations: List<RunConfiguration> = emptyList(),
     /** 激活中的运行配置 id；null = 无激活 / The active run configuration id; null = none active. */
     val activeConfigurationId: RunConfigurationId? = null,
-    /** 已展示过 welcome 的指纹，见 [ProjectMetadata.welcomeFingerprint] / The fingerprint of the already-shown welcome, see [ProjectMetadata.welcomeFingerprint]. */
+    /** 已展示过 welcome 的指纹 / The fingerprint of the already-shown welcome. */
     val welcomeFingerprint: String? = null,
 ) {
     /** 按 id 查运行配置；id 为 null 或未命中返回 null / Finds a run configuration by id; null for a null id or a miss. */

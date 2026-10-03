@@ -125,13 +125,6 @@ data class AzurPilotConfig(
 )
 
 /**
- * 一次 `config.patch` 的单项变更；路径恒为 `Task.Group.Argument`
- *
- * One change within a `config.patch`; the path is always `Task.Group.Argument`.
- */
-data class AzurPilotChange(val path: String, val value: ApValue)
-
-/**
  * 日志板的一条增量；[id] 单调递增，去重与游标推进都靠它
  *
  * One incremental log entry; the monotonically increasing [id] drives both
@@ -251,15 +244,7 @@ data class AzurPilotUpdateStatus(
     val canCancel: Boolean,
     val error: String,
     val managedByAndroid: Boolean,
-) {
-    /**
-     * 是否存在待更新：显式 available，或落后上游
-     *
-     * True when an update is pending: either explicitly available or behind
-     * upstream.
-     */
-    val hasUpdate: Boolean get() = available || behind > 0
-}
+)
 
 /**
  * 更新页的一条提交记录
@@ -385,19 +370,6 @@ data class AzurPilotStatsQuery(
 )
 
 /**
- * `statistics.resources` 的单资源曲线；[truncated] 为真表示网关截断了历史
- *
- * One resource's curve from `statistics.resources`; [truncated] means the
- * gateway trimmed the history.
- */
-data class AzurPilotStatistics(
-    val instance: String,
-    val resource: String,
-    val points: List<AzurPilotStatPoint>,
-    val truncated: Boolean,
-)
-
-/**
  * 指挥喵的一条天赋；[inferred] 为真表示等级是推断值而非直接读到的
  *
  * One meowfficer talent; [inferred] marks a level deduced rather than read
@@ -464,17 +436,3 @@ data class AzurPilotDiagnostic(
  * [diagnostics] with positions.
  */
 data class AzurPilotShopValidation(val valid: Boolean, val diagnostics: List<AzurPilotDiagnostic>)
-
-/**
- * 可导入的配置文件（`config/import` 下的 json）
- *
- * An importable config file (a json under `config/import`).
- */
-data class AzurPilotImportable(val name: String, val modified: Double)
-
-/**
- * 网关上跑着的一个工具任务
- *
- * A tool task running on the gateway.
- */
-data class AzurPilotToolInfo(val name: String?, val alive: Boolean)

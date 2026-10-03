@@ -72,47 +72,6 @@ data class Size(val width: Int, val height: Int) {
         return Size(w, h)
     }
 
-    /**
-     * 把两边都取整到 8 的倍数（多数编码器要求），尽量保持长宽比
-     *
-     * 长边向下取整（不超出原始分辨率），短边就近取整（减小长宽比失真），
-     * 取整后短边不得大于长边。
-     *
-     * Rounds both dimensions to a multiple of 8 (as required by many encoders),
-     * preserving the aspect ratio as far as possible.
-     *
-     * The major dimension rounds down (never exceeding the initial size), the
-     * minor one to the nearest multiple (minimizing aspect ratio distortion);
-     * after rounding the minor side never exceeds the major one.
-     *
-     * @return 已对齐的尺寸；本来就是 8 的倍数时返回自身 / the aligned size; this
-     *   when already a multiple of 8
-     */
-    fun round8(): Size {
-        if (isMultipleOf8()) {
-            return this
-        }
-
-        val portrait = height > width
-        var major = if (portrait) height else width
-        var minor = if (portrait) width else height
-
-        major = major and 7.inv() // 向下取整，不超出原始尺寸
-        minor = (minor + 4) and 7.inv() // 就近取整，减小长宽比失真
-        if (minor > major) {
-            minor = major
-        }
-
-        val w = if (portrait) minor else major
-        val h = if (portrait) major else minor
-        return Size(w, h)
-    }
-
-    /** 两边是否都是 8 的倍数 / Whether both dimensions are multiples of 8. */
-    fun isMultipleOf8(): Boolean {
-        return (width and 7) == 0 && (height and 7) == 0
-    }
-
     /** 转为原点在左上角、覆盖整个尺寸的 [Rect] / Converts to a [Rect] covering the whole size from the top-left origin. */
     fun toRect(): Rect {
         return Rect(0, 0, width, height)

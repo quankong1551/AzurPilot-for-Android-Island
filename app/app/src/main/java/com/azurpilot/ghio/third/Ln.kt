@@ -73,24 +73,6 @@ object Ln {
     }
 
     /**
-     * 设置日志级别阈值
-     *
-     * 须在启动任何新线程之前调用：[threshold] 是普通变量（无同步），晚于读线程
-     * 写入时新线程可能永远看不到新值。
-     *
-     * Sets the log level threshold.
-     *
-     * Must be called before starting any new thread: [threshold] is a plain
-     * (unsynchronized) variable, so a thread started before the write may never
-     * observe the new value.
-     *
-     * @param level 新阈值 / the new threshold
-     */
-    fun initLogLevel(level: Level) {
-        threshold = level
-    }
-
-    /**
      * 查询某级别当前是否会被输出 / Returns whether the given level currently passes the threshold.
      */
     fun isEnabled(level: Level): Boolean {

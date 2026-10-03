@@ -47,9 +47,6 @@ object RootManager : RemoteAccessPermissionBackend {
         )
     }
 
-    /** 与 [isGranted] 等价的别名 / alias equivalent to [isGranted] */
-    fun checkPermissionGranted(): Boolean = isGranted()
-
     /**
      * libsu 报告的 root 状态：isAppGrantedRoot，或缓存 shell 自报 root
      *
@@ -61,9 +58,6 @@ object RootManager : RemoteAccessPermissionBackend {
             Shell.isAppGrantedRoot() == true || Shell.getCachedShell()?.isRoot == true
         }.getOrDefault(false)
     }
-
-    /** 与 [isAvailable] 等价的别名 / alias equivalent to [isAvailable] */
-    fun isRootAvailable(): Boolean = isAvailable()
 
     /**
      * 已授权即视为可用；否则沿 PATH 逐项找可执行的 `su`
@@ -99,20 +93,6 @@ object RootManager : RemoteAccessPermissionBackend {
         }.getOrDefault(false)
         notifyStateChanged()
         granted
-    }
-
-    /**
-     * 确保 root 授权到手后执行 [action]
-     *
-     * Runs [action] once the root grant is secured.
-     *
-     * @throws IllegalStateException 授权拿不到 / the grant cannot be obtained
-     */
-    suspend fun <T> requireRootPermissionGranted(action: suspend () -> T): T {
-        if (!requestPermission()) {
-            throw IllegalStateException("request root permission failed")
-        }
-        return action()
     }
 
     override fun addStateListener(listener: RemoteAccessStateListener) {

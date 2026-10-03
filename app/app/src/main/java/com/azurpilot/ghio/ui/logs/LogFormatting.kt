@@ -24,12 +24,6 @@ import java.util.Locale
 internal fun logTimestamp(atMillis: Long): String = TIMESTAMP.format(Date(atMillis))
 
 /**
- * 返回毫秒时间戳的当日 `HH:mm:ss` 形式 / Returns a millisecond timestamp as the
- * within-day `HH:mm:ss`.
- */
-internal fun logTimeOfDay(atMillis: Long): String = TIME_OF_DAY.format(Date(atMillis))
-
-/**
  * 返回人类可读的体积（B/KB/MB，逐档向下取整） / Returns a human-readable size
  * (B/KB/MB, floor-divided per tier).
  */
@@ -43,4 +37,3 @@ private const val KB = 1024L
 private const val MB = KB * 1024
 
 private val TIMESTAMP = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
-private val TIME_OF_DAY = SimpleDateFormat("HH:mm:ss", Locale.US)

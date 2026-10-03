@@ -57,9 +57,6 @@ import kotlinx.coroutines.delay
  */
 object ApMotion {
 
-    /** MD3 emphasized：标准强调曲线 / MD3 "emphasized": the standard emphasized curve. */
-    val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
     /** MD3 emphasized-decelerate：进场的减速段 / MD3 "emphasized decelerate": the decelerating half of an entrance. */
     val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 
@@ -68,9 +65,6 @@ object ApMotion {
 
     /** MD3 standard：一般过渡曲线，[effects] 的默认档 / MD3 "standard": the general transition curve and the default easing of [effects]. */
     val Standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
-    /** MD3 standard-decelerate / MD3 "standard decelerate". */
-    val StandardDecelerate = CubicBezierEasing(0f, 0f, 0f, 1f)
 
     /** MD3 standard-accelerate / MD3 "standard accelerate". */
     val StandardAccelerate = CubicBezierEasing(0.3f, 0f, 1f, 1f)
@@ -211,8 +205,3 @@ fun Modifier.apEnter(index: Int = 0, enabled: Boolean = true): Modifier {
         translationY = rise
     }
 }
-
-/** 内容切换的淡入淡出：加载态 → 内容 → 空态之间不要硬切 / The fade spec for content swaps (loading → content → empty), so states never hard-cut. */
-@Composable
-fun apCrossFadeSpec(): FiniteAnimationSpec<Float> =
-    ApMotion.effects(ApMotion.Medium2, ApMotion.EmphasizedDecelerate)

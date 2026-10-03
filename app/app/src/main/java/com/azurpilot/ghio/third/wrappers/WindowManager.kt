@@ -67,8 +67,6 @@ class WindowManager private constructor(private val manager: IInterface) {
     private var setForcedDisplaySizeMethod: Method? = null
     private var clearForcedDisplaySizeMethod: Method? = null
 
-    private var syncInputTransactions: Method? = null
-
     /**
      * 懒解析读取屏幕旋转的反射 Method
      *

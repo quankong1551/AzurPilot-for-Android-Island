@@ -41,31 +41,6 @@ object Command {
     }
 
     /**
-     * 执行命令并读取 stdout 的第一行 / Runs a command and reads the first line of its stdout.
-     *
-     * @return stdout 第一行；无任何输出时为 null / the first stdout line, or
-     *   null when the command produced no output
-     * @throws IOException 进程启动失败，或退出码非 0 / the process could not be
-     *   started, or exited with a non-zero code
-     * @throws InterruptedException 等待退出时当前线程被中断 / the current thread
-     *   was interrupted while waiting for the exit
-     */
-    @Throws(IOException::class, InterruptedException::class)
-    fun execReadLine(vararg cmd: String): String? {
-        var result: String? = null
-        val process = Runtime.getRuntime().exec(cmd)
-        val scanner = Scanner(process.inputStream)
-        if (scanner.hasNextLine()) {
-            result = scanner.nextLine()
-        }
-        val exitCode = process.waitFor()
-        if (exitCode != 0) {
-            throw IOException("Command " + cmd.contentToString() + " returned with value " + exitCode)
-        }
-        return result
-    }
-
-    /**
      * 执行命令并读取完整 stdout / Runs a command and reads its full stdout.
      *
      * @return stdout 全文，按行拼接（每行补 `\n`）/ the whole stdout, joined

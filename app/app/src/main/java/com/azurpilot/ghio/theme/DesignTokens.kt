@@ -58,12 +58,6 @@ object AppTokens {
         val lg: Dp = 32.dp
     }
 
-    /** 透明度 / Alpha steps. */
-    object Alpha {
-        /** 锁定时的文字与图标 / Text and icons in the disabled state. */
-        const val disabledContent = 0.4f
-    }
-
     /** 状态指示件：一条状态行的成败靠它在一眼之内分出来 / Status indicators: one glance at a status line must separate success from failure. */
     object Indicator {
         val dot: Dp = 8.dp

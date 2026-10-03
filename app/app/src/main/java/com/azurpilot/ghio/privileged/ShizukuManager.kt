@@ -73,22 +73,6 @@ object ShizukuManager : RemoteAccessPermissionBackend {
     fun isShizukuAvailable(): Boolean = isAvailable()
 
     /**
-     * Shizuku 服务是否以 root 身份运行（uid 0，如 Root 授权启动的 Shizuku 或 Sui）
-     *
-     * Whether the Shizuku service runs as root (uid 0, e.g. Shizuku started
-     * via a root grant, or Sui).
-     */
-    fun isRunningAsRoot(): Boolean {
-        if (!isAvailable()) return false
-        return try {
-            Shizuku.getUid() == 0
-        } catch (e: Exception) {
-            Timber.w(e, "Shizuku.getUid failed")
-            false
-        }
-    }
-
-    /**
      * Shizuku binder 是否可达；未装、未启动或异常都算不可用
      *
      * Whether the Shizuku binder is reachable; not installed, not running, or
@@ -181,21 +165,6 @@ object ShizukuManager : RemoteAccessPermissionBackend {
 
         notifyStateChanged()
         return granted
-    }
-
-    /**
-     * 确保 Shizuku 授权到手后执行 [action]
-     *
-     * Runs [action] once the Shizuku grant is secured.
-     *
-     * @throws IllegalStateException 授权拿不到 / the grant cannot be obtained
-     */
-    suspend fun <T> requireShizukuPermissionGranted(action: suspend () -> T): T {
-        val permission = requestPermission()
-        if (!permission) {
-            throw IllegalStateException("request shizuku permission failed")
-        }
-        return action()
     }
 
     /**

@@ -151,11 +151,11 @@ class FairMemoryAdaptation(private val context: Context) {
     }
 
     /**
-     * 查杀（action=kill）：3 秒硬限内备份现场。本应用的状态（设置、日志、ALAS 场景文件）
+     * 查杀（action=kill）：3 秒硬限内备份现场。本应用的状态（设置、日志、AzurPilot 场景文件）
      * 本就实时落盘，查杀后的拉活自愈由保活体系负责，这里补一条现场记录
      *
      * Pre-kill (action=kill): backs up the scene within the 3-second hard deadline.
-     * This app's state (settings, logs, ALAS scene files) is already persisted to disk
+     * This app's state (settings, logs, AzurPilot scene files) is already persisted to disk
      * in real time and the keep-alive system handles post-kill recovery, so this only
      * records a scene log entry.
      */

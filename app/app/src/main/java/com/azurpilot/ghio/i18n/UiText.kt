@@ -119,23 +119,6 @@ fun uiTextFromFramework(raw: String?): UiText = verbatimOrEmpty(raw)
 fun uiTextFormatted(value: String?): UiText = verbatimOrEmpty(value)
 
 /**
- * 顺序拼接若干 [UiText]，可带分隔符；[UiText.Empty] 部件被剔除
- * Joins several [UiText] in order with a separator; [UiText.Empty] parts are
- * dropped.
- */
-fun uiTextJoin(vararg parts: UiText, separator: String = ""): UiText =
-    UiText.Joined(
-        parts = parts.filterNot { it is UiText.Empty },
-        // 不能走 verbatimOrEmpty：分隔符常是纯空白，那个会把它判成 Empty
-        separator = if (separator.isEmpty()) UiText.Empty else UiText.Verbatim(separator),
-    )
-
-/**
- * 多行拼接，以换行符分隔 / Joins lines with newline separators.
- */
-fun uiTextLines(vararg lines: UiText): UiText = uiTextJoin(*lines, separator = "\n")
-
-/**
  * 在给定 context 下解析为成品文本；null 与 [UiText.Empty] 得到空串
  * Resolves into final text under the given context; null and [UiText.Empty]
  * yield the empty string.

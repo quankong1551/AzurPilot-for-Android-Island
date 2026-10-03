@@ -427,11 +427,6 @@ object RemoteServiceManager : PrivilegedServicePort {
         return if (current is ServiceState.Connected) current.service else null
     }
 
-    /** 当前已连接的后端；未连接返回 null / the currently connected backend; null when not connected */
-    fun connectedBackendOrNull(): RemoteBackend? =
-        if (_state.value is ServiceState.Connected) boundBackend else null
-
-
     /**
      * 确保授权与连接就绪后，把服务面交给 [action]
      *

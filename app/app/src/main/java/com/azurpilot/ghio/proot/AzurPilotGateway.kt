@@ -275,10 +275,6 @@ class AzurPilotGateway(private val scope: CoroutineScope) {
     suspend fun request(method: String, params: JSONObject = JSONObject()): JSONObject? =
         (call(method, params) as? Reply.Ok)?.obj
 
-    /** 结果本身是值的调用（裸数组）走这个 / For calls whose result is the value itself (bare arrays). */
-    suspend fun callRaw(method: String, params: JSONObject = JSONObject()): ApValue =
-        (call(method, params) as? Reply.Ok)?.raw
-
     /**
      * 建连，并**挂起直到这条连接结束**；返回期间是否真的建立过会话
      *

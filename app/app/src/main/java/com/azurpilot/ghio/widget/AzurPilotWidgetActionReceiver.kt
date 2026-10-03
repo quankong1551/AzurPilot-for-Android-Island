@@ -78,12 +78,12 @@ class AzurPilotWidgetActionReceiver : BroadcastReceiver() {
 
         if (isAlive) {
             // 正在运行 -> 停止
-            Timber.i("Widget action: Stopping ALAS runner")
+            Timber.i("Widget action: Stopping AzurPilot runner")
             runController.stopRunner()
             AzurPilotWidgetUpdater.updateAll(context)
         } else {
             // 未运行 -> 启动
-            Timber.i("Widget action: Starting ALAS runner")
+            Timber.i("Widget action: Starting AzurPilot runner")
             // 关键：第一时间以用户交互豁免提升为前台服务
             RunForegroundService.start(context)
 
