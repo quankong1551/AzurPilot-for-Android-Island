@@ -1,8 +1,0 @@
-elapsed_s,wall,ps_app_uid,cgroup_phantom,app_pid,proot_pid,busybox,ams_phantom_records,guest_last
-0,20:40:35,52,51,12321,12398,50,0,"[GUEST] GUEST_SPAWNED=48"
-20,20:40:56,52,51,12321,12398,50,0,"[GUEST] GUEST_ALIVE=48/48 ts=1789476052"
-40,20:41:16,52,51,12321,12398,50,0,"[GUEST] GUEST_ALIVE=48/48 ts=1789476068"
-60,20:41:37,32,31,12321,none,31,31,"[PHANTOM] PROOT_EXIT=137 after 41s"
-80,20:41:55,32,31,12321,none,31,31,""
-100,20:42:16,32,31,12321,none,31,31,""
-120,20:42:36,32,31,12321,none,31,31,""
