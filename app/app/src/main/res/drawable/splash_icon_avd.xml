@@ -10,14 +10,14 @@
         <objectAnimator android:duration="700">
             <propertyValuesHolder android:propertyName="translateX" android:valueType="floatType">
                 <keyframe android:valueType="floatType" android:fraction="0" android:value="0"/>
-                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="-220"
+                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="-140"
                     android:interpolator="@android:interpolator/accelerate_quad"/>
                 <keyframe android:valueType="floatType" android:fraction="1" android:value="0"
                     android:interpolator="@anim/splash_peek_overshoot"/>
             </propertyValuesHolder>
             <propertyValuesHolder android:propertyName="translateY" android:valueType="floatType">
                 <keyframe android:valueType="floatType" android:fraction="0" android:value="0"/>
-                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="88"
+                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="55"
                     android:interpolator="@android:interpolator/accelerate_quad"/>
                 <keyframe android:valueType="floatType" android:fraction="1" android:value="0"
                     android:interpolator="@anim/splash_peek_overshoot"/>
