@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  启动画面图标动画：人物从圆心先探出到遮罩左下边缘（帧 0 与静态基态一致，衔接无跳变），
+  再用过冲插值器弹回圆心。API 31+ 由系统在启动画面期间自动播放本 AVD；旧系统由
+  SplashExitAnimator 在退出阶段补播同一份 AVD。人物基态即居中构图，静态回退不破相。
+-->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/splash_icon_scene">
+    <target android:name="character">
+        <objectAnimator android:duration="700">
+            <propertyValuesHolder android:propertyName="translateX" android:valueType="floatType">
+                <keyframe android:valueType="floatType" android:fraction="0" android:value="0"/>
+                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="-220"
+                    android:interpolator="@android:interpolator/accelerate_quad"/>
+                <keyframe android:valueType="floatType" android:fraction="1" android:value="0"
+                    android:interpolator="@anim/splash_peek_overshoot"/>
+            </propertyValuesHolder>
+            <propertyValuesHolder android:propertyName="translateY" android:valueType="floatType">
+                <keyframe android:valueType="floatType" android:fraction="0" android:value="0"/>
+                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="88"
+                    android:interpolator="@android:interpolator/accelerate_quad"/>
+                <keyframe android:valueType="floatType" android:fraction="1" android:value="0"
+                    android:interpolator="@anim/splash_peek_overshoot"/>
+            </propertyValuesHolder>
+            <propertyValuesHolder android:propertyName="rotation" android:valueType="floatType">
+                <keyframe android:valueType="floatType" android:fraction="0" android:value="0"/>
+                <keyframe android:valueType="floatType" android:fraction="0.28" android:value="-6"
+                    android:interpolator="@android:interpolator/accelerate_quad"/>
+                <keyframe android:valueType="floatType" android:fraction="1" android:value="0"
+                    android:interpolator="@anim/splash_peek_overshoot"/>
+            </propertyValuesHolder>
+        </objectAnimator>
+    </target>
+</animated-vector>
