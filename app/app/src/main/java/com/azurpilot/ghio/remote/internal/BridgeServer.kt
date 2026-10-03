@@ -248,6 +248,9 @@ object BridgeServer {
                     .put("height", cfg.height)
                     .put("channels", 3)
                     .put("length", bytes.size)
+                    // 本轮帧缓冲生命周期内的帧序号：客户端比对相邻 screencap 的值即可识别
+                    // 画面冻结（进程被 ROM 冻结时值不再增长）
+                    .put("frames", NativeBridgeLib.getFrameCount())
             )
             conn.sendRaw(bytes)
         }

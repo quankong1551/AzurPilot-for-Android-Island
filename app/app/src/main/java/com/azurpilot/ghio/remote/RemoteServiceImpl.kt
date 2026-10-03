@@ -224,6 +224,8 @@ class RemoteServiceImpl : RemoteService.Stub() {
                 PowerController.startUserActivityKeepAlive(displayId)
                 // 屏建好了才可能跑自动化，SDK 弹页盯防随之启动
                 SdkTaskRepatriator.start()
+                // 目标盯防（漂移拉回 / 帧停滞踢活）随之启动，漏起则 stopWatching 悬空
+                AppWatchdog.startWatching()
             }
         }
 

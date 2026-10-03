@@ -24,7 +24,7 @@
 | 方法 | 必填字段 | 成功响应 | 约束 |
 |---|---|---|---|
 | `ping` | 无 | `ok`、`pong`、`displayId`、`capture`、`uptime` | 诊断端点，不表示目标应用已经可交互。 |
-| `screencap` | 无 | `ok`、`width`、`height`、`channels=3`、`length`，后接 BGR888 字节 | 捕获不可用或尺寸不匹配时返回错误 JSON，不发送原始字节。 |
+| `screencap` | 无 | `ok`、`width`、`height`、`channels=3`、`length`、`frames`，后接 BGR888 字节 | 捕获不可用或尺寸不匹配时返回错误 JSON，不发送原始字节。`frames` 是本轮帧缓冲生命周期内已发布帧的递增序号：相邻两次 screencap 的值不变即画面冻结（如目标进程被 ROM 冻结）。客户端可忽略该字段。 |
 | `click` | `x`、`y` | `ok=true` | 使用当前虚拟显示；无活动显示或触摸注入失败时返回错误。 |
 | `swipe` | `x1`、`y1`、`x2`、`y2` | `ok=true` | 可选 `duration` 为毫秒，负值按 0 处理。 |
 | `shell` | `cmd` | `ok`、`code`、`stdout`、`stderr` | 可选 `timeout` 为秒；每个输出流最多保留 64 KiB，超时会返回错误。 |
@@ -64,7 +64,7 @@ The current service implementation and this document define compatibility. No hi
 | Method | Required fields | Success response | Constraints |
 |---|---|---|---|
 | `ping` | None | `ok`, `pong`, `displayId`, `capture`, `uptime` | Diagnostic only; it does not prove that the target app is interactive. |
-| `screencap` | None | `ok`, `width`, `height`, `channels=3`, `length`, followed by BGR888 bytes | An unavailable capture or size mismatch returns error JSON and no raw bytes. |
+| `screencap` | None | `ok`, `width`, `height`, `channels=3`, `length`, `frames`, followed by BGR888 bytes | An unavailable capture or size mismatch returns error JSON and no raw bytes. `frames` is the increasing sequence of frames published within the current frame-buffer lifetime: identical values across consecutive screencaps mean a frozen picture (for example, the target process frozen by the ROM). Clients may ignore the field. |
 | `click` | `x`, `y` | `ok=true` | Uses the current virtual display; no active display or failed injection is an error. |
 | `swipe` | `x1`, `y1`, `x2`, `y2` | `ok=true` | Optional `duration` is milliseconds; negative values become 0. |
 | `shell` | `cmd` | `ok`, `code`, `stdout`, `stderr` | Optional `timeout` is seconds; each output stream retains at most 64 KiB, and timeout returns an error. |
