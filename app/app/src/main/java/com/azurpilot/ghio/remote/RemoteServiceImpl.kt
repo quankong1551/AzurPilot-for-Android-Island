@@ -61,6 +61,9 @@ class RemoteServiceImpl : RemoteService.Stub() {
     init {
         RemoteBootTrace.mark("CTOR_START")
         Workarounds.apply()
+        // Ln 文件 sink：特权进程的 logcat 用户拿不到，落进 debug 目录随 launcher_logs
+        // 导出（搬屏盯防、看门狗、启动校验的行为因此可在用户日志包里直接核对）
+        runCatching { Ln.initFileSink(RemoteBootTrace.debugDir) }
         runCatching { BridgeServer.start() }.onFailure { Ln.e("$TAG: BridgeServer start failed", it) }
         // 非 destroy 路径退出（进程被杀等）时兜底撤残留：主屏强改尺寸、桥服务、电源状态
         Runtime.getRuntime().addShutdownHook(

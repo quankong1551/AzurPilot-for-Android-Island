@@ -62,6 +62,18 @@ object RemoteBootTrace {
     }
 
     /**
+     * trace 所在的诊断目录；与 App 侧 [com.azurpilot.ghio.constant.AppPaths.DEBUG_DIR]
+     * 指向同一处。供进程内其它落盘诊断（如 [com.azurpilot.ghio.third.Ln] 的文件 sink）
+     * 复用同一条已验证可写的路径推导。
+     *
+     * The diagnostic directory holding the trace file; the same directory the app side
+     * sees as [com.azurpilot.ghio.constant.AppPaths.DEBUG_DIR]. Lets other in-process
+     * file diagnostics (the [com.azurpilot.ghio.third.Ln] file sink, say) reuse this
+     * verified-writable path derivation.
+     */
+    val debugDir: File by lazy { traceFile.parentFile ?: File(".") }
+
+    /**
      * 记一笔启动阶段 trace：先落盘，再镜像到 logcat
      *
      * 首次写入先补一行头信息（pid / 机型 / ABI / 时间戳），后续只追加数据行；
