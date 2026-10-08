@@ -69,6 +69,7 @@ public class OcrNative {
     static { System.loadLibrary("ocrdiagnostics"); }
     public native int countCustomOps(Model model, String runtimeVersion);
     public native String mediatekDriverError();
+    public native String mediatekAdapterLibrary();
 }
 """
 
@@ -84,6 +85,18 @@ public class Fixture {
     }
     public static void main(String[] args) {
         OcrNative bridge = new OcrNative();
+        if (args.length > 0 && args[0].startsWith("adapter_")) {
+            String actual;
+            try {
+                actual = bridge.mediatekAdapterLibrary();
+            } catch (IllegalStateException error) {
+                actual = "error:" + error.getMessage();
+            }
+            if (!actual.equals(args[1]))
+                throw new AssertionError("Expected " + args[1] + ", got " + actual);
+            System.out.println("OCR JNI: " + args[0] + " passed");
+            return;
+        }
         if (args.length > 0) {
             boolean available = bridge.mediatekDriverError() == null;
             if (available != args[0].equals("driver_present"))
@@ -150,6 +163,33 @@ def main():
         api.write_text('extern "C" int wrong_driver_api() { return 0; }\n')
         subprocess.run(flags + [str(api), "-o", str(utility)], check=True)
         subprocess.run(java + ["driver_wrong_api"], env=env, check=True)
+        subprocess.run(java + ["adapter_absent", "error:MediaTek Neuron adapter unavailable"],
+                       env=env, check=True)
+        # 用完整 SDK 接口模拟正常内置库；旧 MGVI 故意缺少命名接口，复现真机崩溃条件。
+        symbols = ["NeuronModel_setName", "NeuronModel_create", "NeuronModel_free",
+                   "NeuronModel_addOperand", "NeuronModel_addOperation", "NeuronModel_setOperandValue",
+                   "NeuronModel_identifyInputsAndOutputs", "NeuronModel_finish",
+                   "NeuronModel_restoreFromCompiledNetwork", "NeuronCompilation_create",
+                   "NeuronCompilation_createWithOptions", "NeuronCompilation_finish", "NeuronCompilation_free",
+                   "NeuronCompilation_storeCompiledNetwork", "NeuronCompilation_getCompiledNetworkSize",
+                   "NeuronExecution_create", "NeuronExecution_setInputFromMemory",
+                   "NeuronExecution_setOutputFromMemory", "NeuronExecution_compute", "NeuronExecution_free",
+                   "NeuronMemory_createFromFd", "NeuronMemory_free", "Neuron_getVersion"]
+        api.write_text("\n".join(f'extern "C" int {name}() {{ return 0; }}' for name in symbols))
+        sdk = directory / "libneuronusdk_adapter.mtk.so"
+        subprocess.run(flags + [str(api), "-o", str(sdk)], check=True)
+        subprocess.run(java + ["adapter_bundled_v8", sdk.name], env=env, check=True)
+        legacy = directory / "libneuron_adapter_mgvi.so"
+        api.write_text('extern "C" int NeuronModel_create() { return 0; }\n')
+        subprocess.run(flags + [str(api), "-o", str(legacy)], check=True)
+        subprocess.run(java + ["adapter_legacy_shadow", f"error:MediaTek adapter {legacy.name} lacks NeuronModel_setName"],
+                       env=env, check=True)
+        legacy.unlink()
+        sdk9 = directory / "libneuronusdk_adapter.9.mtk.so"
+        shutil.copyfile(sdk, sdk9)
+        api.write_text('#include <cstdint>\nextern "C" int NeuronService_getNeuroPilotMagicNumber(int32_t* magic) { *magic = 300; return 0; }\n')
+        subprocess.run(flags + [str(api), "-o", str(directory / "libneuron_sys_util.mtk.so")], check=True)
+        subprocess.run(java + ["adapter_bundled_v9", sdk9.name], env=env, check=True)
 
 
 if __name__ == "__main__":

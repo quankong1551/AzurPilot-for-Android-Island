@@ -29,4 +29,11 @@ internal object OcrNative {
      * Checks the required system entry point before loading MTK adapters; returns missing-driver details.
      */
     external fun mediatekDriverError(): String?
+
+    /**
+     * 检查钉版插件最终选中的 MTK adapter，缺少基本入口时抛异常。
+     *
+     * Checks the MTK adapter selected by the pinned plugin; throws on missing basic entries.
+     */
+    external fun mediatekAdapterLibrary(): String
 }

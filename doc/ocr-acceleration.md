@@ -59,12 +59,23 @@ ONNX CPU，后两者保留 AP 原推理路径。模型缓存最多两个，单�
 无法打开或入口缺失时报告原因并使用 ONNX CPU。若 v2 库能打开但缺少入口，则直接拒绝，
 因为 adapter 在这种情况下不会改试旧版库。此检查只排除已知初始化故障，不保证驱动兼容。
 
+钉版 LiteRT 的 adapter 加载器会遍历全部候选，以最后成功加载者为准。
+MT6985 的 Android 16 日志显示：内置 SDK 加载后，系统旧 `libneuron_adapter_mgvi.so`
+覆盖了它；该库缺少 `NeuronModel_setName`，编译插件在 `0x333a8` 调用空函数指针。
+构建通过 AGP 的 `MERGED_MANIFEST` artifact 过滤 AAR 对旧 MGVI 的声明，保留内置 8/9 SDK。
+当前合并器对 `uses-native-library` 的 `tools:node="remove"` 不按库名匹配，不能仅加删除标记。
+APK 校验器扫描最终二进制 Manifest 的 UTF-8/UTF-16 字符串池，仍含旧 MGVI 时拒绝发布。
+编译前探测按上游规则选择最终 adapter，并检查 23 个基本编译和执行入口；缺失时回退 CPU。
+日志和状态的 `mediatek_adapter_library` 记录实际选中的库名。
+加载规则依据[钉版 adapter 源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/neuron_adapter_api.cc)。
+
 LiteRT 2.1.0rc1 的 Kotlin `Model.handle` 指向 JNI `ModelWrapper`，不能直接传给
 C 模型 API。诊断桥按该钉版布局读取首成员 `LiteRtModel`，仅接受 `2.1.0rc1`；构建也会
 拒绝未经重新验证的升级。包装对象布局依据
 [上游钉版源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h)。
-`test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查和三项 MTK
-驱动入口检查。模拟库验证拒绝缺失入口，且探测不会调用私有函数；它不验证 Android 驱动。
+`test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查、三项 MTK
+驱动入口检查和四项 adapter 选择检查。模拟库复现旧 MGVI 覆盖内置 SDK、缺失入口的
+条件，并检查 8/9 SDK 选择；它不验证 Android 驱动。
 
 首次初始化和校验阶段同步保存到启动器日志的 `debug/ocr/stages.jsonl`，复制 OCR 报告
 也会包含 `last_stage`。导出启动器日志时额外收集 Android 11+ 的进程退出原因；
@@ -102,6 +113,9 @@ cd /opt/azurpilot
 打开 **设置 → OCR 加速**，可查看芯片、加速库是否就绪，以及每个内置模型最近一次的
 实际后端、AP 业务调用次数、测试调用次数和 CPU 回退原因。进入页面不会创建推理会话；
 模型尚未运行时显示「尚未运行」。退出页面后停止自动刷新。
+加速库显示「已内置」，加速状态单独显示待验证、调用通过或失败后使用 CPU。
+报告的 `npu_libraries_bundled` 表示安装文件存在；旧字段 `npu_libraries_ready` 保留相同
+含义以兼容客户端，不作为成功执行的证据。`npu_state=verified` 只表示软件调用和数值校验通过。
 
 点击 **运行测试**，选择的识别器通过带口令的真实回环 API 推理 `ocr/test/sample.png`。
 测试图片为本项目生成的 320×48 白底数字「12345」。首次耗时包含模型初始化和数值校验；
@@ -252,14 +266,26 @@ or entries produce a reported ONNX CPU fallback. An open v2 library without the 
 rejected immediately, because the adapter does not try the legacy library in that case.
 This check excludes the known initialization fault, without proving driver compatibility.
 
+The pinned LiteRT adapter loader tries every candidate and retains the last successful load.
+Android 16 traces from MT6985 show the legacy system `libneuron_adapter_mgvi.so` overriding
+the bundled SDK. That library lacks `NeuronModel_setName`; the compiler plugin calls the
+null pointer at `0x333a8`. An AGP `MERGED_MANIFEST` artifact transform removes the AAR's
+MGVI declaration, keeping bundled SDKs 8 and 9. The current merger does not match
+`uses-native-library` removal markers by name; a marker alone is insufficient.
+The APK verifier rejects legacy MGVI in the final binary manifest's UTF-8/UTF-16 string pool.
+Before compilation, a probe follows the upstream selection rule and checks 23 basic entries, falling back
+to CPU on missing entries. Logs and `mediatek_adapter_library` report the selected library.
+See the [pinned adapter source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/neuron_adapter_api.cc).
+
 Kotlin `Model.handle` in LiteRT 2.1.0rc1 points to a JNI `ModelWrapper`, which cannot be
 passed directly to C model APIs. The diagnostics bridge reads its first `LiteRtModel` member
 under the pinned layout and accepts only `2.1.0rc1`; builds also reject unvalidated upgrades.
 The layout follows the
 [pinned upstream source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h).
-`test_ocr_jni.py` compiles production JNI on a Linux JVM for seven model-handle checks and
-three MTK driver-entry checks. Mock libraries verify missing-entry rejection and that the
-probe never calls the private function. These checks do not validate Android vendor drivers.
+`test_ocr_jni.py` compiles production JNI on a Linux JVM for seven model-handle checks,
+three MTK driver-entry checks, and four adapter-selection checks. Mock libraries reproduce
+legacy MGVI overriding the bundled SDK and missing entries, and check SDK 8/9 selection.
+These checks do not validate Android vendor drivers.
 
 Initialization and first validation stages are flushed to launcher logs at
 `debug/ocr/stages.jsonl`; copied OCR reports include `last_stage`. Launcher exports also
@@ -298,6 +324,10 @@ Open **Settings → OCR acceleration** to inspect the chip, library readiness, a
 bundled model's last backend, AP task count, test count, and CPU fallback reason. Opening
 the page does not initialize inference sessions; unused models display "Not run yet".
 Automatic refresh stops when the page is no longer visible.
+Libraries display "Bundled"; acceleration status separately reports untested, successful
+calls, or CPU recovery after failure. `npu_libraries_bundled` means installation files exist;
+the legacy `npu_libraries_ready` field preserves that meaning for client compatibility.
+`npu_state=verified` indicates successful software calls and numerical validation only.
 
 **Run test** sends the selected recognizer through the authenticated loopback API using
 `ocr/test/sample.png`, a project-generated 320×48 white image containing "12345". First-run

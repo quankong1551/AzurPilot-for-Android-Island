@@ -53,6 +53,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
     private val provider = BundledProvider(context)
     private var environment: Environment? = null
     private val trace = OcrTrace(context)
+    private var mediatekAdapter: String? = null
 
     /**
      * 返回匹配权重的原始元数据；未知哈希拒绝调用。
@@ -88,7 +89,20 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         trace.latest?.let { put("last_stage", it) }
         put("soc", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.HARDWARE)
         put("vendor", provider.vendor)
-        put("npu_libraries_ready", provider.isLibraryReady() || provider.isHiaiReady())
+        mediatekAdapter?.let { put("mediatek_adapter_library", it) }
+        val bundled = provider.isLibraryReady() || provider.isHiaiReady()
+        val recognizers = models.filterValues { "litert" in it }.keys
+        val disabled = recognizers.count { it in failures || "*" in failures }
+        put("npu_libraries_bundled", bundled)
+        // 兼容已有 AP 客户端；此字段只表示库存在，实际运行证据在 sessions 中。
+        put("npu_libraries_ready", bundled)
+        put("npu_state", when {
+            !bundled -> "unavailable"
+            disabled == recognizers.size -> "disabled"
+            sessions.values.any { it.validated && (it.partitions > 0 || it.hiai != 0L) } -> "verified"
+            disabled > 0 -> "partially_disabled"
+            else -> "untested"
+        })
         put("models", JsonArray(models.keys.map(::JsonPrimitive)))
         put("model_status", buildJsonArray {
             models.forEach { (hash, spec) ->
@@ -288,6 +302,9 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             if (provider.vendor == "mediatek") {
                 trace.record(hash, "mediatek_driver_probe")
                 OcrNative.mediatekDriverError()?.let { error(it.take(300)) }
+                trace.record(hash, "mediatek_adapter_probe")
+                mediatekAdapter = OcrNative.mediatekAdapterLibrary()
+                trace.record(hash, "mediatek_adapter_selected", mediatekAdapter)
             }
             trace.record(hash, "litert_environment")
             val env = environment ?: Environment.create(provider).also { environment = it }

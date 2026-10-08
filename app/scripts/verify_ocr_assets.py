@@ -30,6 +30,11 @@ HIAI_SOURCE_COMMIT = "220e2070f1fad9005d6ed06d33520e559cdac7ec"
 def verify(archive):
     """拒绝缺失、混版或损坏的 OCR 包。 / Rejects incomplete, mismatched, or corrupt OCR packages."""
     names = set(archive.namelist())
+    # Android 二进制 XML 的字符串池可使用两种编码；打包后仍含旧 MGVI 时必须拒绝。
+    android_manifest = archive.read("AndroidManifest.xml")
+    if any("libneuron_adapter_mgvi.so".encode(encoding) in android_manifest
+           for encoding in ["utf-8", "utf-16le"]):
+        raise ValueError("Legacy MGVI remains in APK manifest and can override bundled NeuroPilot")
     manifest = json.loads(archive.read("assets/ocr/manifest.json"))
     runtime = json.loads(archive.read("assets/ocr/runtime.json"))
     hiai = json.loads(archive.read("assets/ocr/hiai-runtime.json"))

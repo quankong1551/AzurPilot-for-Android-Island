@@ -66,7 +66,14 @@ fun OcrSettingsPage(
                 else -> R.string.ocr_vendor_other
             }))
             AppInfoRow(stringResource(R.string.ocr_libraries), stringResource(
-                if (status.flag("npu_libraries_ready")) R.string.ocr_ready else R.string.ocr_unavailable))
+                if (status.flag("npu_libraries_bundled")) R.string.ocr_ready else R.string.ocr_unavailable))
+            AppInfoRow(stringResource(R.string.ocr_npu_state), stringResource(when (status.text("npu_state")) {
+                "verified" -> R.string.ocr_npu_verified
+                "disabled" -> R.string.ocr_npu_disabled
+                "partially_disabled" -> R.string.ocr_npu_partial
+                "unavailable" -> R.string.ocr_unavailable
+                else -> R.string.ocr_npu_untested
+            }))
             AppInfoRow(stringResource(R.string.ocr_ap_runtime), stringResource(
                 if (state.runtimeReady) R.string.ocr_running else R.string.ocr_not_running))
             OcrHint(stringResource(R.string.ocr_status_hint))

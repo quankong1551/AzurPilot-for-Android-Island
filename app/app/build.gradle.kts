@@ -1,3 +1,9 @@
+import com.android.build.api.artifact.SingleArtifact
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.transform.TransformerFactory
+import javax.xml.transform.dom.DOMSource
+import javax.xml.transform.stream.StreamResult
+
 plugins {
     id("azurpilot.android.application")
     id("azurpilot.android.compose")
@@ -142,10 +148,54 @@ val syncDeviceReportCredentials = tasks.register<SyncDeviceReportCredentialsTask
     outputDir.set(layout.buildDirectory.dir("generated/deviceReportCredentials"))
 }
 
+/**
+ * 从合并后的 Manifest 排除旧 MGVI，避免它覆盖内置 NeuroPilot SDK。
+ *
+ * 当前合并器未按 android:name 匹配 uses-native-library 的 remove 标记，
+ * 因此通过公开 artifact API 过滤最终声明，不依赖失效的合并标记。
+ *
+ * Excludes legacy MGVI from the merged manifest to prevent overriding bundled NeuroPilot.
+ * The current merger does not match remove markers by native-library name, so the public
+ * artifact API filters the final declaration instead.
+ */
+@CacheableTask
+abstract class FilterOcrManifestTask : DefaultTask() {
+    /** 完整合并声明。 / Complete merged declarations. */
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val inputManifest: RegularFileProperty
+
+    /** 打包使用的过滤后声明。 / Filtered declarations used for packaging. */
+    @get:OutputFile
+    abstract val outputManifest: RegularFileProperty
+
+    /** 只删除旧 MGVI 声明，保留其他系统库请求。 / Removes only legacy MGVI declarations. */
+    @TaskAction
+    fun filter() {
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val document = factory.newDocumentBuilder().parse(inputManifest.get().asFile)
+        val libraries = document.getElementsByTagName("uses-native-library")
+        for (index in libraries.length - 1 downTo 0) {
+            val library = libraries.item(index) as org.w3c.dom.Element
+            if (library.getAttributeNS("http://schemas.android.com/apk/res/android", "name") ==
+                "libneuron_adapter_mgvi.so") {
+                library.parentNode.removeChild(library)
+            }
+        }
+        val output = outputManifest.get().asFile
+        output.parentFile.mkdirs()
+        TransformerFactory.newInstance().newTransformer().transform(DOMSource(document), StreamResult(output))
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(syncAndroidHostOverlay) { it.outputDir }
         variant.sources.assets?.addGeneratedSourceDirectory(syncDeviceReportCredentials) { it.outputDir }
+        val filterOcrManifest = tasks.register<FilterOcrManifestTask>("${variant.name}FilterOcrManifest")
+        variant.artifacts.use(filterOcrManifest)
+            .wiredWithFiles(FilterOcrManifestTask::inputManifest, FilterOcrManifestTask::outputManifest)
+            .toTransform(SingleArtifact.MERGED_MANIFEST)
     }
 }
 

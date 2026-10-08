@@ -22,6 +22,7 @@ class OcrAssetsTest(unittest.TestCase):
         data = b"test weights"
         checksum = hashlib.sha256(data).hexdigest()
         files = {
+            "AndroidManifest.xml": b"<manifest/>",
             "assets/ocr/manifest.json": json.dumps({"models": [{"asset": "models/test.onnx", "sha256": checksum,
                 "litert": {"asset": "litert/test.tflite", "sha256": checksum},
                 "mnn": {"asset": "mnn/test.mnn", "sha256": checksum}}]}),
@@ -61,6 +62,14 @@ class OcrAssetsTest(unittest.TestCase):
     def test_x86_cpu_package(self):
         with self.archive(arm64=False) as archive:
             verify(archive)
+
+    def test_legacy_mgvi_declaration_rejected(self):
+        for encoding in ["utf-8", "utf-16le"]:
+            with self.subTest(encoding=encoding):
+                with self.archive(change=lambda f: f.update({
+                        "AndroidManifest.xml": "libneuron_adapter_mgvi.so".encode(encoding)})) as archive:
+                    with self.assertRaisesRegex(ValueError, "Legacy MGVI"):
+                        verify(archive)
 
     def test_corrupt_model(self):
         with self.archive(change=lambda f: f.update({"assets/ocr/models/test.onnx": b"wrong"})) as archive:
