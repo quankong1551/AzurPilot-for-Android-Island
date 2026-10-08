@@ -85,6 +85,29 @@ class OcrAssetsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "model checksum"):
                 verify(archive)
 
+    def test_unknown_output_postprocess_rejected(self):
+        def change(files):
+            manifest = json.loads(files["assets/ocr/manifest.json"])
+            manifest["models"][0]["litert"]["output_postprocess"] = "unknown"
+            files["assets/ocr/manifest.json"] = json.dumps(manifest)
+        with self.archive(change=change) as archive:
+            with self.assertRaisesRegex(ValueError, "Unknown OCR output postprocess"):
+                verify(archive)
+
+    def test_large_dictionary_postprocess_contract(self):
+        def change(shape):
+            def update(files):
+                manifest = json.loads(files["assets/ocr/manifest.json"])
+                manifest["models"][0]["litert"].update(output_postprocess="softmax", output_shape=shape)
+                files["assets/ocr/manifest.json"] = json.dumps(manifest)
+            return update
+        with self.archive(change=change([1, 40, 18385])) as archive:
+            verify(archive)
+        for shape in [[1, 40, 97], [2, 40, 18385], [1, 39, 18385], []]:
+            with self.subTest(shape=shape), self.archive(change=change(shape)) as archive:
+                with self.assertRaisesRegex(ValueError, "CPU Softmax requires"):
+                    verify(archive)
+
     def test_missing_vendor(self):
         with self.archive(change=lambda f: f.pop("lib/arm64-v8a/libLiteRtDispatch_MediaTek_Vendor.so")) as archive:
             with self.assertRaises(KeyError):

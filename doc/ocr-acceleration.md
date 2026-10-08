@@ -44,7 +44,8 @@ Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI
 
 固定形状识别请求 `[N,3,48,320]` 可尝试 NPU，`N` 拆成单图且不改变输入宽度。
 其他宽度、动态尺寸检测器、未内置模型和显式 NCNN 后端不做形状改写。前两者使用宿主
-ONNX CPU，后两者保留 AP 原推理路径。模型缓存最多两个，单宿主串行推理。
+ONNX CPU，后两者保留 AP 原推理路径。CPU 会话缓存最多两个，单宿主串行推理；
+钉版 MTK dispatch 使用全局 adapter，因此同时只保留一个 MTK NPU 会话。
 
 ### 回退与状态
 
@@ -53,9 +54,15 @@ ONNX CPU，后两者保留 AP 原推理路径。模型缓存最多两个，单�
 `LiteRtCompiledModelIsFullyAccelerated` 补充诊断。没有分区时拒绝静默 CPU 替代。
 Kotlin 的单独 NPU 选项会自动加上 CPU，所以创建成功不能证明 NPU 执行。
 `litert_all_ops_delegated` 也可能由 CPU delegate 置为真，不能单独用于判定 NPU。
-首个真实请求会
-与原 ONNX CPU 输出对照：输出尺寸相同、最大绝对误差不超过 0.01、每个时间步的字符
-分类一致。失败则关闭 NPU 会话，该模型在本次 OCR 工作进程内使用 CPU。
+**设置 → OCR 加速 → 使用硬件加速** 默认开启，选择保存到 App DataStore。
+关闭时等待当前推理结束、释放硬件会话，后续 App 测试与 AP 请求直接使用原 ONNX CPU；
+不用重启 AP。冷启动和 OCR 工作进程重建先读取保存值，避免先按默认值运行一次 NPU。
+此开关控制宿主白名单模型，AP 显式选择的 NCNN 和未内置权重仍按原配置执行。
+
+开启时仅在硬件库、驱动、编译、推理或输出尺寸、有限值检查发生实际错误时关闭该模型的
+硬件会话并回退 CPU；不支持的厂商和尺寸也使用 CPU。1.2.116 起不再在业务调用中额外运行
+CPU 对照，也不因分数差或字符分类差回退。诊断测试仍显示最大分数差和字符选择一致性，
+由用户判断是否关闭加速。这些数值不是字符错误率。
 
 加载 MTK adapter 前，先尝试打开系统 `libapuwareutils_v2.mtk.so` 或
 `libapuwareutils.mtk.so`，确认其导出 `queryHwConfigInternal`。8.0.10 adapter 的
@@ -159,6 +166,15 @@ MT6985 的 MDLA 策略在加载 adapter 前先尝试打开 APUSys 执行库；�
 `npu_accuracy`，包含 `max_abs_error` 和 `timestep_mismatches`，精度门槛不变。
 SDK 没有二进制修改，实际 MTK 结果仍需 1.2.108 真机日志验证。
 
+1.2.112 已在连接的 MT6985 / Android 16 手机上完成 Debug 和 R8 Release 验证，
+四个识别模型均生成实际 dispatch 分区并完成推理、原 ONNX 对照和 AP 接线。
+完整数据、之前的 NaN 原因定位、模型切换修复及当前限制见
+[MT6985 真机验收记录](ocr-mt6985-validation-20261008.md)。
+当时将运行时门槛调整为 `0.15`，并要求字符预测一致；1.2.116 起按用户要求移除此门槛，
+由硬件加速开关决定选择，分数差仅作诊断。`0.15` 是概率尺度上的绝对差，不是字符错误率。
+small / 中文的末尾 Softmax 从 LiteRT 图中拆出，在宿主 CPU 以稳定算法计算。
+主体继续交由 NPU 分区执行，原始 ONNX 权重、公开输出形状及 AP 解码不变。
+
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
 `hiai_npu_only_session_ready` 记录软件层面的就绪证据。任何错误均回退原 ONNX，
@@ -184,17 +200,24 @@ cd /opt/azurpilot
 
 ### App 内测试
 
+无需界面点击的 ADB 状态查询、模型测试、AP 接线和日志导出，见 [ADB 调试入口](adb-debugging.md)。
+
 打开 **设置 → OCR 加速**，可查看芯片、加速库是否就绪，以及每个内置模型最近一次的
 实际后端、AP 业务调用次数、测试调用次数和 CPU 回退原因。进入页面不会创建推理会话；
 模型尚未运行时显示「尚未运行」。退出页面后停止自动刷新。
 加速库显示「已内置」，加速状态单独显示待验证、调用通过或失败后使用 CPU。
 报告的 `npu_libraries_bundled` 表示安装文件存在；旧字段 `npu_libraries_ready` 保留相同
-含义以兼容客户端，不作为成功执行的证据。`npu_state=verified` 只表示软件调用和数值校验通过。
+含义以兼容客户端，不作为成功执行的证据。`npu_state=verified` 表示软件分区证据与成功推理，
+不表示游戏识别准确率或硬件性能分析已通过；`user_disabled` 表示用户主动选择 CPU。
 
 点击 **运行测试**，选择的识别器通过带口令的真实回环 API 推理 `ocr/test/sample.png`。
-测试图片为本项目生成的 320×48 白底数字「12345」。首次耗时包含模型初始化和数值校验；
-稳定耗时及原始 ONNX CPU 对照耗时分别取三次平均。结果比较形状、最大绝对误差和
-各时间步字符分类；CPU 成功不会被标记为 NPU 成功。测试不会代替后续游戏输入的首次校验。
+测试图片为本项目生成的 320×48 白底数字「12345」。首次耗时包含模型初始化；
+稳定耗时及原始 ONNX CPU 对照分别预热三次，再测二十次并保存逐次结果。CPU 对照
+使用独立会话，通过节点执行记录确认只有 `CPUExecutionProvider`，分析结束后才计时。
+两者均为固定尺寸单模型推理，含张量复制与有限值检查，不含 AP 图像处理、传输和解码。
+结果比较形状、最大绝对误差和
+各时间步字符分类，仅供参考，不因此回退。CPU 成功不会被标记为 NPU 成功。
+业务调用不运行额外 CPU 对照，游戏识别质量需用实际画面验证。
 
 AP 已运行时，同一个按钮还通过 PRoot 启动使用正常环境变量的 AP Python 子进程，调用
 `module.ocr.al_ocr._create_ocr`，验证原有 RapidOCR 预处理、宿主推理和 CTC 解码。
@@ -203,14 +226,18 @@ AP 已运行时，同一个按钮还通过 PRoot 启动使用正常环境变量�
 识别器，不修改实例配置。实际任务选用 NCNN 或未知版本权重时保留上游原推理方式。
 AP 未启动时仍可测试内置模型，页面会提示启动 AP 后重新测试接线。
 
+`ocr-ap-config-test` 额外读取当前实例的保存配置，调用正常 `AlOcr.ocr`，不强制 ONNX
+或某个模型，也不启动游戏任务。页面单列最近 AP 业务后端和输入尺寸，诊断不会覆盖
+`last_ap_call`；暂无业务计数时，不能把接线或配置测试说成正在运行的游戏调用证明。
+
 **复制测试报告** 包含芯片、运行库版本、实际后端、调用计数、耗时、数值对照和 AP
 识别结果，不包含认证口令。诊断调用不增加 AP 业务计数；业务计数只代表此 OCR 工作进程
 收到的宿主请求，未匹配的上游权重和 NCNN 请求不会进入宿主。
 
 ### 构建与验证
 
-2026-10-08 的软件验收已通过 Kotlin 编译、Debug/Release 打包、R8 保留检查、12 项
-协议测试、13 项打包质量门测试和文案一致性检查。Linux 侧还从固定 AP 源码提取并原样
+2026-10-08 的软件验收已通过 Kotlin 编译、Debug/Release 打包、R8 保留检查、15 项
+协议和配置诊断测试、17 项打包质量门测试和文案一致性检查。Linux 侧还从固定 AP 源码提取并原样
 执行 `RecOnlyOCR`、`OcrSettings` 和识别器工厂，配合真实 RapidOCR 3.9.0 与 ONNX CPU
 宿主协议替身，四个识别模型均正确解码测试图片的「12345」。这项隔离依赖的验证未执行
 完整 PRoot 运行时或 Android 厂商驱动；完整手机调用由 App 内测试入口验证。
@@ -255,9 +282,9 @@ uv pip install --python /var/tmp/alas-ocr-convert/bin/python -r app/scripts/ocr-
 
 四个识别器的空白、全黑和固定随机张量 CPU 对照均通过：LiteRT 最大绝对误差约 `4.6e-5`，
 MNN 约 `0.0058`，每个时间步的字符分类一致。MNN 使用 FP32 高精度配置，但算子融合
-会产生不同舍入误差，采用与宿主首次请求相同的 `0.01` 容差。
-这些输入不足以代表游戏截图全集。当前开发环境没有连接的 Android 设备，
-不能把转换测试或 APK 构建成功视为真机 NPU 性能验证。
+会产生不同舍入误差，模型转换检查采用独立的 `0.01` 容差。
+这些输入不足以代表游戏截图全集。MT6985 真机结果见上文；
+转换测试或 APK 构建成功本身不能作为真机 NPU 性能验证。
 
 ### 其他厂商的接入调查（2026-10-08）
 
@@ -325,7 +352,8 @@ attempts only complete bundled backends. HiAI clients come from the
 Recognizer requests shaped `[N,3,48,320]` may use NPU; batches split into single images
 without changing width. Other widths and the dynamic detector use host ONNX CPU. Unbundled
 models and explicit NCNN configurations retain AP's original path. The host serializes
-inference and caches at most two models.
+inference and caches at most two CPU sessions. The pinned MTK dispatch uses a global adapter,
+so only one MTK NPU session remains live at a time.
 
 ### Fallback and diagnostics
 
@@ -335,10 +363,17 @@ public C model API to check for custom dispatch partitions in the JIT-transforme
 No partitions means rejecting silent CPU substitution. Kotlin adds CPU automatically to the
 NPU-only option, so creation alone is not evidence of NPU execution.
 CPU delegates can also set `litert_all_ops_delegated` to true; it is never sufficient NPU evidence.
-The first real request is compared
-against original ONNX CPU output: identical dimensions, absolute error at most 0.01, and
-identical character predictions at every timestep. Failure closes the NPU session and keeps that
-model on CPU for the current OCR worker process.
+**Settings → OCR acceleration → Use hardware acceleration** is enabled by default and persists
+in the app DataStore. Disabling waits for current inference, frees hardware sessions, and sends
+subsequent app tests and AP requests directly to original ONNX CPU without restarting AP.
+Cold startup and worker recovery load the saved choice before binding. This switch controls host
+allowlisted models; explicit NCNN and unbundled weights retain their upstream configuration.
+
+When enabled, only actual library, driver, compilation, inference, output-size or finite-value
+failures gate a model to CPU. Unsupported vendors and dimensions also use CPU. Since 1.2.116,
+business calls neither run an extra CPU comparison nor fall back for score or character differences.
+Diagnostics still report maximum score difference and timestep character agreement so users can
+decide whether to disable acceleration. These numbers are not character error rates.
 
 Before loading the MTK adapter, the host opens the system `libapuwareutils_v2.mtk.so` or
 `libapuwareutils.mtk.so` and checks for `queryHwConfigInternal`. The 8.0.10 adapter calls
@@ -465,6 +500,16 @@ accuracy failure is resolved. First-request comparison now records `npu_accuracy
 `max_abs_error` and `timestep_mismatches`; accuracy thresholds are unchanged. SDK binaries
 are unmodified, and actual MTK behavior still needs 1.2.108 device logs.
 
+Version 1.2.112 completed Debug and R8 Release checks on the connected MT6985 / Android 16
+phone. All four recognizers produced dispatch partitions, ran, passed original ONNX comparison,
+and connected to AP. See [MT6985 device validation](ocr-mt6985-validation-20261008.md) for data,
+NaN isolation, model-switch fixes, and limitations. That version used a `0.15` probability
+difference gate and required matching predictions. Since 1.2.116 these gates were removed at
+the user's request: the acceleration switch controls the choice and score differences are
+diagnostics only. This is not a character error rate. Small and Chinese terminal Softmax runs as stable
+CPU postprocessing while the model body uses NPU partitions. Original ONNX weights, public
+output shapes, and AP decoding remain unchanged.
+
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
 `hiai_npu`; `hiai_npu_only_session_ready` records software readiness. Errors fall back to original
@@ -488,6 +533,8 @@ once, and lazily create the original CPU session if the service cannot be used.
 
 ### In-app tests
 
+See [ADB diagnostics](adb-debugging.md) for headless status, model tests, AP integration, and log export.
+
 Open **Settings → OCR acceleration** to inspect the chip, library readiness, and each
 bundled model's last backend, AP task count, test count, and CPU fallback reason. Opening
 the page does not initialize inference sessions; unused models display "Not run yet".
@@ -495,14 +542,18 @@ Automatic refresh stops when the page is no longer visible.
 Libraries display "Bundled"; acceleration status separately reports untested, successful
 calls, or CPU recovery after failure. `npu_libraries_bundled` means installation files exist;
 the legacy `npu_libraries_ready` field preserves that meaning for client compatibility.
-`npu_state=verified` indicates successful software calls and numerical validation only.
+`npu_state=verified` indicates partition evidence and successful software inference, without
+proving game accuracy or hardware profiling. `user_disabled` indicates the user's CPU choice.
 
 **Run test** sends the selected recognizer through the authenticated loopback API using
 `ocr/test/sample.png`, a project-generated 320×48 white image containing "12345". First-run
-time includes initialization and validation; steady and original ONNX CPU times each average
-three runs. The test compares shapes, maximum absolute error, and per-timestep character
-classes. A successful CPU test does not claim NPU use, and test inputs do not replace the
-first subsequent game-input validation.
+time includes initialization. Steady and original ONNX CPU measurements each
+use three warmups and twenty timed runs with raw samples. CPU uses an isolated session;
+actual node profiling verifies exclusive `CPUExecutionProvider`, then ends before timing.
+Both measure fixed-shape model inference, tensor copies, and finite checks; they exclude AP
+image processing, transport, and decoding. The test compares shapes, maximum absolute error, and per-timestep character
+classes for reference without changing the backend. A successful CPU test does not claim NPU use.
+Business calls do not run extra CPU comparisons; actual game images still need quality testing.
 
 When AP is running, the same button also launches an AP Python child via PRoot with the
 normal injected environment and calls `module.ocr.al_ocr._create_ocr`. This checks existing
@@ -513,6 +564,11 @@ This explicitly selects the chosen ONNX recognizer without changing instance set
 Actual tasks using NCNN or unknown weight versions retain upstream inference. With AP
 stopped, bundled-model tests remain available and the page asks users to start AP and retest.
 
+`ocr-ap-config-test` additionally reads saved instance settings and calls normal `AlOcr.ocr`
+without forcing ONNX/model choices or starting game tasks. The UI separately displays the last
+AP business backend and input shape; diagnostics do not overwrite `last_ap_call`. Without
+business counts, integration/configuration tests are not evidence of live game calls.
+
 **Copy test report** includes the chip, runtime versions, actual backends, request counts,
 timings, numerical comparisons, and AP recognition results, without authentication tokens.
 Diagnostic calls do not increase AP task counts. Business counts cover host requests in
@@ -521,7 +577,7 @@ this OCR worker process; unmatched upstream weights and NCNN calls never enter t
 ### Build and verification
 
 Software acceptance on 2026-10-08 passed Kotlin compilation, debug/release assembly, R8
-keep checks, 12 protocol tests, 13 packaging-gate tests, and string consistency checks.
+keep checks, 15 protocol/configuration tests, 17 packaging-gate tests, and string consistency checks.
 A Linux smoke check also extracted and executed the unchanged `RecOnlyOCR`, `OcrSettings`,
 and recognizer factory from the pinned AP source, with real RapidOCR 3.9.0 and an ONNX CPU
 substitute for the host protocol. All four recognizers decoded "12345" correctly. This
@@ -555,9 +611,9 @@ rejects unnormalized input ranks.
 All four recognizers passed CPU comparison on blank, black, and seeded random tensors. Maximum
 absolute error was about `4.6e-5` for LiteRT and `0.0058` for MNN, with identical tested
 character predictions at every timestep. MNN uses FP32 high precision; fused operators have
-different rounding, so comparisons use the host's first-request tolerance of `0.01`. Those inputs
-do not represent a full game screenshot corpus. No Android device is connected in the current
-development environment; conversion checks and APK assembly do not establish real NPU speed.
+different rounding, so model conversion checks use a separate tolerance of `0.01`. Those inputs
+do not represent a full game screenshot corpus. See the device results above for MT6985;
+conversion checks and APK assembly alone do not establish real NPU speed.
 
 ### Other vendor investigation (2026-10-08)
 

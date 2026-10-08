@@ -19,7 +19,7 @@ import org.koin.dsl.module
  * gateway, preference store, and repository.
  */
 val prootModule = module {
-    single { OcrServer(androidContext()) }
+    single { OcrServer(androidContext(), get()) }
     single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get(), get(), get()) }
     single {
         val autoUpdater = get<com.azurpilot.ghio.provision.RuntimeAutoUpdater>()

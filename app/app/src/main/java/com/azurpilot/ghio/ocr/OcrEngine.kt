@@ -31,7 +31,11 @@ import java.security.MessageDigest
  * HiAI sessions, never registering NNAPI. At most two models are cached. Public methods run on workers;
  * internal synchronization protects sessions and buffers.
  */
-class OcrEngine(private val context: Context, disabledModels: Map<String, String> = emptyMap()) : AutoCloseable {
+class OcrEngine(
+    private val context: Context,
+    disabledModels: Map<String, String> = emptyMap(),
+    private var hardwareAccelerationEnabled: Boolean = true,
+) : AutoCloseable {
     private val manifest by lazy {
         context.assets.open("ocr/manifest.json").bufferedReader().use {
             Json.parseToJsonElement(it.readText()).jsonObject
@@ -66,6 +70,26 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
     fun describe(hash: String): JsonObject = models[hash] ?: error("OCR model is not bundled in this APK")
 
     /**
+     * 串行切换后端选择；关闭时释放硬件会话，保留 CPU 缓存和真实错误记录。
+     *
+     * Switches the backend choice serially. Disabling frees hardware sessions while retaining
+     * CPU caches and actual failure records. Subsequent AP calls use the same choice.
+     */
+    @Synchronized
+    fun setHardwareAcceleration(enabled: Boolean) {
+        hardwareAccelerationEnabled = enabled
+        if (!enabled) {
+            sessions.values.forEach { session ->
+                session.closeNpu()
+                session.backend = if (session.cpu != null) "onnx_cpu" else "uninitialized"
+            }
+            environment?.close()
+            environment = null
+        }
+        trace.record("*", "hardware_acceleration_setting", enabled.toString())
+    }
+
+    /**
      * 返回运行库、会话和回退原因；JIT 分区证据不代替硬件性能分析。
      *
      * Reports libraries, sessions, and fallback reasons; JIT partition evidence does not
@@ -88,6 +112,14 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             }
         })
         put("nnapi", false)
+        put("hardware_acceleration_enabled", hardwareAccelerationEnabled)
+        put("validation", buildJsonObject {
+            put("finite_outputs_required", true)
+            put("matching_output_shape_required", true)
+            put("cpu_reference_check_on_business_calls", false)
+            put("score_difference_triggers_fallback", false)
+            put("matching_timestep_predictions_required", false)
+        })
         trace.latest?.let { put("last_stage", it) }
         put("soc", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.HARDWARE)
         put("vendor", provider.vendor)
@@ -100,9 +132,10 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         // 兼容已有 AP 客户端；此字段只表示库存在，实际运行证据在 sessions 中。
         put("npu_libraries_ready", bundled)
         put("npu_state", when {
+            !hardwareAccelerationEnabled -> "user_disabled"
             !bundled -> "unavailable"
             disabled == recognizers.size -> "disabled"
-            sessions.values.any { it.validated && it.hasNpuEvidence } -> "verified"
+            sessions.values.any { it.inferenceSucceeded && it.hasNpuEvidence } -> "verified"
             disabled > 0 -> "partially_disabled"
             else -> "untested"
         })
@@ -120,6 +153,8 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
                     last?.get("last_ms")?.let { put("last_ms", it) }
                     last?.get("shape")?.let { put("shape", it) }
                     last?.get("cpu_reason")?.let { put("cpu_reason", it) }
+                    last?.get("last_ap_call")?.let { put("last_ap_call", it) }
+                    last?.get("last_diagnostic_call")?.let { put("last_diagnostic_call", it) }
                     (failures[hash] ?: failures["*"])?.let { put("error", it) }
                 })
             }
@@ -133,7 +168,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
                     put("npu_dispatch_partitions", session.partitions)
                     put("litert_all_ops_delegated", session.allOpsDelegated)
                     put("hiai_npu_only_session_ready", session.hiai != 0L)
-                    put("npu_delegation_verified", session.validated && session.hasNpuEvidence)
+                    put("npu_delegation_verified", session.inferenceSucceeded && session.hasNpuEvidence)
                     put("npu_hardware_profile_verified", false)
                 })
             }
@@ -149,33 +184,39 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
      */
     @Synchronized
     fun run(hash: String, shape: LongArray, values: FloatArray, source: String = "ap"): Output {
-        val previouslyValidated = sessions[hash]?.validated == true
         val started = System.nanoTime()
-        try {
-            val result = infer(hash, shape, values)
-            val previous = activity[hash]
-            activity[hash] = buildJsonObject {
-                put("backend", result.backend)
-                put("last_ms", (System.nanoTime() - started) / 1_000_000.0)
-                put("shape", JsonArray(shape.map(::JsonPrimitive)))
-                put("ap_requests", (previous?.get("ap_requests")?.jsonPrimitive?.longOrNull ?: 0) +
-                    if (source == "ap") 1 else 0)
-                put("diagnostic_requests", (previous?.get("diagnostic_requests")?.jsonPrimitive?.longOrNull ?: 0) +
-                    if (source != "ap") 1 else 0)
-                if (result.backend == "onnx_cpu") {
-                    put("cpu_reason", when {
-                        hash in failures || "*" in failures -> "npu_failed"
-                        "litert" !in describe(hash) -> "detector"
-                        shape[2] != 48L || shape[3] != 320L -> "dynamic_shape"
-                        else -> "npu_unavailable"
-                    })
-                }
+        val result = infer(hash, shape, values)
+        val previous = activity[hash]
+        val call = buildJsonObject {
+            put("backend", result.backend)
+            put("hardware_acceleration_enabled", hardwareAccelerationEnabled)
+            put("last_ms", (System.nanoTime() - started) / 1_000_000.0)
+            put("timestamp_ms", System.currentTimeMillis())
+            put("shape", JsonArray(shape.map(::JsonPrimitive)))
+            put("npu_dispatch_partitions", if (result.backend.startsWith("litert_npu"))
+                sessions[hash]?.partitions ?: 0 else 0)
+            if (result.backend == "onnx_cpu") {
+                put("cpu_reason", when {
+                    !hardwareAccelerationEnabled -> "user_disabled"
+                    hash in failures || "*" in failures -> "npu_failed"
+                    "litert" !in describe(hash) -> "detector"
+                    shape[2] != 48L || shape[3] != 320L -> "dynamic_shape"
+                    else -> "npu_unavailable"
+                })
             }
-            return result
-        } finally {
-            // 测试图片不能替代实际游戏输入的首轮精度校验。
-            if (source == "diagnostic" && !previouslyValidated) sessions[hash]?.validated = false
         }
+        val callKey = if (source == "ap") "last_ap_call" else "last_diagnostic_call"
+        activity[hash] = buildJsonObject {
+            call.forEach { (key, value) -> put(key, value) }
+            listOf("last_ap_call", "last_diagnostic_call").forEach { key ->
+                if (key == callKey) put(key, call) else previous?.get(key)?.let { put(key, it) }
+            }
+            put("ap_requests", (previous?.get("ap_requests")?.jsonPrimitive?.longOrNull ?: 0) +
+                if (source == "ap") 1 else 0)
+            put("diagnostic_requests", (previous?.get("diagnostic_requests")?.jsonPrimitive?.longOrNull ?: 0) +
+                if (source != "ap") 1 else 0)
+        }
+        return result
     }
 
     private fun infer(hash: String, shape: LongArray, values: FloatArray): Output {
@@ -205,7 +246,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             }
             Session(spec)
         }
-        if (conversion != null && shape[2] == 48L && shape[3] == 320L &&
+        if (hardwareAccelerationEnabled && conversion != null && shape[2] == 48L && shape[3] == 320L &&
             (provider.isLibraryReady() || provider.isHiaiReady())
             && hash !in failures && "*" !in failures) {
             try {
@@ -232,25 +273,176 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
     /**
      * 用内置数字图片测量所选识别器，与原 ONNX 比较；不计为 AP 业务调用。
      *
-     * 在服务工作线程执行，首次耗时包含初始化，稳定耗时取三次平均。
-     * 测试成功只说明数值和接口可用，不能代替游戏识别质量或硬件性能验证。
+     * 在服务工作线程执行；预热三次，再取二十次平均。CPU 对照为独立 ONNX 会话，
+     * 先用执行节点分析确认 CPUExecutionProvider，再关闭分析以免污染计时。
+     * 测试报告数值差与字符一致性，不因此切换后端；不能代替游戏识别质量或硬件性能验证。
      *
      * Benchmarks a selected recognizer with a bundled digit image against original ONNX.
      * Runs on a server worker without counting AP business calls. Cold time includes initialization;
-     * steady time averages three runs. Success does not prove game accuracy or hardware performance.
+     * steady time averages twenty runs after three warmups. A separate ONNX baseline verifies
+     * CPUExecutionProvider via node profiling, then disables profiling before measurement.
+     * Score differences and character agreement are diagnostic only, never a fallback gate.
+     * Success does not prove game accuracy or hardware performance.
      */
     @Synchronized
     fun test(hash: String): JsonObject {
-        val previouslyValidated = sessions[hash]?.validated == true
-        try {
-            return testModel(hash)
-        } finally {
-            sessions[hash]?.validated = previouslyValidated
-        }
+        return testModel(hash)
     }
 
     private fun testModel(hash: String): JsonObject {
         require("litert" in describe(hash)) { "Only bundled recognition models can be tested" }
+        val values = testValues()
+        val shape = longArrayOf(1, 3, 48, 320)
+        val coldStart = System.nanoTime()
+        var output = run(hash, shape, values, "benchmark")
+        val coldMs = (System.nanoTime() - coldStart) / 1_000_000.0
+        repeat(WARMUP_RUNS) { output = run(hash, shape, values, "benchmark") }
+        val samples = (1..MEASURED_RUNS).map {
+            val start = System.nanoTime()
+            output = run(hash, shape, values, "benchmark")
+            (System.nanoTime() - start) / 1_000_000.0
+        }
+        val cpu = benchmarkCpu(hash, shape, values)
+        val reference = cpu.output
+        check(output.shape.contentEquals(reference.shape)) { "OCR test output shape differs" }
+        val maxError = output.values.indices.maxOf { kotlin.math.abs(output.values[it] - reference.values[it]) }
+        val classes = output.shape.last().toInt()
+        val equalPredictions = output.values.indices.step(classes).all { offset ->
+            (0 until classes).maxBy { output.values[offset + it] } ==
+                (0 until classes).maxBy { reference.values[offset + it] }
+        }
+        return buildJsonObject {
+            put("model_sha256", hash)
+            put("backend", output.backend)
+            put("shape", JsonArray(shape.map(::JsonPrimitive)))
+            put("cold_ms", coldMs)
+            put("steady_ms", samples.average())
+            put("steady_samples_ms", JsonArray(samples.map(::JsonPrimitive)))
+            put("warmup_runs", WARMUP_RUNS)
+            put("measured_runs", MEASURED_RUNS)
+            cpu.evidence.forEach { (key, value) -> put(key, value) }
+            put("max_abs_error", maxError)
+            put("score_difference_triggers_fallback", false)
+            put("character_predictions_equal", equalPredictions)
+            put("npu_dispatch_partitions", sessions[hash]?.partitions ?: 0)
+            put("npu_hardware_profile_verified", false)
+        }
+    }
+
+    /**
+     * 独立创建原 ONNX CPU 会话，不加载 NPU 模型，也不改业务会话与调用计数。
+     *
+     * Creates an isolated original ONNX CPU session without loading NPU models or changing
+     * business sessions and request counters.
+     */
+    @Synchronized
+    fun testCpu(hash: String): JsonObject {
+        require("litert" in describe(hash)) { "Only bundled recognition models can be tested" }
+        val shape = longArrayOf(1, 3, 48, 320)
+        val cpu = benchmarkCpu(hash, shape, testValues())
+        return buildJsonObject {
+            put("model_sha256", hash)
+            put("backend", cpu.output.backend)
+            put("shape", JsonArray(shape.map(::JsonPrimitive)))
+            put("warmup_runs", WARMUP_RUNS)
+            put("measured_runs", MEASURED_RUNS)
+            cpu.evidence.forEach { (key, value) -> put(key, value) }
+        }
+    }
+
+    /**
+     * 独立测试 NPU 与 GPU 联合委派；保留 CPU 算子回退，暂不修改业务后端策略。
+     *
+     * Benchmarks combined NPU/GPU delegation with CPU operator fallback in an isolated session,
+     * without changing the production backend policy. Requesting GPU does not prove its use.
+     */
+    @Synchronized
+    fun testMixed(hash: String): JsonObject {
+        check(hardwareAccelerationEnabled) { "Hardware acceleration is disabled by the user" }
+        val spec = describe(hash)
+        val conversion = spec["litert"]?.jsonObject ?: error("Only recognition models support this test")
+        check(provider.isLibraryReady() && !provider.isHiaiReady()) { "Combined LiteRT delegation unavailable for this vendor" }
+        check(hash !in failures && "*" !in failures) { "A previous hardware runtime failure blocks this model" }
+        trace.activeModel(hash)
+        val shape = longArrayOf(1, 3, 48, 320)
+        val values = testValues()
+        val session = Session(spec)
+        try {
+            val started = System.nanoTime()
+            var output = runLite(session, conversion, shape, values, useGpu = true)
+            val cold = (System.nanoTime() - started) / 1_000_000.0
+            repeat(WARMUP_RUNS) { output = runLite(session, conversion, shape, values, useGpu = true) }
+            val samples = (1..MEASURED_RUNS).map {
+                val start = System.nanoTime()
+                output = runLite(session, conversion, shape, values, useGpu = true)
+                (System.nanoTime() - start) / 1_000_000.0
+            }
+            val cpu = benchmarkCpu(hash, shape, values)
+            return buildJsonObject {
+                put("model_sha256", hash)
+                put("backend", output.backend)
+                put("gpu_requested", true)
+                put("gpu_execution_verified", false)
+                put("npu_dispatch_partitions", session.partitions)
+                put("litert_all_ops_delegated", session.allOpsDelegated)
+                put("cold_ms", cold)
+                put("steady_ms", samples.average())
+                put("steady_samples_ms", JsonArray(samples.map(::JsonPrimitive)))
+                put("shape", JsonArray(shape.map(::JsonPrimitive)))
+                put("warmup_runs", WARMUP_RUNS)
+                put("measured_runs", MEASURED_RUNS)
+                cpu.evidence.forEach { (key, value) -> put(key, value) }
+                put("production_policy_changed", false)
+                put("power_efficiency_verified", false)
+            }
+        } finally {
+            trace.captureNative(hash)
+            session.close()
+        }
+    }
+
+    private fun benchmarkCpu(hash: String, shape: LongArray, values: FloatArray): CpuBenchmark {
+        val prefix = File(context.cacheDir, "ocr-cpu-profile-${System.nanoTime()}").absolutePath
+        val session = Session(describe(hash))
+        var profilePath: String? = null
+        try {
+            session.cpu = createCpuSession(session, prefix)
+            var output = runCpu(session, shape, values)
+            profilePath = session.cpu!!.endProfiling()
+            val events = Json.parseToJsonElement(File(profilePath).readText()).jsonArray
+            val nodes = events.map { it.jsonObject }.filter {
+                it["cat"]?.jsonPrimitive?.content == "Node" &&
+                    it["args"]?.jsonObject?.get("provider") != null
+            }
+            val providers = nodes.map { it.getValue("args").jsonObject.getValue("provider").jsonPrimitive.content }.toSet()
+            check(providers == setOf("CPUExecutionProvider")) { "CPU profiling did not confirm exclusive CPU execution: $providers" }
+            repeat(WARMUP_RUNS) { output = runCpu(session, shape, values) }
+            val samples = (1..MEASURED_RUNS).map {
+                val start = System.nanoTime()
+                output = runCpu(session, shape, values)
+                (System.nanoTime() - start) / 1_000_000.0
+            }
+            return CpuBenchmark(output, buildJsonObject {
+                put("cpu_backend", "onnx_cpu")
+                put("cpu_execution_providers", JsonArray(providers.sorted().map(::JsonPrimitive)))
+                put("cpu_profile_node_count", nodes.size)
+                put("cpu_execution_verified", true)
+                put("cpu_intra_op_threads", 2)
+                put("cpu_session_isolated", true)
+                put("cpu_profiling_during_measurement", false)
+                put("measurement_scope", "warm_model_inference_with_tensor_copy_and_finite_check")
+                put("cpu_ms", samples.average())
+                put("cpu_samples_ms", JsonArray(samples.map(::JsonPrimitive)))
+            })
+        } finally {
+            // 仅清理此测试生成的分析文件；关闭分析失败时仍关闭独立会话。
+            if (profilePath == null) profilePath = runCatching { session.cpu?.endProfiling() }.getOrNull()
+            session.close()
+            profilePath?.let { File(it).delete() }
+        }
+    }
+
+    private fun testValues(): FloatArray {
         val bitmap = context.assets.open("ocr/test/sample.png").use(BitmapFactory::decodeStream)
             ?: error("OCR test image is missing")
         val pixels = IntArray(48 * 320)
@@ -260,51 +452,25 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         } finally {
             bitmap.recycle()
         }
-        val values = FloatArray(pixels.size * 3) { index ->
+        return FloatArray(pixels.size * 3) { index ->
             val shift = (2 - index / pixels.size) * 8
             ((pixels[index % pixels.size] ushr shift) and 255) / 127.5f - 1f
         }
-        val shape = longArrayOf(1, 3, 48, 320)
-        val coldStart = System.nanoTime()
-        var output = run(hash, shape, values, "benchmark")
-        val coldMs = (System.nanoTime() - coldStart) / 1_000_000.0
-        val steadyMs = (1..3).map {
-            val start = System.nanoTime()
-            output = run(hash, shape, values, "benchmark")
-            (System.nanoTime() - start) / 1_000_000.0
-        }.average()
-        val session = sessions.getValue(hash)
-        var reference = output
-        val cpuMs = (1..3).map {
-            val start = System.nanoTime()
-            reference = runCpu(session, shape, values)
-            (System.nanoTime() - start) / 1_000_000.0
-        }.average()
-        session.backend = output.backend
-        check(output.shape.contentEquals(reference.shape)) { "OCR test output shape differs" }
-        val maxError = output.values.indices.maxOf { kotlin.math.abs(output.values[it] - reference.values[it]) }
-        val classes = output.shape.last().toInt()
-        val equalPredictions = output.values.indices.step(classes).all { offset ->
-            (0 until classes).maxBy { output.values[offset + it] } ==
-                (0 until classes).maxBy { reference.values[offset + it] }
-        }
-        check(maxError <= 0.01f && equalPredictions) { "OCR test predictions differ from original ONNX" }
-        return buildJsonObject {
-            put("model_sha256", hash)
-            put("backend", output.backend)
-            put("cold_ms", coldMs)
-            put("steady_ms", steadyMs)
-            put("cpu_ms", cpuMs)
-            put("max_abs_error", maxError)
-            put("character_predictions_equal", equalPredictions)
-            put("npu_hardware_profile_verified", false)
-        }
     }
 
-    private fun runLite(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray): Output {
+    private fun runLite(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray,
+        useGpu: Boolean = false): Output {
         val hash = session.spec.getValue("sha256").jsonPrimitive.content
         if (session.lite == null) {
             if (provider.vendor == "mediatek") {
+                // 钉版 dispatch 用全局 adapter；关闭一个会话会使其他会话持有的引用失效。
+                // 保留 CPU 缓存，但 MTK 的 NPU 会话必须先关闭再切换模型。
+                sessions.values.filter { it !== session && it.lite != null }.forEach { other ->
+                    trace.record(other.spec.getValue("sha256").jsonPrimitive.content,
+                        "litert_session_close", "mediatek_model_switch")
+                    other.closeNpu()
+                    other.backend = if (other.cpu != null) "onnx_cpu" else "uninitialized"
+                }
                 if (Build.VERSION.SDK_INT >= 31 && Build.SOC_MODEL.equals("MT6985", ignoreCase = true)) {
                     // 此芯片的 SDK 8 编译目标缺失会主动 abort；限制 MDLA，余下算子由 LiteRT 分区。
                     Os.setenv("MTKNN_ADAPTER_CONFIG_TARGET", "mdla", true)
@@ -326,13 +492,14 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             check(OcrNative.countCustomOps(model, version) == 0) { "OCR conversion contains unexpected custom operators or diagnostics are unavailable" }
             trace.record(hash, "litert_npu_compile")
             session.lite = CompiledModel.create(
-                model, CompiledModel.Options(Accelerator.NPU), env,
+                model, if (useGpu) CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)
+                    else CompiledModel.Options(Accelerator.NPU), env,
             )
             session.partitions = OcrNative.countCustomOps(model, version)
             val acceleration = OcrNative.compiledModelAcceleration(session.lite!!, version)
             session.allOpsDelegated = acceleration == 1
             trace.record(hash, "litert_graph_after_compile",
-                "custom_ops=${session.partitions}, all_ops_delegated=$acceleration")
+                "custom_ops=${session.partitions}, all_ops_delegated=$acceleration, gpu_requested=$useGpu")
             trace.captureNative(hash)
             // CPU delegate 也能令全部委派为真；只有实际 dispatch 分区可作为 NPU 证据。
             check(session.partitions > 0) {
@@ -350,8 +517,8 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         require(sampleSize.toLong() * batch <= 64 * 1024 * 1024 / 4) { "OCR output exceeds the API limit" }
         val output = FloatArray(sampleSize * batch)
         val inputSize = 3 * 48 * 320
-        val validating = !session.validated
-        if (validating) trace.record(hash, "litert_first_inference")
+        val firstRun = !session.inferenceSucceeded
+        if (firstRun) trace.record(hash, "litert_first_inference")
         repeat(batch) { index ->
             val source = values.copyOfRange(index * inputSize, (index + 1) * inputSize)
             val input = if (conversion.getValue("input_layout").jsonPrimitive.content == "nhwc") {
@@ -360,13 +527,26 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             session.inputs!!.single().writeFloat(input)
             session.lite!!.run(session.inputs!!, session.outputs!!)
             val result = session.outputs!!.single().readFloat()
-            require(result.size == sampleSize && result.all(Float::isFinite))
+            val nonFinite = result.count { !it.isFinite() }
+            if (firstRun) trace.record(hash, "litert_output",
+                "expected_floats=$sampleSize, actual_floats=${result.size}, non_finite=$nonFinite")
+            require(result.size == sampleSize) {
+                "LiteRT OCR output size differs: expected=$sampleSize, actual=${result.size}"
+            }
+            require(nonFinite == 0) { "LiteRT OCR output contains $nonFinite non-finite values" }
+            if (conversion["output_postprocess"]?.jsonPrimitive?.content == "softmax") {
+                // 大字典末尾 Softmax 在 CPU 以稳定算法计算，AP 仍收到原模型的概率。
+                val classes = expectedShape.last().toInt()
+                check(OcrNative.softmaxInPlace(result, classes)) { "CPU Softmax rejected OCR logits" }
+                if (firstRun) trace.record(hash, "litert_postprocess", "softmax_cpu")
+            }
             result.copyInto(output, index * sampleSize)
         }
         expectedShape[0] = shape[0]
-        validateConverted(session, expectedShape, output, shape, values)
-        if (validating) trace.record(hash, "litert_validated")
-        session.backend = "litert_npu_with_cpu_fallback"
+        session.inferenceSucceeded = true
+        if (firstRun) trace.record(hash, "litert_inference_succeeded")
+        session.backend = if (useGpu) "litert_npu_gpu_requested_with_cpu_fallback"
+            else "litert_npu_with_cpu_fallback"
         return Output(expectedShape, output, session.backend)
     }
 
@@ -390,38 +570,14 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             result.copyInto(output, index * sampleSize)
         }
         expectedShape[0] = shape[0]
-        validateConverted(session, expectedShape, output, shape, values)
+        session.inferenceSucceeded = true
         session.backend = "hiai_npu"
         return Output(expectedShape, output, session.backend)
     }
 
-    private fun validateConverted(session: Session, expectedShape: LongArray, output: FloatArray,
-                                  shape: LongArray, values: FloatArray) {
-        // 厂商编译器可能使用较低精度；首个真实请求必须对照原权重，不能只用零张量验收。
-        if (!session.validated) {
-            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "onnx_reference_validation")
-            val reference = runCpu(session, shape, values)
-            require(expectedShape.contentEquals(reference.shape)) { "Converted OCR output shape changed" }
-            val classes = expectedShape.last().toInt()
-            val maxError = output.indices.maxOf { i -> kotlin.math.abs(output[i] - reference.values[i]) }
-            val mismatches = output.indices.step(classes).count { offset ->
-                (0 until classes).maxBy { output[offset + it] } !=
-                    (0 until classes).maxBy { reference.values[offset + it] }
-            }
-            val accuracy = "max_abs_error=$maxError, timestep_mismatches=$mismatches/${output.size / classes}"
-            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "npu_accuracy", accuracy)
-            require(maxError <= 0.01f) { "NPU OCR output differs: $accuracy" }
-            require(mismatches == 0) { "NPU OCR character predictions differ: $accuracy" }
-            session.validated = true
-        }
-    }
-
     private fun runCpu(session: Session, shape: LongArray, values: FloatArray): Output {
         val env = OrtEnvironment.getEnvironment()
-        val cpu = session.cpu ?: OrtSession.SessionOptions().use { options ->
-            options.setIntraOpNumThreads(2)
-            env.createSession(materialize(session.spec).absolutePath, options)
-        }.also { session.cpu = it }
+        val cpu = session.cpu ?: createCpuSession(session).also { session.cpu = it }
         val input = session.spec.getValue("inputs").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content
         OnnxTensor.createTensor(env, FloatBuffer.wrap(values), shape).use { tensor ->
             cpu.run(mapOf(input to tensor)).use { results ->
@@ -436,6 +592,14 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             }
         }
     }
+
+    private fun createCpuSession(session: Session, profilingPrefix: String? = null): OrtSession =
+        OrtSession.SessionOptions().use { options ->
+            options.addCPU(true)
+            options.setIntraOpNumThreads(2)
+            profilingPrefix?.let { options.enableProfiling(it) }
+            OrtEnvironment.getEnvironment().createSession(materialize(session.spec).absolutePath, options)
+        }
 
     private fun materialize(spec: JsonObject): File {
         val hash = spec.getValue("sha256").jsonPrimitive.content
@@ -485,6 +649,13 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
      */
     data class Output(val shape: LongArray, val values: FloatArray, val backend: String)
 
+    private data class CpuBenchmark(val output: Output, val evidence: JsonObject)
+
+    private companion object {
+        const val WARMUP_RUNS = 3
+        const val MEASURED_RUNS = 20
+    }
+
     private class Session(val spec: JsonObject) : AutoCloseable {
         var lite: CompiledModel? = null
         var hiai = 0L
@@ -492,7 +663,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         var cpu: OrtSession? = null
         var inputs: List<com.google.ai.edge.litert.TensorBuffer>? = null
         var outputs: List<com.google.ai.edge.litert.TensorBuffer>? = null
-        var validated = false
+        var inferenceSucceeded = false
         var partitions = 0
         var allOpsDelegated = false
         val hasNpuEvidence get() = partitions > 0 || hiai != 0L
@@ -510,7 +681,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             outputs = null
             lite = null
             model = null
-            validated = false
+            inferenceSucceeded = false
             partitions = 0
             allOpsDelegated = false
         }

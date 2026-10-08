@@ -40,6 +40,7 @@ class AndroidSession:
         self._metadata = self._request("describe")[0]["model"]
         self._failed = False
         self._last_backend = "uninitialized"
+        self._last_shape = None
         self._host_runs = 0
 
     def _connect(self):
@@ -168,6 +169,7 @@ class AndroidSession:
                     raise ValueError("Trailing OCR tensor bytes")
                 selected = output_names or [item["name"] for item in self._metadata["outputs"]]
                 self._last_backend = reply.get("backend", "unknown")
+                self._last_shape = list(values.shape)
                 self._host_runs += 1
                 return [outputs[name] for name in selected]
             except Exception as error:
@@ -301,6 +303,90 @@ def self_test(model_hash, sample_path="android_ocr_sample.png"):
             os.environ["AZURPILOT_OCR_TEST"] = previous_flag
 
 
+def configured_test(config_name, sample_path="android_ocr_sample.png"):
+    """按实例保存的配置调用正常 AlOcr 入口；不强制后端或模型，不启动游戏任务。
+
+    Calls normal AlOcr with the instance's saved settings, without forcing a backend or model
+    or starting game tasks. Configuration migration runs in memory; diagnostic requests remain
+    separate from business requests.
+    """
+    import copy
+    import re
+    from dataclasses import asdict
+    from module.config.config import AzurLaneConfig
+    from module.ocr.al_ocr import AlOcr, _get_onnx_model_params
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", config_name):
+        raise ValueError("Invalid instance name")
+    path = Path("config") / (config_name + ".json")
+    snapshot = path.read_bytes()
+    data = json.loads(snapshot)
+
+    class ReadOnlyConfig(AzurLaneConfig):
+        """只读配置快照，阻止构造器自动保存。 / Read-only snapshot blocks constructor saves."""
+
+        def read_file(self, name, is_template=False):
+            return self.config_update(copy.deepcopy(data), is_template=is_template)
+
+        def save(self, *args, **kwargs):
+            pass
+
+        @staticmethod
+        def write_file(*args, **kwargs):
+            raise RuntimeError("Diagnostics cannot write instance settings")
+
+    config = ReadOnlyConfig(config_name)
+    config.auto_update = False
+    previous_flag = os.environ.get("AZURPILOT_OCR_TEST")
+    os.environ["AZURPILOT_OCR_TEST"] = "1"
+    try:
+        results = []
+        for name in ("azur_lane", "cn", "jp", "tw"):
+            recognizer = AlOcr(config=config, name=name)
+            # 固定测试图不进入用户的游戏 OCR 截图目录，避免触发上游截图清理。
+            recognizer._save_debug_image = lambda *args: None
+            settings = recognizer._get_settings()
+            model_hash = None
+            model_name = None
+            if settings.backend == "onnxruntime":
+                model_path = Path(_get_onnx_model_params(name, settings)[0])
+                model_name = model_path.name
+                with model_path.open("rb") as stream:
+                    model_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            started = time.perf_counter()
+            text = recognizer.ocr(str(sample_path))
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            rec = getattr(recognizer.model, "text_rec", None)
+            session = getattr(getattr(rec, "session", None), "session", None)
+            host_session = isinstance(session, AndroidSession)
+            host_runs = session._host_runs if host_session else 0
+            status = read_host_status()
+            state = next((item for item in status["model_status"]
+                          if item["model_sha256"] == model_hash), {})
+            results.append({
+                "logical_model": name, "effective_settings": asdict(settings),
+                "model_name": model_name, "model_sha256": model_hash,
+                "android_session": host_session, "host_runs": host_runs,
+                "backend": session._last_backend if host_session else "original_runtime_cpu",
+                "shape": session._last_shape if host_session else None,
+                "host_call": state.get("last_diagnostic_call") if host_runs else None,
+                "reason": ("ncnn_bypasses_onnx_factory" if settings.backend == "ncnn" else
+                           "model_not_bundled_or_host_unavailable" if not host_session else
+                           "host_connection_failed" if session._failed else
+                           state.get("last_diagnostic_call", {}).get("cpu_reason")),
+                "elapsed_ms": elapsed_ms, "texts": [text],
+                "sample_text_matches": text.strip() == "12345",
+            })
+        return {"ok": True, "test_mode": "saved_instance_configuration", "config_name": config_name,
+                "results": results, "instance_settings_changed": path.read_bytes() != snapshot,
+                "game_task_started": False, "business_call_proof": False}
+    finally:
+        if previous_flag is None:
+            os.environ.pop("AZURPILOT_OCR_TEST", None)
+        else:
+            os.environ["AZURPILOT_OCR_TEST"] = previous_flag
+
+
 def main():
     """输出状态或带固定标记的 AP 测试结果，不输出认证口令。
 
@@ -311,12 +397,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--model-sha256")
+    parser.add_argument("--configured-test", action="store_true")
+    parser.add_argument("--config")
     args = parser.parse_args()
-    if args.self_test:
+    if args.self_test or args.configured_test:
         try:
-            if not args.model_sha256:
+            if args.configured_test:
+                result = configured_test(args.config)
+            elif not args.model_sha256:
                 raise ValueError("Select a bundled recognition model")
-            result = self_test(args.model_sha256)
+            else:
+                result = self_test(args.model_sha256)
         except Exception as error:
             result = {"ok": False, "error": str(error)[:500]}
         print("ANDROID_OCR_TEST=" + json.dumps(result, ensure_ascii=False))

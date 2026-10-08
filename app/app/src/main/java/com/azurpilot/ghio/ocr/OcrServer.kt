@@ -7,6 +7,10 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.Looper
 import com.azurpilot.ghio.proot.AndroidControlAuth
+import com.azurpilot.ghio.settings.AppSettingsManager
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import timber.log.Timber
 import java.io.BufferedInputStream
@@ -30,8 +34,9 @@ import java.util.concurrent.TimeUnit
  * Blocking methods run on IO. Native exits gate failed models and rebind to CPU. Retries
  * require a dead Binder, distinguishing connection loss from ordinary API errors.
  */
-class OcrServer(private val context: Context) {
+class OcrServer(private val context: Context, private val settings: AppSettingsManager) {
     private val lock = Any()
+    private val settingsLock = Any()
     private val recovery = OcrWorkerRecovery(context)
     private val callbacks = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ocr-lifecycle").apply { isDaemon = true }
@@ -50,6 +55,30 @@ class OcrServer(private val context: Context) {
     /** 经过实际 API 测试，原生退出时重试 CPU。 / Tests through the real API, retrying CPU after native exits. */
     fun test(hash: String): JsonObject = request("test", hash).getValue("result").jsonObject
 
+    /** 用独立 CPU 会话分析执行后端并计时。 / Profiles and times an isolated CPU session. */
+    fun testCpu(hash: String): JsonObject = request("test_cpu", hash).getValue("result").jsonObject
+
+    /** 对照 NPU 与 GPU 联合委派。 / Compares combined NPU/GPU delegation. */
+    fun testMixed(hash: String): JsonObject = request("test_mixed", hash).getValue("result").jsonObject
+
+    /**
+     * 在 IO 保存用户选择并更新共享引擎；等待当前推理结束后生效，不重启 AP。
+     *
+     * Persists the choice and updates the shared engine on IO after any current inference,
+     * without restarting AP. The saved choice also initializes recovered workers.
+     */
+    fun setHardwareAcceleration(enabled: Boolean): JsonObject = synchronized(settingsLock) {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "OCR settings must run off the main thread" }
+        runBlocking {
+            withTimeout(10_000) {
+                settings.loaded.first { it }
+                settings.setOcrHardwareAccelerationEnabled(enabled)
+                settings.ocrHardwareAccelerationEnabled.first { it == enabled }
+            }
+        }
+        request("set_hardware_acceleration", enabled = enabled).getValue("status").jsonObject
+    }
+
     /**
      * 幂等绑定并等待就绪，仅允许工作线程调用。
      *
@@ -59,6 +88,8 @@ class OcrServer(private val context: Context) {
 
     private fun bind(wait: Boolean) {
         check(Looper.myLooper() != Looper.getMainLooper()) { "OCR binding must run off the main thread" }
+        // 恢复工作进程前必须读到已保存的开关，不能让关闭加速的用户先跑一次 NPU。
+        runBlocking { withTimeout(10_000) { settings.loaded.first { it } } }
         val stale = synchronized(lock) {
             if (worker?.isBinderAlive == false) connection?.let { it to boundAt } else null
         }
@@ -98,6 +129,7 @@ class OcrServer(private val context: Context) {
                 val intent = Intent(context, OcrWorkerService::class.java)
                     .putExtra("token", AndroidControlAuth.get(context))
                     .putExtra("disabled_models", recovery.snapshot())
+                    .putExtra("hardware_acceleration_enabled", settings.ocrHardwareAccelerationEnabled.value)
                 if (!context.bindService(intent, next, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)) {
                     connection = null
                     signal.countDown()
@@ -121,18 +153,20 @@ class OcrServer(private val context: Context) {
         }
     }
 
-    private fun request(method: String, hash: String? = null): JsonObject {
+    private fun request(method: String, hash: String? = null, enabled: Boolean? = null): JsonObject {
         repeat(2) { attempt ->
             start()
             val binding = synchronized(lock) { Triple(connection, worker, boundAt) }
             try {
                 Socket().use { client ->
                     client.connect(InetSocketAddress("127.0.0.1", PORT), 3_000)
-                    client.soTimeout = if (method == "test") 240_000 else 15_000
+                    client.soTimeout = if (method in setOf("test", "test_cpu", "test_mixed",
+                        "set_hardware_acceleration")) 240_000 else 15_000
                     val header = buildJsonObject {
                         put("method", method)
                         put("token", AndroidControlAuth.get(context))
                         hash?.let { put("model_sha256", it) }
+                        enabled?.let { put("enabled", it) }
                     }
                     BufferedOutputStream(client.getOutputStream()).also {
                         it.write((header.toString() + "\n").toByteArray(Charsets.UTF_8))

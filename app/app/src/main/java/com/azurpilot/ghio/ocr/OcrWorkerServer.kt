@@ -31,8 +31,9 @@ internal class OcrWorkerServer(
     context: Context,
     private val token: String,
     disabledModels: Map<String, String>,
+    hardwareAccelerationEnabled: Boolean,
 ) : AutoCloseable {
-    private val engine by lazy { OcrEngine(context, disabledModels) }
+    private val engine by lazy { OcrEngine(context, disabledModels, hardwareAccelerationEnabled) }
     private val clients = Semaphore(4)
     private val inference = Semaphore(1)
     @Volatile private var socket: ServerSocket? = null
@@ -106,8 +107,20 @@ internal class OcrWorkerServer(
                     require(MessageDigest.isEqual(expectedToken, token)) { "Unauthorized OCR request" }
                     when (request.getValue("method").jsonPrimitive.content) {
                         "status" -> send(output, buildJsonObject { put("ok", true); put("status", engine.status()) })
+                        "set_hardware_acceleration" -> withInferenceBuffers {
+                            engine.setHardwareAcceleration(request.getValue("enabled").jsonPrimitive.boolean)
+                            send(output, buildJsonObject { put("ok", true); put("status", engine.status()) })
+                        }
                         "test" -> withInferenceBuffers {
                             val result = engine.test(request.getValue("model_sha256").jsonPrimitive.content)
+                            send(output, buildJsonObject { put("ok", true); put("result", result) })
+                        }
+                        "test_cpu" -> withInferenceBuffers {
+                            val result = engine.testCpu(request.getValue("model_sha256").jsonPrimitive.content)
+                            send(output, buildJsonObject { put("ok", true); put("result", result) })
+                        }
+                        "test_mixed" -> withInferenceBuffers {
+                            val result = engine.testMixed(request.getValue("model_sha256").jsonPrimitive.content)
                             send(output, buildJsonObject { put("ok", true); put("result", result) })
                         }
                         "describe" -> send(output, buildJsonObject {

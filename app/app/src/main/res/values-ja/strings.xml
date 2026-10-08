@@ -639,6 +639,11 @@
     <string name="device_report_done">完了</string>
     <string name="device_report_test_required">実際に動作を確認してから、使用結果を選んで送信してください。</string>
     <string name="ocr_title">OCR アクセラレーション</string>
+    <string name="ocr_hardware_acceleration">ハードウェアアクセラレーションを使用</string>
+    <string name="ocr_hardware_acceleration_hint">初期設定はオン。オフでは CPU を使用します。オンでは実行エラーや未対応の場合のみ CPU に切り替え、スコア差では切り替えません。</string>
+    <string name="ocr_user_disabled">アクセラレーションはオフ、CPU を使用</string>
+    <string name="ocr_score_difference">最大スコア差（参考値）</string>
+    <string name="ocr_predictions_differ">一部の時刻で文字の選択が CPU と異なります。参考値です。</string>
     <string name="ocr_description">実際のバックエンドとモデル・AP 呼び出しを確認</string>
     <string name="ocr_soc">チップ</string>
     <string name="ocr_vendor">チップメーカー</string>
@@ -672,10 +677,14 @@
     <string name="ocr_backend_hiai">NPU（HiAI）</string>
     <string name="ocr_backend_pending">未実行</string>
     <string name="ocr_cold_time">初回の時間</string>
-    <string name="ocr_steady_time">繰り返し推論の平均</string>
-    <string name="ocr_cpu_time">元モデルの CPU 平均</string>
-    <string name="ocr_precision_passed">出力形状・数値・文字予測が元モデルと一致しました。</string>
-    <string name="ocr_measurement_hint">平均は 3 回の推論です。初回には初期化と検証を含みます。端末内の比較用で、ゲームの認識精度は実際に確認してください。</string>
+    <string name="ocr_steady_time">現在の単一モデル推論平均</string>
+    <string name="ocr_cpu_time">独立 ONNX CPU 平均</string>
+    <string name="ocr_precision_passed">すべての時刻で文字の選択が CPU と一致しました。</string>
+    <string name="ocr_measurement_hint">入力 1×3×48×320、3 回の準備後に 20 回計測。テンソルコピーを含み、AP の画像処理・通信・復号は含みません。初回は初期化と検証を含みます。</string>
+    <string name="ocr_cpu_verified">ノード実行記録で CPU を確認。計測中は解析を無効にしています。</string>
+    <string name="ocr_ap_backend">直近の AP 業務バックエンド</string>
+    <string name="ocr_ap_no_calls">業務呼び出しはまだありません</string>
+    <string name="ocr_ap_shape">直近の AP 入力形状</string>
     <string name="ocr_ap_test">AP 呼び出しテスト</string>
     <string name="ocr_ap_test_passed">AP の前処理・ホスト推論・文字復号の接続を確認しました。</string>
     <string name="ocr_recognized_text">認識結果</string>
@@ -688,7 +697,7 @@
     <string name="ocr_cpu_detector">文字検出は現在 CPU で実行します。</string>
     <string name="ocr_cpu_shape">現在の画像サイズは CPU を使用します。</string>
     <string name="ocr_cpu_unavailable">アクセラレーションライブラリまたはシステムの対応がないため CPU を使用します。</string>
-    <string name="ocr_cpu_failed">アクセラレーションまたは出力検証に失敗したため CPU を使用します。</string>
+    <string name="ocr_cpu_failed">ハードウェアの読み込み・コンパイル・推論でエラーが発生したため CPU を使用します。</string>
     <string name="ocr_copy_report">テストレポートをコピー</string>
     <string name="ocr_milliseconds">%1$.1f ミリ秒</string>
 </resources>

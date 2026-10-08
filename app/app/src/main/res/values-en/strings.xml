@@ -642,6 +642,11 @@
     <string name="device_report_done">Done</string>
     <string name="device_report_test_required">Test the app first, then select the actual result before submitting.</string>
     <string name="ocr_title">OCR acceleration</string>
+    <string name="ocr_hardware_acceleration">Use hardware acceleration</string>
+    <string name="ocr_hardware_acceleration_hint">On by default. Off uses CPU. When on, runtime errors or unsupported requests fall back to CPU; score differences do not.</string>
+    <string name="ocr_user_disabled">Hardware acceleration is off; using CPU</string>
+    <string name="ocr_score_difference">Maximum score difference (reference only)</string>
+    <string name="ocr_predictions_differ">Some timestep character choices differ from CPU; reference only.</string>
     <string name="ocr_description">Check actual backends and test models and AP calls</string>
     <string name="ocr_soc">Chip</string>
     <string name="ocr_vendor">Chip vendor</string>
@@ -675,10 +680,14 @@
     <string name="ocr_backend_hiai">NPU (HiAI)</string>
     <string name="ocr_backend_pending">Not run yet</string>
     <string name="ocr_cold_time">First-run time</string>
-    <string name="ocr_steady_time">Repeated inference average</string>
-    <string name="ocr_cpu_time">Original CPU model average</string>
-    <string name="ocr_precision_passed">Output shape, values and character predictions match the original model.</string>
-    <string name="ocr_measurement_hint">Averages use three runs. First-run time includes initialization and validation. Results compare this device; game accuracy still needs testing.</string>
+    <string name="ocr_steady_time">Current backend model average</string>
+    <string name="ocr_cpu_time">Isolated ONNX CPU average</string>
+    <string name="ocr_precision_passed">Character choices match the CPU baseline at every timestep.</string>
+    <string name="ocr_measurement_hint">Fixed input 1×3×48×320: 3 warmups, then 20 runs, including tensor copies. Excludes AP image processing, transport, and decoding. First run includes setup and validation.</string>
+    <string name="ocr_cpu_verified">Node execution records confirm CPU; profiling is disabled during timing.</string>
+    <string name="ocr_ap_backend">Last AP business backend</string>
+    <string name="ocr_ap_no_calls">No business calls yet</string>
+    <string name="ocr_ap_shape">Last AP input shape</string>
     <string name="ocr_ap_test">AP integration test</string>
     <string name="ocr_ap_test_passed">AP preprocessing, host inference and text decoding are connected.</string>
     <string name="ocr_recognized_text">Recognized text</string>
@@ -691,7 +700,7 @@
     <string name="ocr_cpu_detector">Text detection currently runs on CPU.</string>
     <string name="ocr_cpu_shape">The current image dimensions use CPU.</string>
     <string name="ocr_cpu_unavailable">Acceleration libraries or system support are unavailable; using CPU.</string>
-    <string name="ocr_cpu_failed">Acceleration or output validation failed; using CPU.</string>
+    <string name="ocr_cpu_failed">Hardware loading, compilation or inference failed; using CPU.</string>
     <string name="ocr_copy_report">Copy test report</string>
     <string name="ocr_milliseconds">%1$.1f ms</string>
 </resources>

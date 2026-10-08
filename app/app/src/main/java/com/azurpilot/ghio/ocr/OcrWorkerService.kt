@@ -24,7 +24,8 @@ class OcrWorkerService : Service() {
             val token = intent.getStringExtra("token") ?: return null
             val disabled = Json.parseToJsonElement(intent.getStringExtra("disabled_models") ?: "{}")
                 .jsonObject.mapValues { it.value.jsonPrimitive.content }
-            server = OcrWorkerServer(this, token, disabled).also { it.start() }
+            val acceleration = intent.getBooleanExtra("hardware_acceleration_enabled", true)
+            server = OcrWorkerServer(this, token, disabled, acceleration).also { it.start() }
         }
         return binder.takeIf { server?.address?.isNotEmpty() == true }
     }

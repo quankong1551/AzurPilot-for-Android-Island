@@ -102,6 +102,81 @@ def normalize_batch_matmul_ranks(data):
     return bytes(builder.Output()), changed
 
 
+def normalize_clamp_activations(data):
+    """把 FP32 RELU_0_TO_1 换成等价的 max(x,0) 再 min(x,1)，减少委派断点。
+
+    原输出索引保持不变；常量按输入秩广播。只处理静态、无量化的单输入输出算子，
+    不改公开输入输出、共享消费者或原始 ONNX 权重。外置缓冲区拒绝重打包。
+
+    Replaces FP32 RELU_0_TO_1 with equivalent max(x,0), then min(x,1), reducing delegation
+    barriers. Keeps original output indices and broadcasts constants at input rank. Accepts
+    only static, unquantized, single-input/output operators; preserves public tensors, shared
+    consumers, and original ONNX weights. Rejects repacking external buffers.
+    """
+    model = schema.ModelT.InitFromObj(schema.Model.GetRootAsModel(data, 0))
+    changed = 0
+    codes = {}
+    def opcode(builtin):
+        if builtin not in codes:
+            code = schema.OperatorCodeT()
+            code.builtinCode, code.deprecatedBuiltinCode, code.version = builtin, min(builtin, 127), 1
+            codes[builtin] = len(model.operatorCodes)
+            model.operatorCodes.append(code)
+        return codes[builtin]
+
+    for graph in model.subgraphs:
+        operators = []
+        constants = {}
+        def constant(rank, value):
+            key = (rank, value)
+            if key not in constants:
+                buffer = schema.BufferT()
+                buffer.data = np.frombuffer(np.float32(value).tobytes(), dtype=np.uint8)
+                tensor = schema.TensorT()
+                tensor.name, tensor.shape, tensor.type = f"clamp_{rank}_{value}".encode(), [1] * rank, schema.TensorType.FLOAT32
+                tensor.buffer = len(model.buffers)
+                model.buffers.append(buffer)
+                constants[key] = len(graph.tensors)
+                graph.tensors.append(tensor)
+            return constants[key]
+
+        for op in graph.operators:
+            code = model.operatorCodes[op.opcodeIndex]
+            if max(code.builtinCode, code.deprecatedBuiltinCode) != schema.BuiltinOperator.RELU_0_TO_1:
+                operators.append(op)
+                continue
+            if len(op.inputs) != 1 or len(op.outputs) != 1:
+                raise ValueError("Clamp normalization requires one input and output")
+            tensors = [graph.tensors[int(i)] for i in [op.inputs[0], op.outputs[0]]]
+            if any(t.type != schema.TensorType.FLOAT32 or t.isVariable or not len(t.shape) or
+                   any(d <= 0 for d in t.shape) or
+                   (t.quantization is not None and t.quantization.scale is not None and len(t.quantization.scale))
+                   for t in tensors) or list(tensors[0].shape) != list(tensors[1].shape):
+                raise ValueError("Clamp normalization requires matching static unquantized FP32 tensors")
+            intermediate = copy.deepcopy(tensors[1])
+            intermediate.name = (intermediate.name or b"activation") + b".clamp_lower"
+            intermediate.buffer = 0
+            index = len(graph.tensors)
+            graph.tensors.append(intermediate)
+            zero, one = constant(len(tensors[0].shape), 0), constant(len(tensors[0].shape), 1)
+            for builtin, inputs, outputs in [
+                (schema.BuiltinOperator.MAXIMUM, [int(op.inputs[0]), zero], [index]),
+                (schema.BuiltinOperator.MINIMUM, [index, one], list(op.outputs)),
+            ]:
+                replacement = schema.OperatorT()
+                replacement.opcodeIndex, replacement.inputs, replacement.outputs = opcode(builtin), inputs, outputs
+                operators.append(replacement)
+            changed += 1
+        graph.operators = operators
+    if not changed:
+        return data, 0
+    if any(getattr(buffer, "offset", 0) or getattr(buffer, "size", 0) for buffer in model.buffers):
+        raise ValueError("External LiteRT buffers cannot be repacked")
+    builder = flatbuffers.Builder(len(data))
+    builder.Finish(model.Pack(builder), file_identifier=b"TFL3")
+    return bytes(builder.Output()), changed
+
+
 def check_conversion(source, converted):
     """对照空白和随机张量，拒绝布局、算子或输出顺序错误。
 
@@ -116,6 +191,12 @@ def check_conversion(source, converted):
     _, high_rank = normalize_singleton_ranks(converted.read_bytes())
     if high_rank:
         raise ValueError("OCR temporary singleton ranks must be normalized before packaging")
+    _, unclamped = normalize_clamp_activations(converted.read_bytes())
+    if unclamped:
+        raise ValueError("OCR clamp activations must be normalized before packaging")
+    normalized, postprocess = split_large_output_softmax(converted.read_bytes())
+    if normalized != converted.read_bytes():
+        raise ValueError("Large OCR output Softmax must be split before packaging")
     if any(op["op_name"] == "CUSTOM" for op in lite._get_ops_details()):
         raise ValueError("OCR conversions must not contain custom operators before NPU compilation")
     inp = lite.get_input_details()[0]
@@ -136,10 +217,12 @@ def check_conversion(source, converted):
         lite.set_tensor(inp["index"], values.transpose(0, 2, 3, 1) if layout == "nhwc" else values)
         lite.invoke()
         actual = lite.get_tensor(out["index"])
+        if postprocess:
+            actual = softmax(actual)
         np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-4)
         np.testing.assert_array_equal(actual.argmax(-1), expected.argmax(-1))
         worst_error = max(worst_error, float(np.max(np.abs(actual - expected))))
-    return {
+    result = {
         "asset": converted.relative_to(ASSETS).as_posix(),
         "sha256": sha256(converted),
         "input_layout": layout,
@@ -149,6 +232,86 @@ def check_conversion(source, converted):
         "output_name": out["name"],
         "cpu_max_abs_error": worst_error,
     }
+    if postprocess:
+        result["output_postprocess"] = postprocess
+    return result
+
+
+def softmax(logits):
+    """以有限 FP32 分数恢复最后一轴的概率，用于 CPU 数值对照。
+
+    Restores probabilities along the final axis from finite FP32 logits for CPU comparisons.
+    """
+    if not np.isfinite(logits).all():
+        raise ValueError("OCR logits must be finite")
+    values = logits.astype(np.float64)
+    values = np.exp(values - values.max(axis=-1, keepdims=True))
+    return (values / values.sum(axis=-1, keepdims=True)).astype(np.float32)
+
+
+def split_large_output_softmax(data):
+    """将大字符字典的末尾 Softmax 移到宿主 CPU，保留主体图与公开概率契约。
+
+    仅接受单图、单输出、静态 FP32 和 beta=1 的末尾 Softmax；内部 Softmax 不改写。
+    自描述元数据使重复处理保持原字节，外置权重和未知契约拒绝改写。
+
+    Moves terminal Softmax for large character dictionaries to the host CPU while preserving
+    the backbone and public probability contract. Accepts only a single graph/output, static
+    FP32 tensors, and terminal beta=1 Softmax; internal Softmax stays unchanged. Metadata makes
+    repeated processing byte-identical. External weights and unknown contracts are rejected.
+    """
+    model = schema.ModelT.InitFromObj(schema.Model.GetRootAsModel(data, 0))
+    marker = b"azurpilot.cpu_softmax"
+    metadata = [item for item in (model.metadata or []) if item.name == marker]
+    graph = model.subgraphs[0]
+    if len(graph.outputs) != 1:
+        if metadata:
+            raise ValueError("CPU Softmax metadata requires one graph output")
+        return data, None
+    output = int(graph.outputs[0])
+    tensor = graph.tensors[output]
+    # 此阈值只筛出当前两个大字典模型，源于 MT6985 对照测试，并非厂商通用上限。
+    if tensor.shape[-1] <= 16384:
+        if metadata:
+            raise ValueError("CPU Softmax metadata is reserved for large dictionaries")
+        return data, None
+    if len(model.subgraphs) != 1 or tensor.type != schema.TensorType.FLOAT32 or any(d <= 0 for d in tensor.shape):
+        raise ValueError("CPU Softmax split requires static FP32 output in a single graph")
+    terminal = graph.operators[-1]
+    code = model.operatorCodes[terminal.opcodeIndex]
+    if metadata:
+        if len(metadata) != 1 or bytes(model.buffers[metadata[0].buffer].data) != b"beta=1;axis=-1":
+            raise ValueError("Invalid CPU Softmax metadata")
+        if max(code.builtinCode, code.deprecatedBuiltinCode) == schema.BuiltinOperator.SOFTMAX:
+            raise ValueError("CPU Softmax metadata cannot retain terminal Softmax")
+        return data, "softmax"
+    if (max(code.builtinCode, code.deprecatedBuiltinCode) != schema.BuiltinOperator.SOFTMAX or
+            list(terminal.outputs) != [output] or len(terminal.inputs) != 1 or
+            terminal.builtinOptions.beta != 1.0):
+        raise ValueError("Large OCR output must end with a single beta=1 Softmax")
+    logits = int(terminal.inputs[0])
+    source = graph.tensors[logits]
+    if source.type != schema.TensorType.FLOAT32 or list(source.shape) != list(tensor.shape):
+        raise ValueError("Softmax input/output contract changed")
+    if any(output in op.inputs for op in graph.operators[:-1]):
+        raise ValueError("Terminal Softmax output has other consumers")
+    if any(getattr(buffer, "offset", 0) or getattr(buffer, "size", 0) for buffer in model.buffers):
+        raise ValueError("External LiteRT buffers cannot be repacked")
+    graph.outputs = [logits]
+    graph.operators.pop()
+    for signature in model.signatureDefs or []:
+        for item in signature.outputs or []:
+            if signature.subgraphIndex == 0 and item.tensorIndex == output:
+                item.tensorIndex = logits
+    item = schema.MetadataT()
+    item.name, item.buffer = marker, len(model.buffers)
+    buffer = schema.BufferT()
+    buffer.data = np.frombuffer(b"beta=1;axis=-1", dtype=np.uint8)
+    model.buffers.append(buffer)
+    model.metadata = list(model.metadata or []) + [item]
+    builder = flatbuffers.Builder(len(data))
+    builder.Finish(model.Pack(builder), file_identifier=b"TFL3")
+    return bytes(builder.Output()), "softmax"
 
 
 def normalize_singleton_ranks(data):
@@ -328,6 +491,13 @@ def main():
                 if count:
                     converted.write_bytes(normalized)
                 print(f"OCR_SINGLETON_RANKS_NORMALIZED {source.name}: {count}")
+                normalized, count = normalize_clamp_activations(converted.read_bytes())
+                if count:
+                    converted.write_bytes(normalized)
+                print(f"OCR_CLAMP_ACTIVATIONS_NORMALIZED {source.name}: {count}")
+                normalized, postprocess = split_large_output_softmax(converted.read_bytes())
+                converted.write_bytes(normalized)
+                print(f"OCR_OUTPUT_POSTPROCESS {source.name}: {postprocess or 'none'}")
             item["litert"] = check_conversion(source, converted)
             if "mnn" in previous.get(expected_hash, {}):
                 item["mnn"] = previous[expected_hash]["mnn"]
@@ -339,6 +509,7 @@ def main():
         for old, new in zip(existing["models"], models, strict=True):
             assert old["sha256"] == new["sha256"]
             assert old.get("litert", {}).get("sha256") == new.get("litert", {}).get("sha256")
+            assert old.get("litert", {}).get("output_postprocess") == new.get("litert", {}).get("output_postprocess")
     else:
         (ASSETS / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 

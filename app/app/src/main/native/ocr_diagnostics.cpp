@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -202,4 +204,40 @@ Java_com_azurpilot_ghio_ocr_OcrNative_compiledModelAcceleration(
     const int result = api != nullptr && api(handle, &fully) == 0 ? (fully ? 1 : 0) : -1;
     dlclose(library);
     return result;
+}
+
+// 大字典逐行减最大值，避免指数溢出；双精度累加分母，减少大量类别的求和误差。
+// 整块数组通过 JNI 访问，不逐元素跨语言调用；不使用 fast-math。
+//
+// Subtracts row maxima to prevent exponent overflow, with double denominator accumulation
+// to reduce error across large dictionaries. Uses bulk JNI array access without fast-math.
+// Returns false for invalid shapes or nonfinite logits.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_azurpilot_ghio_ocr_OcrNative_softmaxInPlace(
+        JNIEnv* env, jobject, jfloatArray values, jint classes) {
+    if (values == nullptr || classes <= 0) return JNI_FALSE;
+    const jsize count = env->GetArrayLength(values);
+    if (count == 0 || count % classes != 0) return JNI_FALSE;
+    jfloat* data = env->GetFloatArrayElements(values, nullptr);
+    if (data == nullptr) return JNI_FALSE;
+    bool valid = true;
+    for (jsize offset = 0; offset < count && valid; offset += classes) {
+        float maximum = data[offset];
+        for (jint column = 0; column < classes; ++column) {
+            const float value = data[offset + column];
+            if (!std::isfinite(value)) { valid = false; break; }
+            maximum = std::max(maximum, value);
+        }
+        if (!valid) break;
+        double total = 0;
+        for (jint column = 0; column < classes; ++column) {
+            const float value = std::exp(data[offset + column] - maximum);
+            data[offset + column] = value;
+            total += value;
+        }
+        const float inverse = static_cast<float>(1.0 / total);
+        for (jint column = 0; column < classes; ++column) data[offset + column] *= inverse;
+    }
+    env->ReleaseFloatArrayElements(values, data, 0);
+    return valid ? JNI_TRUE : JNI_FALSE;
 }

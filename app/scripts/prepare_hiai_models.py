@@ -2,11 +2,11 @@
 """转换并对照 HiAI 路径使用的 MNN OCR 模型。
 
 保持 AP 的 NCHW 输入与原始输出，使用 MNN 3.6.1 的 FP32 转换。卷积和归一化融合
-会改变舍入顺序，因此验收使用运行时相同的 0.01 最大绝对误差及逐时间步相同字符。
+会改变舍入顺序，因此转换验收使用独立的 0.01 最大绝对误差及逐时间步相同字符。
 此检查只验证 CPU 转换，设备首次请求还需对照原始 ONNX，并另做 NPU 性能分析。
 
 Converts FP32 OCR models with MNN 3.6.1 while preserving AP's NCHW input and output contract.
-Fused convolution/normalization changes rounding, so acceptance requires the runtime's same
+Fused convolution/normalization changes rounding, so conversion checks use a separate
 0.01 maximum absolute error and identical per-step character predictions. CPU conversion
 checks do not replace first-request ONNX comparisons and hardware profiling on devices.
 """

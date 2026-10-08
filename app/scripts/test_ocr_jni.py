@@ -90,6 +90,7 @@ public class OcrNative {
     public native int compiledModelAcceleration(CompiledModel model, String runtimeVersion);
     public native String mediatekDriverError(boolean requireApusys);
     public native String mediatekAdapterLibrary();
+    public native boolean softmaxInPlace(float[] values, int classes);
 }
 """
 
@@ -156,6 +157,22 @@ public class Fixture {
         expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), null));
         if (bridge.mediatekDriverError(false) == null)
             throw new AssertionError("Missing MTK driver must be rejected before SDK loading");
+        float[] logits = {1000, 999, -1000, -1000, -999, 1000};
+        if (!bridge.softmaxInPlace(logits, 3) || Math.abs(logits[0] - 0.7310586) > 1e-6 ||
+                Math.abs(logits[1] - 0.2689414) > 1e-6 || logits[2] != 0 || logits[5] != 1)
+            throw new AssertionError("Stable native Softmax differs from reference");
+        float[] large = new float[40 * 18710];
+        if (!bridge.softmaxInPlace(large, 18710)) throw new AssertionError("Large dictionary rejected");
+        double sum = 0;
+        for (int i = 0; i < 18710; i++) sum += large[i];
+        if (Math.abs(sum - 1) > 1e-6) throw new AssertionError("Large Softmax normalization differs");
+        if (bridge.softmaxInPlace(new float[] {Float.NaN, 0}, 2) ||
+                bridge.softmaxInPlace(new float[] {Float.POSITIVE_INFINITY, 0}, 2))
+            throw new AssertionError("Nonfinite logits accepted");
+        if (bridge.softmaxInPlace(null, 1) || bridge.softmaxInPlace(new float[0], 1) ||
+                bridge.softmaxInPlace(new float[3], 2) || bridge.softmaxInPlace(new float[3], 0))
+            throw new AssertionError("Invalid Softmax dimensions accepted");
+        System.out.println("OCR JNI: 4 native Softmax checks passed");
         System.out.println("OCR JNI: 7 regression checks passed");
         System.out.println("OCR JNI: 7 compiled-session checks passed");
         System.out.println("OCR JNI: driver_absent passed");

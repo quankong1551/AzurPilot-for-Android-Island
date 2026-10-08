@@ -38,6 +38,14 @@ private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
  */
 @PrefSchema
 data class AppSettings(
+    /**
+     * OCR 默认尝试硬件加速；用户关闭后直接使用原 ONNX CPU 模型。
+     *
+     * OCR attempts hardware acceleration by default; disabling uses original ONNX CPU models.
+     */
+    @PrefKey(default = "true")
+    val ocrHardwareAccelerationEnabled: String = "true",
+
     /** 虚拟屏请求刷新率；0 跟随物理屏，仅 Android 14+ 生效 / Requested refresh rate of the virtual display; 0 follows the physical display, effective on Android 14+ only. */
     @PrefKey(default = "0")
     val virtualDisplayRefreshRate: String = "0",

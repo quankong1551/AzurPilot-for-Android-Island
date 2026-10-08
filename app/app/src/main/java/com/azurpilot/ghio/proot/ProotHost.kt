@@ -543,12 +543,26 @@ class ProotHost(
      * changing user settings. Holds the start mutex on IO to avoid racing runtime replacement;
      * allows up to four minutes for driver compilation.
      */
-    suspend fun testOcrIntegration(hash: String): JsonObject = withContext(AppDispatchers.IO) {
+    suspend fun testOcrIntegration(hash: String): JsonObject {
+        require(Regex("[a-f0-9]{64}").matches(hash))
+        return runOcrDiagnostic(listOf("--self-test", "--model-sha256", hash))
+    }
+
+    /**
+     * 按保存的实例配置测试正常 AlOcr 入口，不覆盖用户选择，不启动游戏任务。
+     *
+     * Tests normal AlOcr with saved instance settings without overriding choices or starting tasks.
+     */
+    suspend fun testConfiguredOcr(config: String): JsonObject {
+        require(Regex("[A-Za-z0-9_-]{1,80}").matches(config))
+        return runOcrDiagnostic(listOf("--configured-test", "--config", config))
+    }
+
+    private suspend fun runOcrDiagnostic(arguments: List<String>): JsonObject = withContext(AppDispatchers.IO) {
         startMutex.withLock {
             check(_state.value.phase == ProotPhase.RUNNING && session?.isAlive == true) {
                 "Start AzurPilot before testing project integration"
             }
-            require(Regex("[a-f0-9]{64}").matches(hash))
             syncHostOverlay()
             val sample = File(installDir, "android_ocr_sample.png")
             val temporary = File(installDir, "android_ocr_sample.png.tmp")
@@ -556,8 +570,7 @@ class ProotHost(
                 temporary.outputStream().use { input.copyTo(it) }
             }
             check(temporary.renameTo(sample)) { "Could not install OCR test image" }
-            val result = runGuestRaw(listOf(".venv/bin/python", "-m", "android_ocr",
-                "--self-test", "--model-sha256", hash), 240_000L)
+            val result = runGuestRaw(listOf(".venv/bin/python", "-m", "android_ocr") + arguments, 240_000L)
             check(!result.timedOut) { "AP OCR test timed out" }
             val marker = "ANDROID_OCR_TEST="
             val line = result.output.lineSequence().lastOrNull { it.startsWith(marker) }

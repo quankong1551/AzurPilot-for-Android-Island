@@ -49,6 +49,13 @@ def verify(archive):
     for model in manifest["models"]:
         if "litert" in model and "mnn" not in model:
             raise ValueError(f"Missing HiAI OCR conversion: {model['asset']}")
+        postprocess = model.get("litert", {}).get("output_postprocess")
+        if postprocess not in (None, "softmax"):
+            raise ValueError("Unknown OCR output postprocess")
+        if postprocess == "softmax":
+            shape = model["litert"].get("output_shape", [])
+            if len(shape) != 3 or shape[:2] != [1, 40] or shape[-1] <= 16384:
+                raise ValueError("CPU Softmax requires the verified large-dictionary output contract")
         for spec in [model] + [model[key] for key in ["litert", "mnn"] if key in model]:
             actual = hashlib.sha256(archive.read(f"assets/ocr/{spec['asset']}")).hexdigest()
             if actual != spec["sha256"]:

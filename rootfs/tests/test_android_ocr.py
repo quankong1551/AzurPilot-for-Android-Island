@@ -106,6 +106,7 @@ class OcrProtocolTest(unittest.TestCase):
         self.assertEqual(CpuSession.created, 0)
         self.assertEqual(session._last_backend, "onnx_cpu")
         self.assertEqual(session._host_runs, 1)
+        self.assertEqual(session._last_shape, [1, 3, 48, 320])
         self.assertEqual(self.server.last_source, "ap")
 
     def test_transient_disconnect_retries(self):
@@ -222,6 +223,91 @@ class OcrProtocolTest(unittest.TestCase):
     def test_ap_integration_rejects_silent_original_runtime_fallback(self):
         with self.assertRaisesRegex(RuntimeError, "host integration failed"):
             self.ap_test(fail_host=True)
+
+    def configured_ap_test(self, backend):
+        """检查正常配置路径不会偷偷换模型或写回配置。 / Checks no forced model or config writes."""
+        @dataclasses.dataclass
+        class Settings:
+            backend: str
+            device: str = "cpu"
+            allow_vendor_execution_providers: bool = False
+            model_version: str = "saved-choice"
+
+        class Config:
+            def __init__(inner, name):
+                inner.settings = inner.read_file(name)
+                inner.save()
+
+            def config_update(inner, data, **kwargs):
+                return data
+
+            def save(inner):
+                raise AssertionError("Configuration must stay read-only")
+
+        def create(*, config, name):
+            settings = Settings(backend=config.settings["backend"])
+            session = self.session() if settings.backend == "onnxruntime" else None
+
+            class Recognizer:
+                model = SimpleNamespace(text_rec=SimpleNamespace(session=SimpleNamespace(session=session)))
+
+                def _get_settings(inner):
+                    return settings
+
+                def ocr(inner, path):
+                    if session:
+                        session.run(None, {"x": self.values})
+                    inner._save_debug_image(path, "12345")
+                    return "12345"
+
+            return Recognizer()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            config = root / "config/ap.json"
+            snapshot = json.dumps({"backend": backend}).encode()
+            config.write_bytes(snapshot)
+            model = root / "model.onnx"
+            model.write_bytes(b"weights")
+            modules = {"module.config.config": SimpleNamespace(AzurLaneConfig=Config),
+                       "module.ocr.al_ocr": SimpleNamespace(AlOcr=create,
+                       _get_onnx_model_params=lambda name, settings: (model, None, None))}
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(sys.modules, modules), patch.dict(os.environ, {"AZURPILOT_OCR_TEST": "previous"}), \
+                        patch.object(ocr, "read_host_status", return_value={"model_status": []}):
+                    result = ocr.configured_test("ap")
+                    self.assertEqual(os.environ["AZURPILOT_OCR_TEST"], "previous")
+                self.assertEqual(config.read_bytes(), snapshot)
+                return result
+            finally:
+                os.chdir(old_cwd)
+
+    def test_saved_config_calls_normal_factory_and_remains_diagnostic(self):
+        result = self.configured_ap_test("onnxruntime")
+        self.assertFalse(result["business_call_proof"])
+        self.assertFalse(result["instance_settings_changed"])
+        for item in result["results"]:
+            self.assertEqual(item["effective_settings"]["model_version"], "saved-choice")
+            self.assertEqual(item["host_runs"], 1)
+            self.assertEqual(item["model_sha256"], MODEL_HASH)
+            self.assertEqual(item["shape"], [1, 3, 48, 320])
+        self.assertEqual(self.server.last_source, "diagnostic")
+
+    def test_saved_ncnn_config_reports_bypass_without_forcing_onnx(self):
+        result = self.configured_ap_test("ncnn")
+        for item in result["results"]:
+            self.assertFalse(item["android_session"])
+            self.assertEqual(item["host_runs"], 0)
+            self.assertEqual(item["reason"], "ncnn_bypasses_onnx_factory")
+
+    def test_saved_config_rejects_paths(self):
+        with patch.dict(sys.modules, {"module.config.config": SimpleNamespace(AzurLaneConfig=object),
+                                      "module.ocr.al_ocr": SimpleNamespace(AlOcr=object, _get_onnx_model_params=None)}):
+            with self.assertRaisesRegex(ValueError, "Invalid instance"):
+                ocr.configured_test("../ap")
 
     def test_real_onnx_session_accepts_factory_and_fallback_arguments(self):
         """用真实 ORT 验证会话类型和惰性回退参数。

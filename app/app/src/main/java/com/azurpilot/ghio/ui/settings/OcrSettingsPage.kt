@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +24,7 @@ import com.azurpilot.ghio.ocr.OcrDiagnosticsViewModel
 import com.azurpilot.ghio.ui.components.AppCard
 import com.azurpilot.ghio.ui.components.AppFieldLabel
 import com.azurpilot.ghio.ui.components.AppInfoRow
+import com.azurpilot.ghio.ui.components.AppLabeledControlRow
 import com.azurpilot.ghio.ui.components.AppSingleChoiceFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -57,6 +59,17 @@ fun OcrSettingsPage(
     val models = status?.get("model_status")?.jsonArray?.map { it.jsonObject }.orEmpty()
     SettingsSubPage(R.string.ocr_title, onBack, modifier) {
         AppCard {
+            AppLabeledControlRow(stringResource(R.string.ocr_hardware_acceleration)) {
+                Switch(
+                    checked = status?.get("hardware_acceleration_enabled")?.jsonPrimitive?.booleanOrNull ?: true,
+                    onCheckedChange = viewModel::setHardwareAcceleration,
+                    enabled = status != null && !state.testing && !state.refreshing && !state.updating,
+                )
+            }
+            OcrHint(stringResource(R.string.ocr_hardware_acceleration_hint))
+            if (state.updating) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        AppCard {
             AppInfoRow(stringResource(R.string.ocr_soc), status.text("soc").ifEmpty { "—" })
             AppInfoRow(stringResource(R.string.ocr_vendor), stringResource(when (status.text("vendor")) {
                 "qualcomm" -> R.string.ocr_vendor_qualcomm
@@ -69,6 +82,7 @@ fun OcrSettingsPage(
                 if (status.flag("npu_libraries_bundled")) R.string.ocr_ready else R.string.ocr_unavailable))
             AppInfoRow(stringResource(R.string.ocr_npu_state), stringResource(when (status.text("npu_state")) {
                 "verified" -> R.string.ocr_npu_verified
+                "user_disabled" -> R.string.ocr_user_disabled
                 "disabled" -> R.string.ocr_npu_disabled
                 "partially_disabled" -> R.string.ocr_npu_partial
                 "unavailable" -> R.string.ocr_unavailable
@@ -77,7 +91,7 @@ fun OcrSettingsPage(
             AppInfoRow(stringResource(R.string.ocr_ap_runtime), stringResource(
                 if (state.runtimeReady) R.string.ocr_running else R.string.ocr_not_running))
             OcrHint(stringResource(R.string.ocr_status_hint))
-            TextButton(onClick = viewModel::refresh, enabled = !state.testing && !state.refreshing) {
+            TextButton(onClick = viewModel::refresh, enabled = !state.testing && !state.refreshing && !state.updating) {
                 Text(stringResource(R.string.ocr_refresh))
             }
         }
@@ -88,12 +102,12 @@ fun OcrSettingsPage(
                     .map { it.text("model_sha256") to it.text("name").removeSuffix(".onnx") },
                 selected = state.selectedHash,
                 onSelect = viewModel::select,
-                enabled = !state.testing,
+                enabled = !state.testing && !state.updating,
             )
             OcrHint(stringResource(R.string.ocr_test_hint))
             if (!state.runtimeReady) OcrHint(stringResource(R.string.ocr_start_ap_hint))
             Button(onClick = viewModel::test,
-                enabled = !state.testing && !state.refreshing && state.selectedHash.isNotEmpty(),
+                enabled = !state.testing && !state.refreshing && !state.updating && state.selectedHash.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(if (state.testing) R.string.ocr_testing else R.string.ocr_test))
             }
@@ -107,7 +121,10 @@ fun OcrSettingsPage(
                 AppInfoRow(stringResource(R.string.ocr_cold_time), milliseconds(result, "cold_ms"))
                 AppInfoRow(stringResource(R.string.ocr_steady_time), milliseconds(result, "steady_ms"))
                 AppInfoRow(stringResource(R.string.ocr_cpu_time), milliseconds(result, "cpu_ms"))
-                OcrHint(stringResource(R.string.ocr_precision_passed))
+                if (result.flag("cpu_execution_verified")) OcrHint(stringResource(R.string.ocr_cpu_verified))
+                AppInfoRow(stringResource(R.string.ocr_score_difference), result.text("max_abs_error"))
+                OcrHint(stringResource(if (result.flag("character_predictions_equal"))
+                    R.string.ocr_precision_passed else R.string.ocr_predictions_differ))
                 OcrHint(stringResource(R.string.ocr_measurement_hint))
             }
         }
@@ -137,10 +154,18 @@ fun OcrSettingsPage(
                 AppInfoRow(stringResource(R.string.ocr_backend), backendLabel(model.text("backend")))
                 AppInfoRow(stringResource(R.string.ocr_ap_requests), model.text("ap_requests"))
                 AppInfoRow(stringResource(R.string.ocr_test_requests), model.text("diagnostic_requests"))
+                val business = model["last_ap_call"]?.jsonObject
+                AppInfoRow(stringResource(R.string.ocr_ap_backend),
+                    if (business != null) backendLabel(business.text("backend"))
+                    else stringResource(R.string.ocr_ap_no_calls))
+                business?.get("shape")?.jsonArray?.let { shape ->
+                    AppInfoRow(stringResource(R.string.ocr_ap_shape), shape.joinToString(" × ") { it.jsonPrimitive.content })
+                }
                 if (model.containsKey("last_ms")) {
                     AppInfoRow(stringResource(R.string.ocr_last_time), milliseconds(model, "last_ms"))
                 }
                 val reason = when (model.text("cpu_reason")) {
+                    "user_disabled" -> R.string.ocr_user_disabled
                     "detector" -> R.string.ocr_cpu_detector
                     "dynamic_shape" -> R.string.ocr_cpu_shape
                     "npu_unavailable" -> R.string.ocr_cpu_unavailable

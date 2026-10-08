@@ -64,6 +64,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
 
     private val defaults = AppSettings()
 
+    private val _ocrHardwareAccelerationEnabled = MutableStateFlow(true)
+
+    /** OCR 硬件加速开关，默认开启。 / OCR hardware acceleration flag, enabled by default. */
+    val ocrHardwareAccelerationEnabled: StateFlow<Boolean> = _ocrHardwareAccelerationEnabled.asStateFlow()
+
     private val _virtualDisplayRefreshRate = MutableStateFlow(0f)
 
     /** 虚拟屏刷新率，非法盘上值一律回落 0f / The virtual display refresh rate; invalid stored values always fall back to 0f. */
@@ -160,6 +165,7 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
         // 那样 loaded 置位与各字段拿到首值是两件并发的事，早读的人仍可能读到默认值
         scope.launch {
             settings.collect { s ->
+                _ocrHardwareAccelerationEnabled.value = s.ocrHardwareAccelerationEnabled.toBooleanStrictOrNull() ?: true
                 _virtualDisplayRefreshRate.value = s.virtualDisplayRefreshRate.toFloatOrNull()
                     ?.takeIf { it.isFinite() && it >= 0f } ?: 0f
                 _startupBackend.value = parseBackend(s.startupBackend)
@@ -211,6 +217,11 @@ class AppSettingsManager(private val context: Context) : AppSettingsGateway {
     /** 写入启动期提权后端 / Writes the startup privileged backend. */
     suspend fun setStartupBackend(backend: RemoteBackend) = with(AppSettingsSchema) {
         context.dataStore.edit { it[startupBackend] = backend.name }
+    }
+
+    /** 保存 OCR 硬件加速开关。 / Persists the OCR hardware acceleration flag. */
+    suspend fun setOcrHardwareAccelerationEnabled(enabled: Boolean): Unit = with(AppSettingsSchema) {
+        context.dataStore.edit { it[ocrHardwareAccelerationEnabled] = enabled.toString() }
     }
 
     /** 写入虚拟屏刷新率；负数或非有限值直接抛 [IllegalArgumentException] / Writes the virtual display refresh rate; a negative or non-finite value throws [IllegalArgumentException] immediately. */

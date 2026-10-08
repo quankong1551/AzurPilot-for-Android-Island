@@ -32,7 +32,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/PP-OCRv6_tiny_rec.tflite",
-        "sha256": "89331b6f728b743a5bc70529c07326179750f4b65f0e1a3770e14a3bdf6901c3",
+        "sha256": "3a389cd3258ff014ac26cdc77f300e5aaafde090bcd1e9b908741ef45e97c663",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -97,7 +97,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/PP-OCRv6_small_rec.tflite",
-        "sha256": "1f29c859081551b9edfc625a6d241ee5f4d67278c83fa1a6db06589b4d668f78",
+        "sha256": "6a85a7cabc50de400ac2dd9c25d3bcb30b9427373d7b35acb73439b071c7ac56",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -111,8 +111,9 @@
           18710
         ],
         "input_name": "x",
-        "output_name": "fetch_name_0",
-        "cpu_max_abs_error": 9.417533874511719e-06
+        "output_name": "Add.205",
+        "cpu_max_abs_error": 1.2278556823730469e-05,
+        "output_postprocess": "softmax"
       },
       "mnn": {
         "asset": "mnn/PP-OCRv6_small_rec.mnn",
@@ -162,7 +163,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-en-us-v2.6.nvc.tflite",
-        "sha256": "5e7a1384ae685d8162af7985826a7589a11a47498ddceb19da754ecd948d5e1d",
+        "sha256": "ecfa2fece57171499c5b6fb325a794e7db0f6e1fbae46b3d3c34956cb84c743a",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -227,7 +228,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-zh-cn-v3.dtk.tflite",
-        "sha256": "41054a34fadb82ef4c208db1b401108b087da3a49666ad9d2ce49d6e242df3ec",
+        "sha256": "90047a38e1620715192d2dbeb57eae5296492a355f79666ad6ce4716bc68ee0c",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -241,8 +242,9 @@
           18385
         ],
         "input_name": "x",
-        "output_name": "fetch_name_0",
-        "cpu_max_abs_error": 2.09808349609375e-05
+        "output_name": "Add.227",
+        "cpu_max_abs_error": 2.658367156982422e-05,
+        "output_postprocess": "softmax"
       },
       "mnn": {
         "asset": "mnn/alocr-zh-cn-v3.dtk.mnn",

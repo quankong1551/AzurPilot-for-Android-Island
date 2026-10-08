@@ -22,6 +22,7 @@ import kotlinx.serialization.json.*
  * @property selectedHash 所选内置模型。 / Selected bundled model.
  * @property refreshing 正在读取状态。 / Whether status is being read.
  * @property testing 正在执行测试。 / Whether a test is running.
+ * @property updating 正在保存和应用硬件加速开关。 / Whether the acceleration flag is being applied.
  * @property runtimeReady AP 已运行，可执行接线测试。 / AP is running and can be tested.
  * @property modelTest 模型测试结果。 / Model test result.
  * @property apTest AP 接线测试结果。 / AP integration result.
@@ -32,6 +33,7 @@ data class OcrDiagnosticsState(
     val selectedHash: String = "",
     val refreshing: Boolean = false,
     val testing: Boolean = false,
+    val updating: Boolean = false,
     val runtimeReady: Boolean = false,
     val modelTest: JsonObject? = null,
     val apTest: JsonObject? = null,
@@ -57,7 +59,7 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
 
     /** 从 IO 读取状态，不初始化推理会话。 / Reads status on IO without initializing sessions. */
     fun refresh() {
-        if (state.value.testing || refreshJob?.isActive == true) return
+        if (state.value.testing || state.value.updating || refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch(AppDispatchers.IO) {
             state.update { it.copy(refreshing = true) }
             try {
@@ -75,7 +77,7 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
 
     /** 选择模型并清除上一模型的结果。 / Selects a model and clears the previous result. */
     fun select(hash: String) {
-        if (!state.value.testing) state.update {
+        if (!state.value.testing && !state.value.updating) state.update {
             it.copy(selectedHash = hash, modelTest = null, apTest = null, error = null)
         }
     }
@@ -87,7 +89,7 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
      */
     fun test() {
         val hash = state.value.selectedHash
-        if (state.value.testing || state.value.refreshing || hash.isEmpty()) return
+        if (state.value.testing || state.value.refreshing || state.value.updating || hash.isEmpty()) return
         state.update { it.copy(testing = true, modelTest = null, apTest = null, error = null) }
         viewModelScope.launch(AppDispatchers.IO) {
             try {
@@ -112,6 +114,30 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
         }
     }
 
+    /**
+     * 保存并应用硬件加速选择；界面等待共享引擎确认后再更新开关。
+     *
+     * Persists and applies the acceleration choice, updating the switch after the shared
+     * engine acknowledges it. Clears previous test results when the backend choice changes.
+     */
+    fun setHardwareAcceleration(enabled: Boolean) {
+        if (state.value.testing || state.value.refreshing || state.value.updating) return
+        state.update { it.copy(updating = true, error = null) }
+        viewModelScope.launch(AppDispatchers.IO) {
+            try {
+                readStatus(server.setHardwareAcceleration(enabled))
+                state.update { it.copy(modelTest = null, apTest = null) }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                state.update { it.copy(error = error.message?.take(500)) }
+            } catch (error: LinkageError) {
+                state.update { it.copy(error = error.message?.take(500)) }
+            } finally {
+                state.update { it.copy(updating = false) }
+            }
+        }
+    }
+
     /** 返回可复制的无口令诊断报告。 / Returns a copyable diagnostic report without tokens. */
     fun report(): String = buildJsonObject {
         state.value.status?.let { put("status", it) }
@@ -120,8 +146,7 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
         state.value.error?.let { put("error", it) }
     }.let { reportFormat.encodeToString(JsonObject.serializer(), it) }
 
-    private fun readStatus() {
-        val snapshot = server.status()
+    private fun readStatus(snapshot: JsonObject = server.status()) {
         val candidates = snapshot.getValue("model_status").jsonArray.map { it.jsonObject }
             .filter { it["testable"]?.jsonPrimitive?.booleanOrNull == true }
         state.update {

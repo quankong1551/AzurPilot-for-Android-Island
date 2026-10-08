@@ -50,4 +50,12 @@ internal object OcrNative {
      * Checks the MTK adapter selected by the pinned plugin; throws on missing basic entries.
      */
     external fun mediatekAdapterLibrary(): String
+
+    /**
+     * 原地计算稳定的行 Softmax；拒绝非有限输入或错误尺寸，调用方必须检查返回值。
+     *
+     * Computes stable row Softmax in place. Rejects nonfinite inputs or invalid dimensions;
+     * callers must check the return value before using output.
+     */
+    external fun softmaxInPlace(values: FloatArray, classes: Int): Boolean
 }

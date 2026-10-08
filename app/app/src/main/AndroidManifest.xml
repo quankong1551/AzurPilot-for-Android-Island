@@ -78,6 +78,14 @@
         <service android:name=".ocr.OcrWorkerService"
             android:exported="false" android:process=":ocr" />
 
+        <!-- ADB 通过系统 DUMP 权限调用固定诊断命令；call 内还会再次校验 Binder 调用者。 -->
+        <provider
+            android:name=".diagnostics.AdbDebugProvider"
+            android:authorities="${applicationId}.debug"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:grantUriPermissions="false" />
+
         <!-- HiAI 客户端按系统版本加载服务库；Android 12+ 需要声明公开的非 NDK 库。 -->
         <uses-native-library android:name="libai_client.so" android:required="false" />
         <uses-native-library android:name="libhiai_foundation.huawei.so" android:required="false" />
