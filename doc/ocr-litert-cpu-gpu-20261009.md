@@ -74,6 +74,8 @@ NPU dispatch 分区证明存在 NPU 委派，不能单独证明全部算子在 N
 CI 打包时移除。本版轻量 APK 约 251.81 MiB，比上一轻量测试包大约 11.83 MiB，原因是
 新增约 73 MiB 的 pro 转换以保留现有模型档位；APK 同时移除了原权重和 Android ORT。
 349.0 MiB 是解压后的权重大小，不是最终 rootfs 压缩包缩减量。完整包尺寸以新 CI 产物为准。
+旧瘦身 CI 因宿主 `strip` 不支持 minicap 缓存中的其他 Android 架构失败；补丁按 ELF
+位数、字节序和机器类型筛选，保留异架构缓存不改写，并在两种原生 runner 上先运行回归。
 
 ### 真机检查
 
@@ -177,6 +179,9 @@ about 11.83 MiB larger than the preceding slim test: a roughly 73 MiB pro conver
 into the APK to preserve model choices, while source weights and Android ORT are removed.
 349.0 MiB describes unpacked weights, not compressed rootfs savings. Full package size must
 be measured from the new CI artifact.
+The preceding slimming CI failed when native `strip` encountered other Android architectures
+in minicap caches. The fix filters ELF class, byte order, and machine type, retaining foreign
+cache files unchanged and running regressions on both native runner architectures first.
 
 ### Device checks
 

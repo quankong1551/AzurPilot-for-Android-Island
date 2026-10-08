@@ -196,6 +196,10 @@ jobs:
           key: rootfs-${{ runner.os }}-${{ runner.arch }}-${{ needs.resolve.outputs.ref }}
           restore-keys: |
             rootfs-${{ runner.os }}-${{ runner.arch }}-
+      - name: Verify runtime packaging
+        run: |
+          python3 rootfs/tests/test_compact_runtime.py
+          python3 rootfs/tests/test_compact_ocr_models.py
       - name: Build rootfs
         env:
           AZURPILOT_REF: ${{ needs.resolve.outputs.ref }}
@@ -285,7 +289,6 @@ jobs:
           python3 app/scripts/fetch_ocr_runtime.py
           python3 app/scripts/test_verify_ocr_assets.py
           python3 rootfs/tests/test_android_ocr_adapter.py
-          python3 rootfs/tests/test_compact_ocr_models.py
           uv run --no-project --python 3.12 --with numpy==2.2.6 --with onnx==1.20.1 --with onnxruntime==1.26.0 rootfs/tests/test_android_ocr.py
 
       - name: Verify OCR native interfaces

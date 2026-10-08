@@ -11,12 +11,26 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 
 
 def dynamic_symbols(path, readelf):
     """读取完整动态符号表用于前后比较。 / Reads the full dynamic symbol table for comparison."""
     return subprocess.check_output([readelf, "--dyn-syms", "--wide", str(path)])
+
+
+def elf_identity(path):
+    """读取 ELF 位数、字节序和机器类型，防止宿主 strip 处理异架构设备缓存。
+
+    Reads ELF class, byte order, and machine type to keep native strip off foreign device caches.
+    """
+    with Path(path).open("rb") as stream:
+        header = stream.read(20)
+    if len(header) < 20 or header[:4] != b"\x7fELF" or header[4] not in (1, 2) or header[5] not in (1, 2):
+        return None
+    machine = int.from_bytes(header[18:20], "little" if header[5] == 1 else "big")
+    return header[4], header[5], machine
 
 
 def compact(root, strip="strip", readelf="readelf"):
@@ -31,7 +45,11 @@ def compact(root, strip="strip", readelf="readelf"):
     for directory in roots:
         if (directory.exists() or directory.is_symlink()) and not directory.resolve().is_relative_to(root):
             raise ValueError("Python distribution must stay inside the staged rootfs")
-    result = {"elf_files": 0, "compacted_files": 0, "saved_bytes": 0, "largest_savings": []}
+    native = elf_identity(sys.executable)
+    if native is None:
+        raise ValueError("Compaction requires native ELF Python and binutils")
+    result = {"elf_files": 0, "compacted_files": 0, "saved_bytes": 0,
+              "skipped_foreign_elf_files": 0, "largest_savings": []}
     savings = []
     for directory in roots:
         if not directory.exists() or directory.is_symlink():
@@ -48,8 +66,15 @@ def compact(root, strip="strip", readelf="readelf"):
                 with path.open("rb") as stream:
                     if stream.read(4) != b"\x7fELF":
                         continue
-                before = dynamic_symbols(path, readelf)
                 result["elf_files"] += 1
+                identity = elf_identity(path)
+                if identity is None:
+                    raise ValueError(f"Invalid ELF header: {path.relative_to(root)}")
+                # uiautomator2 缓存含多种 Android ABI；原生 runner 的 strip 无法处理全部架构。
+                if identity != native:
+                    result["skipped_foreign_elf_files"] += 1
+                    continue
+                before = dynamic_symbols(path, readelf)
                 descriptor, temporary_name = tempfile.mkstemp(prefix=".strip-", dir=parent)
                 os.close(descriptor)
                 temporary = Path(temporary_name)

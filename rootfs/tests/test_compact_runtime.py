@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     "compact_runtime", Path(__file__).parents[1] / "build/compact-runtime.py")
@@ -56,6 +57,33 @@ class CompactRuntimeTest(unittest.TestCase):
             os.symlink(temporary, root / "opt/uv-python")
             with self.assertRaises(ValueError):
                 compact_runtime.compact(root)
+
+    def test_foreign_android_cache_is_preserved_without_calling_strip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "rootfs"
+            package = root / "opt/azurpilot/.venv/lib"
+            package.mkdir(parents=True)
+            source = base / "source.c"
+            source.write_text("int ocr_fixture(int value) { return value * 7; }\n")
+            target = package / "fixture.so"
+            subprocess.run(["cc", "-shared", "-fPIC", "-g", str(source), "-o", str(target)], check=True)
+            foreign = package / "uiautomator2cache/cache/minicap.so-010087d6d0/minicap.so"
+            foreign.parent.mkdir(parents=True)
+            header = bytearray(target.read_bytes())
+            endian = "little" if header[5] == 1 else "big"
+            machine = int.from_bytes(header[18:20], endian)
+            header[18:20] = (40 if machine != 40 else 62).to_bytes(2, endian)
+            foreign.write_bytes(header)
+            with mock.patch.object(compact_runtime.subprocess, "run", wraps=subprocess.run) as run:
+                report = compact_runtime.compact(root)
+            self.assertEqual(report["elf_files"], 2)
+            self.assertEqual(report["skipped_foreign_elf_files"], 1)
+            self.assertEqual(report["compacted_files"], 1)
+            self.assertEqual(foreign.read_bytes(), header)
+            strip_calls = [call for call in run.call_args_list if "--strip-unneeded" in call.args[0]]
+            self.assertEqual(len(strip_calls), 1)
+            self.assertNotIn("uiautomator2cache", strip_calls[0].args[0][-1])
 
 
 if __name__ == "__main__":
