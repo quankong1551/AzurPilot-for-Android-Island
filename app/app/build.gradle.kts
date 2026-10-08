@@ -13,6 +13,9 @@ android {
             // proot 九件套（libproot/libproot-loader/libtalloc/busybox/shim 等，Spike A 钉版产物）；
             // 与 src/main/jniLibs/（上游框架的拉取件，gitignore）分开放，本目录是构建输入要入库
             jniLibs.srcDir("src/main/prootLibs")
+            // 厂商库由哈希钉版脚本准备，和 PRoot 可执行库分开放。
+            jniLibs.srcDir(rootDir.parentFile.resolve(".tmp/ocr-runtime/jni"))
+            assets.directories.add(rootDir.parentFile.resolve(".tmp/ocr-runtime/assets").absolutePath)
             // CI 下载的公开机型表用于离线匹配商品名，缺失时退回系统公开名称。
             assets.directories.add(rootDir.parentFile.resolve(".tmp/device-catalog").absolutePath)
         }
@@ -38,44 +41,51 @@ android {
         aidl = true
     }
 
+    packaging.jniLibs.keepDebugSymbols += listOf(
+        "**/libLiteRtCompilerPlugin_*.so", "**/libLiteRtDispatch_*.so",
+        "**/libQnn*.so", "**/libneuronusdk*.so", "**/libhiai*.so",
+    )
+
     androidResources {
         // rootfs.tar.xz 已压缩且要按字节读进度（assets.openFd 只对未压缩资产生效）
         noCompress += "zip"
         noCompress += "xz"
         // 机型目录已使用 gzip 压缩，独立扩展名阻止资产合并器自动解压。
         noCompress += "catalog"
+        noCompress += listOf("onnx", "tflite", "mnn")
     }
 }
 
 /**
- * android_host.py 资产同步任务：该文件是 app↔运行时的边界 overlay，以仓库
- * rootfs/overlays/ 为单一来源，构建期复制进 assets/overlays/，ProotHost 每次拉起
- * 会话前覆盖到 rootfs。不随 APK 同步的话，只走热更的用户拿不到 overlay 更新
- * （热更不触碰 untracked 文件），依赖 overlay 新行为的开关（如局域网控制）会静默失效
+ * 从仓库单一来源同步宿主和 OCR overlay，供轻量 APK 更新已有 rootfs。
  *
- * Copies the android_host.py boundary overlay from the repo's rootfs/overlays/
- * (the single source) into the APK assets at build time; ProotHost overwrites
- * the rootfs copy from the asset before every session spawn.
+ * Copies host and OCR overlays from their single source into APK assets, allowing slim APK
+ * updates to refresh existing rootfs installations before every session spawn.
  */
 abstract class SyncAndroidHostOverlayTask : DefaultTask() {
     /** 仓库内单一来源 / The single in-repo source. */
-    @get:InputFile
-    abstract val overlayFile: RegularFileProperty
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val overlayFiles: ConfigurableFileCollection
 
-    /** 资产根（内含 overlays/android_host.py）/ The asset root (containing overlays/android_host.py). */
+    /** 生成资产根目录。 / Generated asset root directory. */
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
     @TaskAction
     fun sync() {
-        val out = File(outputDir.get().asFile, "overlays/android_host.py")
-        out.parentFile.mkdirs()
-        overlayFile.get().asFile.copyTo(out, overwrite = true)
+        overlayFiles.files.forEach { source ->
+            val out = File(outputDir.get().asFile, "overlays/${source.name}")
+            out.parentFile.mkdirs()
+            source.copyTo(out, overwrite = true)
+        }
     }
 }
 
 val syncAndroidHostOverlay = tasks.register<SyncAndroidHostOverlayTask>("syncAndroidHostOverlay") {
-    overlayFile.set(rootDir.parentFile.resolve("rootfs/overlays/android_host.py"))
+    overlayFiles.from(listOf("android_host.py", "sitecustomize.py", "android_ocr.py").map {
+        rootDir.parentFile.resolve("rootfs/overlays/$it")
+    })
     outputDir.set(layout.buildDirectory.dir("generated/androidHostOverlay"))
 }
 
@@ -169,7 +179,39 @@ if (providers.gradleProperty("azurpilot.slimApk").orNull != "true") {
         .configureEach { dependsOn(verifyBundledAzurPilotRuntime) }
 }
 
+// NPU 运行库缺失时明确拒绝打包，避免发布只带接口却无法请求加速的 APK。
+val verifyBundledOcrRuntime = tasks.register("verifyBundledOcrRuntime") {
+    val expectedVersion = libs.versions.litert.get()
+    doLast {
+        val runtime = rootDir.parentFile.resolve(".tmp/ocr-runtime")
+        val manifest = runtime.resolve("assets/ocr/runtime.json")
+        check(manifest.isFile) {
+            "Run python app/scripts/fetch_ocr_runtime.py before building an APK"
+        }
+        check(manifest.readText().contains("\"litert\": \"$expectedVersion\"")) {
+            "LiteRT core and bundled vendor plugins must use the same version"
+        }
+        check(runtime.resolve("assets/ocr/hiai-runtime.json").isFile) {
+            "HiAI runtime provenance is missing; run app/scripts/fetch_ocr_runtime.py"
+        }
+        if (providers.gradleProperty("azurpilot.releaseAbi").orNull != "x86_64") {
+            listOf("libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
+                "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
+                "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so",
+                "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so",
+                "libhiai.so", "libhiai_ir.so", "libhiai_ir_build.so",
+                "libhiai_model_compatible.so", "libhiai_enhance.so").forEach {
+                check(runtime.resolve("jni/arm64-v8a/$it").isFile) { "Missing OCR library: $it" }
+            }
+        }
+    }
+}
+tasks.matching { it.name.startsWith("package") || it.name.startsWith("assemble") }
+    .configureEach { dependsOn(verifyBundledOcrRuntime) }
+
 dependencies {
+    implementation(libs.litert)
+    implementation(libs.onnxruntime.android)
     // 隐藏框架 API 的实现只在运行时的平台上存在，编译期仅需签名镜像，故 compileOnly
     compileOnly(project(":hidden-api"))
 

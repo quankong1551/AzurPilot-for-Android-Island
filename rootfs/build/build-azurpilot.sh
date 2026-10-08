@@ -118,6 +118,7 @@ VENV_SITE_PACKAGES="$(find "$ROOTFS_DIR/opt/azurpilot/.venv/lib" -maxdepth 2 -ty
 [[ -n "$VENV_SITE_PACKAGES" ]] || { echo 'AzurPilot venv site-packages missing' >&2; exit 1; }
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_process_compat.py" "$VENV_SITE_PACKAGES/android_process_compat.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/sitecustomize.py" "$VENV_SITE_PACKAGES/sitecustomize.py"
+install -m 0644 "$REPO_ROOT/rootfs/overlays/android_ocr.py" "$VENV_SITE_PACKAGES/android_ocr.py"
 guest /bin/sh -c 'cd /opt/azurpilot && .venv/bin/python -m module.config.config_updater'
 
 FRONTEND="$ROOTFS_DIR/opt/azurpilot/frontend"

@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "upstream_commit": "1841cb1941751a81ab70668b4d2383c369c4506e",
+  "converter": "onnx2tf==2.6.9",
+  "models": [
+    {
+      "asset": "models/ppocr-v6/PP-OCRv6_tiny_rec.onnx",
+      "sha256": "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            3,
+            48,
+            "DynamicDimension.1"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fetch_name_0",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            "floor(floor(floor(DynamicDimension.1/2 - 1/2)/2)/2 - 1/2) + 1",
+            6906
+          ]
+        }
+      ],
+      "custom_metadata_map": {},
+      "litert": {
+        "asset": "litert/PP-OCRv6_tiny_rec.tflite",
+        "sha256": "1db0f2c7a1038deee2162912b07c0e914b8591f33e9b2f1d679a061c2fd5e533",
+        "input_layout": "nhwc",
+        "input_shape": [
+          1,
+          48,
+          320,
+          3
+        ],
+        "output_shape": [
+          1,
+          40,
+          6906
+        ],
+        "input_name": "x",
+        "output_name": "fetch_name_0",
+        "cpu_max_abs_error": 4.589557647705078e-05
+      },
+      "mnn": {
+        "asset": "mnn/PP-OCRv6_tiny_rec.mnn",
+        "sha256": "8d1c8e6be4882ceb8fb1d00f2fcddf9ec877941fbe56cd4c7bc47e93ffbbc492",
+        "converter": "MNN==3.6.1",
+        "input_layout": "nchw",
+        "input_shape": [
+          1,
+          3,
+          48,
+          320
+        ],
+        "output_shape": [
+          1,
+          40,
+          6906
+        ],
+        "cpu_max_abs_error": 0.005723774433135986
+      }
+    },
+    {
+      "asset": "models/ppocr-v6/PP-OCRv6_small_rec.onnx",
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            3,
+            48,
+            "DynamicDimension.1"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fetch_name_0",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            "Reshape_471_o0__d2",
+            18710
+          ]
+        }
+      ],
+      "custom_metadata_map": {},
+      "litert": {
+        "asset": "litert/PP-OCRv6_small_rec.tflite",
+        "sha256": "7dca70f6ff1852fd4f75baa5150721de08e0e3d7d91869c4ab763017e20a2a6f",
+        "input_layout": "nhwc",
+        "input_shape": [
+          1,
+          48,
+          320,
+          3
+        ],
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "input_name": "x",
+        "output_name": "fetch_name_0",
+        "cpu_max_abs_error": 9.417533874511719e-06
+      },
+      "mnn": {
+        "asset": "mnn/PP-OCRv6_small_rec.mnn",
+        "sha256": "988998f0143db84ad17976c30cffb6ea19835bfc17d76e3e2a0f5d0643eb1c9b",
+        "converter": "MNN==3.6.1",
+        "input_layout": "nchw",
+        "input_shape": [
+          1,
+          3,
+          48,
+          320
+        ],
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "cpu_max_abs_error": 0.0036829710006713867
+      }
+    },
+    {
+      "asset": "models/azur_lane/alocr-en-us-v2.6.nvc.onnx",
+      "sha256": "35413805f63b5fb13a0060b1cf3d5fcefb2fba6b88a3e85a1e1ae236533af5f6",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            3,
+            48,
+            "DynamicDimension.1"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fetch_name_0",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.2",
+            "DynamicDimension.3",
+            97
+          ]
+        }
+      ],
+      "custom_metadata_map": {},
+      "litert": {
+        "asset": "litert/alocr-en-us-v2.6.nvc.tflite",
+        "sha256": "138a6dcad4e3596a43070a6752e6c01f4534d0702ea34fddda6da2304e87d337",
+        "input_layout": "nhwc",
+        "input_shape": [
+          1,
+          48,
+          320,
+          3
+        ],
+        "output_shape": [
+          1,
+          40,
+          97
+        ],
+        "input_name": "x",
+        "output_name": "fetch_name_0",
+        "cpu_max_abs_error": 3.933906555175781e-06
+      },
+      "mnn": {
+        "asset": "mnn/alocr-en-us-v2.6.nvc.mnn",
+        "sha256": "648abcbc18730aa60e4259510eab8e36fbc77eb33c637d103ade5a399955becc",
+        "converter": "MNN==3.6.1",
+        "input_layout": "nchw",
+        "input_shape": [
+          1,
+          3,
+          48,
+          320
+        ],
+        "output_shape": [
+          1,
+          40,
+          97
+        ],
+        "cpu_max_abs_error": 5.0067901611328125e-06
+      }
+    },
+    {
+      "asset": "models/zh-CN/alocr-zh-cn-v3.dtk.onnx",
+      "sha256": "d0cd4977b80b1138239f88ce6b5de8e421d508fdf6da63b744e6077a4e2af0f3",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            3,
+            48,
+            "DynamicDimension.1"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fetch_name_0",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.2",
+            "DynamicDimension.3",
+            18385
+          ]
+        }
+      ],
+      "custom_metadata_map": {},
+      "litert": {
+        "asset": "litert/alocr-zh-cn-v3.dtk.tflite",
+        "sha256": "bc03b548eab82fd5ed8667d724f46bbeb452f113671b573253a6771bee0fa917",
+        "input_layout": "nhwc",
+        "input_shape": [
+          1,
+          48,
+          320,
+          3
+        ],
+        "output_shape": [
+          1,
+          40,
+          18385
+        ],
+        "input_name": "x",
+        "output_name": "fetch_name_0",
+        "cpu_max_abs_error": 2.09808349609375e-05
+      },
+      "mnn": {
+        "asset": "mnn/alocr-zh-cn-v3.dtk.mnn",
+        "sha256": "c4507ba797e1c823264fc39cb2f0b94e93362bed171fce6a7b7fa19580cfbca1",
+        "converter": "MNN==3.6.1",
+        "input_layout": "nchw",
+        "input_shape": [
+          1,
+          3,
+          48,
+          320
+        ],
+        "output_shape": [
+          1,
+          40,
+          18385
+        ],
+        "cpu_max_abs_error": 0.0002779960632324219
+      }
+    },
+    {
+      "asset": "models/det/PP-OCRv6_tiny_det.onnx",
+      "sha256": "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "tensor(float)",
+          "shape": [
+            "DynamicDimension.0",
+            3,
+            "DynamicDimension.1",
+            "DynamicDimension.2"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fetch_name_0",
+          "type": "tensor(float)",
+          "shape": [
+            "ConvTranspose_459_o0__d0",
+            1,
+            "ConvTranspose_459_o0__d2",
+            "ConvTranspose_459_o0__d3"
+          ]
+        }
+      ],
+      "custom_metadata_map": {}
+    }
+  ]
+}

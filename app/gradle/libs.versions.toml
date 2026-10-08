@@ -8,6 +8,9 @@ ksp = "2.3.9"
 kotlinpoet = "2.3.0"
 snakeyamlEngine = "2.9"
 floatingX = "2.3.7"
+# 与公开 JIT 插件钉在同一发行版，避免厂商插件 ABI 混用。
+litert = "2.1.0rc1"
+onnxruntime = "1.24.3"
 
 # 首启解压 rootfs.tar.xz：纯 Java 流式解 tar/xz（busybox tar 解 ubuntu 硬链接必炸，不用）
 commonsCompress = "1.27.1"
@@ -50,6 +53,8 @@ mockk = "1.14.11"
 coroutinesTest = "1.10.2"
 
 [libraries]
+litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }

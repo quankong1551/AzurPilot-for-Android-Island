@@ -43,6 +43,8 @@ object Routes {
     const val SETTINGS_ADVANCED = "settings/advanced"
     const val SETTINGS_WIDGET = "settings/widget"
     const val SETTINGS_RUNTIME = "settings/runtime"
+    /** OCR 后端状态和本机测试页。 / OCR backend status and local tests. */
+    const val SETTINGS_OCR = "settings/ocr"
     const val SETTINGS_ABOUT = "settings/about"
 
     /** 机型报告预览与提交页。 / Device report preview and submission page. */

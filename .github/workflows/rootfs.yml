@@ -279,6 +279,13 @@ jobs:
           python3 app/scripts/test_build_device_catalog.py
           python3 app/scripts/build_device_catalog.py
 
+      - uses: astral-sh/setup-uv@v6
+      - name: Prepare pinned OCR NPU runtime
+        run: |
+          python3 app/scripts/fetch_ocr_runtime.py
+          python3 app/scripts/test_verify_ocr_assets.py
+          uv run --no-project --python 3.12 --with numpy==2.2.6 --with onnx==1.20.1 --with onnxruntime==1.26.0 rootfs/tests/test_android_ocr.py
+
       - name: Inject device reporting mTLS credentials
         env:
           REPORT_CERT_BASE64: ${{ secrets.AZURPILOT_DEVICE_REPORT_CERT_BASE64 }}
@@ -343,8 +350,9 @@ jobs:
           # 把 Kotlin/KSP/CMake 全部重编一遍纯属白烧
           ./gradlew "$build_variant" -Pazurpilot.slimApk=true "${gradle_args[@]}"
           cp "app/build/outputs/apk/$variant/"*.apk ../dist/azurpilot-update.apk
-          # 增量包只有个位数 MB：兜住「增量重打包没生效、把完整包当增量包发出去」
-          test "$(wc -c < ../dist/azurpilot-update.apk)" -lt 50000000
+          # 模型和厂商运行库增大轻量包；直接检查 tarball 条目，防止误发布完整 rootfs。
+          python3 scripts/verify_ocr_assets.py ../dist/*.apk
+          python3 -c 'import zipfile; z=zipfile.ZipFile("../dist/azurpilot-update.apk"); assert "assets/rootfs/rootfs.tar.xz" not in z.namelist()'
           python3 scripts/verify_device_report_assets.py --credentials-dir ../.tmp/report-credentials ../dist/*.apk
       - name: Clear temporary device reporting credentials
         if: always()

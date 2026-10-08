@@ -6,6 +6,7 @@ import com.azurpilot.ghio.proot.AzurPilotPreferences
 import com.azurpilot.ghio.proot.AzurPilotRepository
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.proot.ProotHost
+import com.azurpilot.ghio.ocr.OcrServer
 import org.koin.android.ext.koin.androidApplication
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
@@ -18,7 +19,8 @@ import org.koin.dsl.module
  * gateway, preference store, and repository.
  */
 val prootModule = module {
-    single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get(), get()) }
+    single { OcrServer(androidContext()) }
+    single { ProotHost(androidApplication(), get(named<AppCoroutineScope>()), get(), get(), get()) }
     single {
         val autoUpdater = get<com.azurpilot.ghio.provision.RuntimeAutoUpdater>()
         AzurPilotRunController(

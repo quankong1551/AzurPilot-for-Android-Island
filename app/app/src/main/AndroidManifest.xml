@@ -59,6 +59,16 @@
         android:localeConfig="@xml/locales_config"
         tools:targetApi="33">
 
+        <!-- LiteRT 已声明新款 RPC 和 NeuroPilot 库；旧款 DSP 的可选 RPC 库还需补充声明。 -->
+        <uses-native-library android:name="libadsprpc.so" android:required="false" />
+
+        <!-- HiAI 客户端按系统版本加载服务库；Android 12+ 需要声明公开的非 NDK 库。 -->
+        <uses-native-library android:name="libai_client.so" android:required="false" />
+        <uses-native-library android:name="libhiai_foundation.huawei.so" android:required="false" />
+        <uses-native-library android:name="libai_fmk_hcl_model_runtime.so" android:required="false" />
+        <uses-native-library android:name="libai_om_event_manager.so" android:required="false" />
+        <uses-native-library android:name="libhiai_om.so" android:required="false" />
+
         <!--
           小米澎湃OS 平板「工作台」无极窗口 2.0（窗口在范围内任意缩放，见 doc/xiaomi-workstation.md）
           走 property 而非 meta-data；ENABLED 只能挂在 application，MODE=1 全无极（2 竖无极 / 3 横无极），

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""校验 APK 中的模型、来源清单及多厂商 NPU 库。
+
+只读取 ZIP 条目，不解压 APK；x86_64 专用包允许不包含 ARM64 厂商库。
+
+Verifies APK model checksums, source manifests, and vendor NPU libraries.
+Reads ZIP entries without extraction; x86_64-only APKs may omit ARM64 vendor libraries.
+"""
+
+import argparse
+import hashlib
+import json
+import zipfile
+from pathlib import Path
+
+LITERT_VERSION = "2.1.0rc1"
+REQUIRED_LIBRARIES = {
+    "libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
+    "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
+    "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so",
+    "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so",
+} | {f"libQnnHtpV{version}{kind}.so"
+     for version in [68, 69, 73, 75, 79, 81] for kind in ["Skel", "Stub"]}
+HIAI_LIBRARIES = {"libhiai.so", "libhiai_ir.so", "libhiai_ir_build.so",
+                  "libhiai_model_compatible.so", "libhiai_enhance.so"}
+MNN_SOURCE_COMMIT = "024a946b0b8fcf87c8a418229fadd4cd7858ffba"
+HIAI_SOURCE_COMMIT = "220e2070f1fad9005d6ed06d33520e559cdac7ec"
+
+
+def verify(archive):
+    """拒绝缺失、混版或损坏的 OCR 包。 / Rejects incomplete, mismatched, or corrupt OCR packages."""
+    names = set(archive.namelist())
+    manifest = json.loads(archive.read("assets/ocr/manifest.json"))
+    runtime = json.loads(archive.read("assets/ocr/runtime.json"))
+    hiai = json.loads(archive.read("assets/ocr/hiai-runtime.json"))
+    if runtime["litert"] != LITERT_VERSION:
+        raise ValueError("LiteRT runtime and vendor plugins have mismatched versions")
+    for model in manifest["models"]:
+        if "litert" in model and "mnn" not in model:
+            raise ValueError(f"Missing HiAI OCR conversion: {model['asset']}")
+        for spec in [model] + [model[key] for key in ["litert", "mnn"] if key in model]:
+            actual = hashlib.sha256(archive.read(f"assets/ocr/{spec['asset']}")).hexdigest()
+            if actual != spec["sha256"]:
+                raise ValueError(f"OCR model checksum mismatch: {spec['asset']}")
+    if any(name.startswith("lib/arm64-v8a/") for name in names):
+        if set(runtime["libraries"]) != REQUIRED_LIBRARIES:
+            raise ValueError("Incomplete OCR vendor runtime manifest")
+        for name, checksum in runtime["libraries"].items():
+            actual = hashlib.sha256(archive.read(f"lib/arm64-v8a/{name}")).hexdigest()
+            if actual != checksum:
+                raise ValueError(f"NPU library checksum mismatch: {name}")
+        if hiai["mnn_source_commit"] != MNN_SOURCE_COMMIT or hiai["hiai_source_commit"] != HIAI_SOURCE_COMMIT:
+            raise ValueError("Mismatched HiAI/MNN source versions")
+        if set(hiai["libraries"]) != HIAI_LIBRARIES:
+            raise ValueError("Incomplete HiAI runtime manifest")
+        for name, checksum in hiai["libraries"].items():
+            if hashlib.sha256(archive.read(f"lib/arm64-v8a/{name}")).hexdigest() != checksum:
+                raise ValueError(f"HiAI library checksum mismatch: {name}")
+        for name in ["libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so"]:
+            if f"lib/arm64-v8a/{name}" not in names:
+                raise ValueError(f"Missing HiAI bridge library: {name}")
+    for name in ["android_host.py", "android_ocr.py", "sitecustomize.py"]:
+        if f"assets/overlays/{name}" not in names:
+            raise ValueError(f"Missing runtime overlay: {name}")
+    if "assets/ocr/test/sample.png" not in names:
+        raise ValueError("Missing OCR test image")
+    sample = archive.read("assets/ocr/test/sample.png")
+    if not sample.startswith(b"\x89PNG\r\n\x1a\n") or sample[16:24] != (320).to_bytes(4, "big") + (48).to_bytes(4, "big"):
+        raise ValueError("Invalid OCR test image dimensions")
+    if "assets/ocr/licenses/neuropilot-license.pdf" not in names:
+        raise ValueError("Missing NeuroPilot license")
+    for name in ["hiai-LICENSE.txt", "mnn-LICENSE.txt", "mnn-flatbuffers-LICENSE.txt", "mnn-half-LICENSE.txt"]:
+        if f"assets/ocr/licenses/{name}" not in names:
+            raise ValueError(f"Missing NPU license: {name}")
+
+
+def main():
+    """校验命令行指定的 APK。 / Verifies APKs specified on the command line."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("apks", nargs="+", type=Path)
+    args = parser.parse_args()
+    for path in args.apks:
+        with zipfile.ZipFile(path) as archive:
+            verify(archive)
+        print(f"OCR assets verified: {path.name}")
+
+
+if __name__ == "__main__":
+    main()

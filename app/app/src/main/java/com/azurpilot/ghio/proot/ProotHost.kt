@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.AppPaths
+import com.azurpilot.ghio.ocr.OcrServer
 import com.azurpilot.ghio.provision.RuntimeArch
 import com.azurpilot.ghio.provision.RootfsProvisioner
 import com.azurpilot.ghio.service.RunForegroundService
@@ -22,6 +23,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import timber.log.Timber
 import java.io.File
 import java.io.RandomAccessFile
@@ -64,6 +68,7 @@ class ProotHost(
     private val scope: CoroutineScope,
     private val settings: AppSettingsManager,
     private val provisioner: RootfsProvisioner,
+    private val ocrServer: OcrServer,
 ) {
 
     private val _state = MutableStateFlow(ProotSnapshot())
@@ -218,6 +223,7 @@ class ProotHost(
         // 否则设置刚改完立刻重启时拿到的还是旧值
         awaitSettingsLoaded()
         syncHostOverlay()
+        ocrServer.start()
         writeRemoteAccessConfig()
         val proc = runCatching { spawnSession() }.getOrElse {
             fail("exec proot: ${it.message}")
@@ -318,6 +324,8 @@ class ProotHost(
         "AZURPILOT_ROOT" to GUEST_INSTALL_ROOT,
         "AZURPILOT_ANDROID" to "1",
         "AZURPILOT_ANDROID_TOKEN" to AndroidControlAuth.get(app),
+        "AZURPILOT_OCR_ADDRESS" to ocrServer.address,
+        "PYTHONPATH" to GUEST_INSTALL_ROOT,
         // 局域网控制开关：android_host.py 读此位决定 gui.py 绑 0.0.0.0 还是 127.0.0.1。
         // 公网监听下上游自动生成 WebUI 访问口令；/android 薄接口的回环校验不受影响
         "AZURPILOT_ANDROID_LAN" to if (settings.lanControlEnabled.value) "1" else "0",
@@ -487,7 +495,7 @@ class ProotHost(
     }
 
     /**
-     * 用 APK 内置资产覆盖 rootfs 里的 android_host.py（内容一致则跳过）。
+     * 用 APK 内置资产覆盖宿主和 OCR overlay（内容一致则跳过）。
      *
      * 该文件是 app↔运行时的边界契约（拉起参数、stdin EOF 契约、绑定地址开关），
      * 以 APK 资产为准：热更只 git 重置上游源码、不更新这个 untracked 文件，
@@ -495,7 +503,7 @@ class ProotHost(
      *
      * 覆盖失败（如老包无此资产）只记日志，沿用 rootfs 既有副本。
      *
-     * Overwrites the rootfs's android_host.py with the APK-bundled asset
+     * Overwrites the rootfs host and OCR overlays with APK-bundled assets
      * (skipped when the content already matches).
      *
      * The file is the app↔runtime boundary contract (spawn arguments, the stdin
@@ -506,20 +514,54 @@ class ProotHost(
      * asset, say) only logs and keeps the rootfs's existing copy.
      */
     private fun syncHostOverlay() {
-        runCatching {
-            val target = File(installDir, HOST_OVERLAY_NAME)
-            val tmp = File(installDir, "$HOST_OVERLAY_NAME.tmp")
-            app.assets.open("overlays/$HOST_OVERLAY_NAME").use { input ->
-                tmp.outputStream().use { input.copyTo(it) }
+        listOf(HOST_OVERLAY_NAME, "sitecustomize.py", "android_ocr.py").forEach { name ->
+            runCatching {
+                val target = File(installDir, name)
+                val tmp = File(installDir, "$name.tmp")
+                app.assets.open("overlays/$name").use { input ->
+                    tmp.outputStream().use { input.copyTo(it) }
+                }
+                if (target.isFile && target.readBytes().contentEquals(tmp.readBytes())) {
+                    tmp.delete()
+                } else {
+                    // POSIX rename 可原子替换旧文件；失败时仍保留完整旧副本。
+                    if (!tmp.renameTo(target)) error("rename to $target failed")
+                    Timber.i("%s overlay synced from APK asset", name)
+                }
+            }.onFailure { Timber.w(it, "sync %s overlay failed", name) }
+        }
+    }
+
+    /**
+     * 在已启动的 AP 环境里执行 OCR 测试；使用同一环境变量，不改用户配置。
+     *
+     * IO 线程持启动锁，避免测试文件同步和运行时重建交错；驱动编译最多等待四分钟。
+     *
+     * Tests OCR in the running AP environment with the normal injected environment, without
+     * changing user settings. Holds the start mutex on IO to avoid racing runtime replacement;
+     * allows up to four minutes for driver compilation.
+     */
+    suspend fun testOcrIntegration(hash: String): JsonObject = withContext(AppDispatchers.IO) {
+        startMutex.withLock {
+            check(_state.value.phase == ProotPhase.RUNNING && session?.isAlive == true) {
+                "Start AzurPilot before testing project integration"
             }
-            if (target.isFile && target.readBytes().contentEquals(tmp.readBytes())) {
-                tmp.delete()
-            } else {
-                target.delete()
-                if (!tmp.renameTo(target)) error("rename to $target failed")
-                Timber.i("android_host.py overlay synced from APK asset")
+            require(Regex("[a-f0-9]{64}").matches(hash))
+            syncHostOverlay()
+            val sample = File(installDir, "android_ocr_sample.png")
+            val temporary = File(installDir, "android_ocr_sample.png.tmp")
+            app.assets.open("ocr/test/sample.png").use { input ->
+                temporary.outputStream().use { input.copyTo(it) }
             }
-        }.onFailure { Timber.w(it, "sync android_host.py overlay failed") }
+            check(temporary.renameTo(sample)) { "Could not install OCR test image" }
+            val result = runGuestRaw(listOf(".venv/bin/python", "-m", "android_ocr",
+                "--self-test", "--model-sha256", hash), 240_000L)
+            check(!result.timedOut) { "AP OCR test timed out" }
+            val marker = "ANDROID_OCR_TEST="
+            val line = result.output.lineSequence().lastOrNull { it.startsWith(marker) }
+                ?: error("AP OCR test produced no result: ${result.output.takeLast(500)}")
+            Json.parseToJsonElement(line.removePrefix(marker)).jsonObject
+        }
     }
 
     /**

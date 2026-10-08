@@ -9,6 +9,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import java.io.File
 
 /**
  * 会被 native 代码或其他进程按字面名查找的类
@@ -30,6 +31,9 @@ internal val R8_CRITICAL_CLASSES = setOf(
     "com.azurpilot.ghio.remote.RemoteServiceImpl",
     "com.azurpilot.ghio.root.RootServiceStarter",
     "com.azurpilot.ghio.root.RootUserService",
+    "com.azurpilot.ghio.ocr.OcrNative",
+    "com.azurpilot.ghio.ocr.OcrHiaiNative",
+    "com.google.ai.edge.litert.JniHandle",
 )
 
 /**
@@ -67,6 +71,15 @@ abstract class VerifyR8KeepsTask : DefaultTask() {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val mapping: RegularFileProperty
 
+    /**
+     * 保留成员的清单；R8 映射可能省略未改名的字段。
+     *
+     * Kept-member list; R8 mappings may omit fields whose names are unchanged.
+     */
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    val seeds: File get() = mapping.get().asFile.resolveSibling("seeds.txt")
+
     /** 需要保名验证的类全集 / The set of classes whose name must survive. */
     @get:Input
     abstract val criticalClasses: SetProperty<String>
@@ -95,6 +108,19 @@ abstract class VerifyR8KeepsTask : DefaultTask() {
                 else -> "$name was renamed to $mapped"
             }
         }.toMutableList()
+        // OCR JNI 读取这个字段；仅保留类名还不足以保证原生句柄可访问。
+        val handleClass = "com.google.ai.edge.litert.JniHandle"
+        val handleStart = lines.indexOf("$handleClass -> $handleClass:")
+        val handleEnd = if (handleStart < 0) -1 else lines.subList(handleStart + 1, lines.size)
+            .indexOfFirst { line -> !line.startsWith(" ") && line.endsWith(":") }
+            .let { index -> if (index < 0) lines.size else handleStart + 1 + index }
+        val handleRenamed = handleStart >= 0 && lines.subList(handleStart, handleEnd).any {
+            val line = it.trim()
+            line.startsWith("long handle -> ") && line != "long handle -> handle"
+        }
+        if (handleStart < 0 || handleRenamed || !seeds.readLines().contains("$handleClass: long handle")) {
+            broken += "$handleClass.handle was removed or renamed"
+        }
         criticalNoArgConstructors.get().forEach { name ->
             val constructor = "    0:3:void <init>():"
             val classStart = lines.indexOf("$name -> $name:")

@@ -71,3 +71,35 @@ set_target_properties(launcher PROPERTIES
 # bridge uses Android log, Surface, Bitmap, Media NDK, and EGL/GLES APIs; launcher needs only log.
 target_link_libraries(bridge log android jnigraphics mediandk EGL GLESv2)
 target_link_libraries(launcher log)
+
+# OCR 诊断桥仅动态读取 LiteRT C API，不依赖厂商 SDK 头文件或 NNAPI。
+# The OCR diagnostics bridge reads LiteRT C APIs dynamically without vendor headers or NNAPI.
+add_library(ocrdiagnostics SHARED ocr_diagnostics.cpp)
+target_link_libraries(ocrdiagnostics dl)
+
+# HiAI 客户端只提供 ARM64。MNN 的 CPU 备援和 NNAPI 均在此路径禁用。
+# HiAI clients support ARM64 only; this path disables MNN CPU backup and NNAPI.
+if (ANDROID_ABI STREQUAL "arm64-v8a")
+    get_filename_component(OCR_MNN_SOURCE
+            "${CMAKE_CURRENT_LIST_DIR}/../../../../../.tmp/ocr-runtime/sources/mnn" ABSOLUTE)
+    if (NOT EXISTS "${OCR_MNN_SOURCE}/.ocr-hiai-version")
+        message(FATAL_ERROR "Run app/scripts/fetch_ocr_runtime.py to prepare HiAI/MNN sources")
+    endif ()
+    set(MNN_BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(MNN_NPU ON CACHE BOOL "" FORCE)
+    set(MNN_NPU_BACKENDS_SHARED ON CACHE BOOL "" FORCE)
+    set(MNN_SEP_BUILD OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_CONVERTER OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_QUANTOOLS OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+    set(MNN_NNAPI OFF CACHE BOOL "" FORCE)
+    set(MNN_OPENCL OFF CACHE BOOL "" FORCE)
+    set(MNN_VULKAN OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${OCR_MNN_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/ocr-mnn")
+    add_library(ocrhiai SHARED ocr_hiai.cpp)
+    target_include_directories(ocrhiai PRIVATE "${OCR_MNN_SOURCE}/include"
+            "${OCR_MNN_SOURCE}/source/backend/hiai/include")
+    target_link_libraries(ocrhiai MNN dl)
+    add_dependencies(ocrhiai MNN_NPU)
+endif ()

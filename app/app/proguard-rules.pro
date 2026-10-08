@@ -61,3 +61,8 @@
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
+
+# OCR JNI 的公开 C API 诊断需要 Model 的原生句柄；和 LiteRT 钉版一起维护。
+-keep class com.google.ai.edge.litert.JniHandle { *; }
+-keep class com.azurpilot.ghio.ocr.OcrNative { *; }
+-keep class com.azurpilot.ghio.ocr.OcrHiaiNative { *; }

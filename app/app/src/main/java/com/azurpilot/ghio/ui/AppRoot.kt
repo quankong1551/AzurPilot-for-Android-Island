@@ -117,6 +117,7 @@ import com.azurpilot.ghio.ui.settings.LicenseDetailPage
 import com.azurpilot.ghio.ui.settings.LogsSettingsPage
 import com.azurpilot.ghio.ui.settings.OpenSourceLicensesPage
 import com.azurpilot.ghio.ui.settings.RuntimeSettingsPage
+import com.azurpilot.ghio.ui.settings.OcrSettingsPage
 import com.azurpilot.ghio.ui.settings.DeviceReportSettingsPage
 import com.azurpilot.ghio.ui.settings.VirtualDisplaySettingsPage
 import com.azurpilot.ghio.ui.settings.WidgetSettingsPage
@@ -761,6 +762,9 @@ fun AppRoot(
                 }
                 composable(Routes.SETTINGS_RUNTIME) {
                     RuntimeSettingsPage(onBack = { navController.popBackStack() })
+                }
+                composable(Routes.SETTINGS_OCR) {
+                    OcrSettingsPage(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.SETTINGS_ABOUT) {
                     AboutSettingsPage(
