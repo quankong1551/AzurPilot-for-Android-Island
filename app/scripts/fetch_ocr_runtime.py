@@ -78,7 +78,8 @@ def main():
         for vendor, folder in [("Qualcomm", "qualcomm_runtime_v69"), ("MediaTek", "mediatek_runtime")]:
             for kind in ["CompilerPlugin", "Dispatch"]:
                 name = f"libLiteRt{kind}_{vendor}.so"
-                write(name, archive.read(f"{folder}/src/main/jni/arm64-v8a/{name}"))
+                installed_name = "libLiteRtDispatch_MediaTek_Vendor.so" if vendor == "MediaTek" and kind == "Dispatch" else name
+                write(installed_name, archive.read(f"{folder}/src/main/jni/arm64-v8a/{name}"))
 
     with zipfile.ZipFile(archives["qnn-runtime.aar"]) as archive:
         names = ["libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so"]

@@ -77,6 +77,14 @@ target_link_libraries(launcher log)
 add_library(ocrdiagnostics SHARED ocr_diagnostics.cpp)
 target_link_libraries(ocrdiagnostics dl)
 
+# 使用公开 dispatch ABI 补回无填充布局修正，厂商执行库以独立名称内置。
+# Wraps the public dispatch ABI to correct unpadded layouts; the vendor library is bundled separately.
+if (ANDROID_ABI STREQUAL "arm64-v8a")
+    add_library(LiteRtDispatch_MediaTek SHARED ocr_mtk_dispatch.cpp)
+    target_include_directories(LiteRtDispatch_MediaTek PRIVATE third_party/litert)
+    target_link_libraries(LiteRtDispatch_MediaTek dl log)
+endif ()
+
 # HiAI 客户端只提供 ARM64。MNN 的 CPU 备援和 NNAPI 均在此路径禁用。
 # HiAI clients support ARM64 only; this path disables MNN CPU backup and NNAPI.
 if (ANDROID_ABI STREQUAL "arm64-v8a")

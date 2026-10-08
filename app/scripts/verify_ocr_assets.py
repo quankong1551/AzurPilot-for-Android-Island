@@ -22,7 +22,7 @@ MEDIATEK_SYSTEM_LIBRARIES = {
 }
 REQUIRED_LIBRARIES = {
     "libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
-    "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
+    "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek_Vendor.so",
     "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so",
     "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so",
 } | {f"libQnnHtpV{version}{kind}.so"
@@ -70,9 +70,9 @@ def verify(archive):
         for name, checksum in hiai["libraries"].items():
             if hashlib.sha256(archive.read(f"lib/arm64-v8a/{name}")).hexdigest() != checksum:
                 raise ValueError(f"HiAI library checksum mismatch: {name}")
-        for name in ["libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so"]:
+        for name in ["libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so", "libLiteRtDispatch_MediaTek.so"]:
             if f"lib/arm64-v8a/{name}" not in names:
-                raise ValueError(f"Missing HiAI bridge library: {name}")
+                raise ValueError(f"Missing OCR bridge library: {name}")
     for name in ["android_host.py", "android_ocr.py", "sitecustomize.py"]:
         if f"assets/overlays/{name}" not in names:
             raise ValueError(f"Missing runtime overlay: {name}")

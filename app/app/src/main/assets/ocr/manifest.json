@@ -97,7 +97,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/PP-OCRv6_small_rec.tflite",
-        "sha256": "d31617e3d19594e6167461a692bbc7f9c03336da06c6d31377417f05e19ace79",
+        "sha256": "1f29c859081551b9edfc625a6d241ee5f4d67278c83fa1a6db06589b4d668f78",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -162,7 +162,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-en-us-v2.6.nvc.tflite",
-        "sha256": "566b143c383fd80091705336e270de2318328073cbcfec6af8f8929a351780b3",
+        "sha256": "5e7a1384ae685d8162af7985826a7589a11a47498ddceb19da754ecd948d5e1d",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -227,7 +227,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-zh-cn-v3.dtk.tflite",
-        "sha256": "52730fe95fa654a9e67165a510ff452bf7c07293ae52eb74a6f5589c4d3c7326",
+        "sha256": "41054a34fadb82ef4c208db1b401108b087da3a49666ad9d2ce49d6e242df3ec",
         "input_layout": "nhwc",
         "input_shape": [
           1,

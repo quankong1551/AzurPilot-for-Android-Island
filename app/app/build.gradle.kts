@@ -249,7 +249,7 @@ val verifyBundledOcrRuntime = tasks.register("verifyBundledOcrRuntime") {
         }
         if (providers.gradleProperty("azurpilot.releaseAbi").orNull != "x86_64") {
             listOf("libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
-                "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
+                "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek_Vendor.so",
                 "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so",
                 "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so",
                 "libhiai.so", "libhiai_ir.so", "libhiai_ir_build.so",

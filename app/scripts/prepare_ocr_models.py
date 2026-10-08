@@ -113,6 +113,9 @@ def check_conversion(source, converted):
     _, unnormalized = normalize_batch_matmul_ranks(converted.read_bytes())
     if unnormalized:
         raise ValueError("OCR BatchMatMul input ranks must be normalized before packaging")
+    _, high_rank = normalize_singleton_ranks(converted.read_bytes())
+    if high_rank:
+        raise ValueError("OCR temporary singleton ranks must be normalized before packaging")
     if any(op["op_name"] == "CUSTOM" for op in lite._get_ops_details()):
         raise ValueError("OCR conversions must not contain custom operators before NPU compilation")
     inp = lite.get_input_details()[0]
@@ -146,6 +149,119 @@ def check_conversion(source, converted):
         "output_name": out["name"],
         "cpu_max_abs_error": worst_error,
     }
+
+
+def normalize_singleton_ranks(data):
+    """从 reshape、transpose、split 的内部 5 维张量消去一个单维轴。
+
+    保持图输入输出和数据顺序，克隆控制常量以保留共享消费者；未知算子或动态维度拒绝。
+
+    Removes one singleton axis from internal rank-five reshape/transpose/split tensors.
+    Preserves graph I/O and data order, cloning controls to protect shared consumers.
+    Rejects unknown operators or dynamic dimensions.
+    """
+    model = schema.ModelT.InitFromObj(schema.Model.GetRootAsModel(data, 0))
+    changed = 0
+    for graph in model.subgraphs:
+        axes = {}
+        for index in list(graph.inputs) + list(graph.outputs):
+            if len(graph.tensors[int(index)].shape) > 4:
+                raise ValueError("High-rank graph I/O cannot be normalized")
+
+        def control(index, values):
+            original = graph.tensors[int(index)]
+            if original.type != schema.TensorType.INT32 or original.isVariable:
+                raise ValueError("Rank normalization requires static INT32 controls")
+            old = model.buffers[original.buffer].data
+            if old is None or len(old) == 0:
+                raise ValueError("Rank normalization requires static INT32 controls")
+            tensor = copy.deepcopy(original)
+            tensor.name = (tensor.name or b"control") + b".npu_rank4"
+            tensor.shape = [] if len(original.shape) == 0 and len(values) == 1 else [len(values)]
+            if tensor.shapeSignature is not None:
+                tensor.shapeSignature = list(tensor.shape)
+            tensor.buffer = len(model.buffers)
+            buffer = schema.BufferT()
+            buffer.data = np.frombuffer(np.asarray(values, dtype="<i4").tobytes(), dtype=np.uint8)
+            model.buffers.append(buffer)
+            graph.tensors.append(tensor)
+            return len(graph.tensors) - 1
+
+        for op in graph.operators:
+            high_inputs = [int(x) for x in op.inputs if x >= 0 and
+                           (int(x) in axes or len(graph.tensors[int(x)].shape) > 4)]
+            high_outputs = [int(x) for x in op.outputs if len(graph.tensors[int(x)].shape) > 4]
+            if not high_inputs and not high_outputs:
+                continue
+            code = model.operatorCodes[op.opcodeIndex]
+            builtin = max(code.builtinCode, code.deprecatedBuiltinCode)
+            op.inputs = list(op.inputs)
+            if any(x not in axes for x in high_inputs):
+                raise ValueError("High-rank tensors must be produced by a supported static reshape")
+            if builtin == schema.BuiltinOperator.RESHAPE:
+                for index in high_outputs:
+                    shape = list(graph.tensors[index].shape)
+                    if len(shape) != 5 or 1 not in shape:
+                        raise ValueError("High-rank reshape needs a singleton axis")
+                    axes[index] = shape.index(1)
+                if high_outputs:
+                    if len(op.outputs) != 1 or len(op.inputs) != 2:
+                        raise ValueError("Rank normalization requires a two-input reshape")
+                    output = high_outputs[0]
+                    reduced = list(graph.tensors[output].shape)
+                    del reduced[axes[output]]
+                    op.inputs[1] = control(op.inputs[1], reduced)
+                    op.builtinOptions.newShape = reduced
+            elif builtin == schema.BuiltinOperator.TRANSPOSE:
+                if len(high_inputs) != 1 or len(high_outputs) != 1:
+                    raise ValueError("Unsupported high-rank transpose")
+                tensor = graph.tensors[int(op.inputs[1])]
+                raw = model.buffers[tensor.buffer].data
+                if tensor.type != schema.TensorType.INT32 or raw is None:
+                    raise ValueError("Rank normalization requires static INT32 controls")
+                perm = list(np.frombuffer(bytes(raw), dtype="<i4"))
+                if sorted(perm) != list(range(5)):
+                    raise ValueError("Invalid high-rank transpose permutation")
+                removed = axes[high_inputs[0]]
+                axes[high_outputs[0]] = perm.index(removed)
+                op.inputs[1] = control(op.inputs[1], [int(x - (x > removed)) for x in perm if x != removed])
+            elif builtin == schema.BuiltinOperator.SPLIT:
+                if len(high_inputs) != 1 or len(high_outputs) != len(op.outputs):
+                    raise ValueError("Unsupported high-rank split")
+                tensor = graph.tensors[int(op.inputs[0])]
+                raw = model.buffers[tensor.buffer].data
+                if tensor.type != schema.TensorType.INT32 or raw is None or len(raw) != 4:
+                    raise ValueError("Rank normalization requires a static split axis")
+                split_axis = int(np.frombuffer(bytes(raw), dtype="<i4")[0])
+                if not -5 <= split_axis < 5:
+                    raise ValueError("Invalid high-rank split axis")
+                split_axis %= 5
+                removed = axes[high_inputs[0]]
+                if split_axis == removed:
+                    raise ValueError("Cannot split the removed singleton axis")
+                op.inputs[0] = control(op.inputs[0], [split_axis - int(split_axis > removed)])
+                axes.update({x: removed for x in high_outputs})
+            else:
+                raise ValueError(f"Unsupported high-rank operator: {builtin}")
+            for index in high_outputs:
+                tensor = graph.tensors[index]
+                shape = list(tensor.shape)
+                axis = axes[index]
+                if len(shape) != 5 or shape[axis] != 1 or any(d <= 0 for d in shape):
+                    raise ValueError("Rank normalization requires a static singleton axis")
+                if tensor.shapeSignature is not None:
+                    if list(tensor.shapeSignature) != shape:
+                        raise ValueError("Dynamic high-rank tensor cannot be normalized")
+                    tensor.shapeSignature = shape[:axis] + shape[axis + 1:]
+                tensor.shape = shape[:axis] + shape[axis + 1:]
+                changed += 1
+    if not changed:
+        return data, 0
+    if any(getattr(buffer, "offset", 0) or getattr(buffer, "size", 0) for buffer in model.buffers):
+        raise ValueError("External LiteRT buffers cannot be repacked")
+    builder = flatbuffers.Builder(len(data))
+    builder.Finish(model.Pack(builder), file_identifier=b"TFL3")
+    return bytes(builder.Output()), changed
 
 
 def main():
@@ -208,6 +324,10 @@ def main():
                 if count:
                     converted.write_bytes(normalized)
                 print(f"OCR_MATMUL_RANKS_NORMALIZED {source.name}: {count}")
+                normalized, count = normalize_singleton_ranks(converted.read_bytes())
+                if count:
+                    converted.write_bytes(normalized)
+                print(f"OCR_SINGLETON_RANKS_NORMALIZED {source.name}: {count}")
             item["litert"] = check_conversion(source, converted)
             if "mnn" in previous.get(expected_hash, {}):
                 item["mnn"] = previous[expected_hash]["mnn"]

@@ -137,6 +137,28 @@ MT6985 的 MDLA 策略在加载 adapter 前先尝试打开 APUSys 执行库；�
 依赖缺失，且不调用私有驱动入口。声明和加载检查仍不能证明系统服务权限、驱动兼容
 或硬件执行，修复后的实际运行需要真机确认。
 
+`launcher_logs_20261008_163411.zip` 的 1.2.107 日志没有新增原生退出：英文模型编译后
+因 `NeuronCompilation_getOutputPaddedDimensions` 只接受最多 4 维张量而失败；tiny
+模型生成 6 个实际 dispatch 分区并完成推理，但没有通过原 ONNX 精度校验，所以仍回退 CPU。
+转换脚本消去 reshape → transpose → split 链中的内部单维轴，保持公开输入输出和数据
+顺序，克隆控制常量以保护共享消费者。small、英文和中文分别改写 10、11、11 个中间
+张量，tiny 无需此改写。五项新增回归覆盖真实 LiteRT CPU 执行、共享控制输出、重复处理
+和拒绝条件；四模型 ONNX 对照仍通过，最大绝对误差约 `4.6e-5`。更新模型的 AP 冒烟测试
+仍全部识别出 `12345`，但它不执行 Android 驱动。
+
+日志还显示无填充 FP32 缓冲区带有厂商生成的 stride 描述。
+[钉版 dispatch 源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/dispatch/litert_dispatch_invocation_context.cc)
+会为无填充张量保留此描述，[上游 2.2](https://github.com/google-ai-edge/LiteRT/blob/v2.2.0/litert/vendors/mediatek/dispatch/litert_dispatch_invocation_context.cc)
+已在无填充时清除它。APK 通过公开 dispatch C ABI 包装钉版库：原库改名为
+`libLiteRtDispatch_MediaTek_Vendor.so`，原始校验和不变；标准库名由本地编译的包装库提供。
+包装只接受钉版 ABI，在静态 FP32、1–4 维、原张量无显式 stride、缓冲大小等于紧密布局，
+且 stride 前缀完全匹配钉版生成规则时清除描述。真实填充和未知布局保持原厂要求，缓冲类型、
+对齐、所有执行接口保持不变。Linux 回归编译生产包装库，检查输入输出回调、并发初始化、
+分配失败的句柄释放、错误 ABI 和缺失原库；Android NDK 构建检查实际包装库。
+此修正针对布局疑点，不能据此认定 tiny 的精度问题已经解决。首次数值对照现在记录
+`npu_accuracy`，包含 `max_abs_error` 和 `timestep_mismatches`，精度门槛不变。
+SDK 没有二进制修改，实际 MTK 结果仍需 1.2.108 真机日志验证。
+
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
 `hiai_npu_only_session_ready` 记录软件层面的就绪证据。任何错误均回退原 ONNX，
@@ -414,6 +436,34 @@ original ONNX CPU execution, avoiding the known crash branch. JNI regressions co
 absent library, a present library, and missing transitive dependencies without calling
 private driver entries. Declarations and loading checks do not establish service access,
 driver compatibility, or hardware execution; the updated path still needs device testing.
+
+The 1.2.107 logs in `launcher_logs_20261008_163411.zip` contain no new native exit. The
+English model fails after compilation because `NeuronCompilation_getOutputPaddedDimensions`
+accepts at most four dimensions. Tiny produces six actual dispatch partitions and runs,
+but fails the original ONNX accuracy gate and falls back to CPU. The conversion script removes
+internal singleton axes in reshape → transpose → split chains while preserving public I/O,
+data order, and shared controls by cloning control tensors. Small, English, and Chinese
+require 10, 11, and 11 tensor repairs respectively; tiny needs none. Five added regressions
+cover real LiteRT CPU execution, shared control outputs, idempotence, and rejection cases.
+All four ONNX comparisons still pass with maximum absolute error about `4.6e-5`; the updated
+AP smoke test still decodes `12345` for every recognizer without running Android drivers.
+
+The logs also show vendor-generated strides for unpadded FP32 buffers. The
+[pinned dispatch source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/dispatch/litert_dispatch_invocation_context.cc)
+retains these descriptions, while [upstream 2.2](https://github.com/google-ai-edge/LiteRT/blob/v2.2.0/litert/vendors/mediatek/dispatch/litert_dispatch_invocation_context.cc)
+clears them for unpadded tensors. The APK wraps the pinned library through the public dispatch
+C ABI: the original is renamed `libLiteRtDispatch_MediaTek_Vendor.so` with its checksum
+unchanged, and the locally built wrapper provides the standard library name. It accepts
+only the pinned ABI and clears strides only for static rank-one-to-four FP32 tensors with
+no explicit layout strides, an exactly packed buffer size, and a stride prefix matching
+the pinned generator. Actual padding and unknown layouts retain vendor requirements;
+buffer types, alignment, and all execution interfaces are preserved. Linux regressions
+compile the production wrapper and check input/output callbacks, concurrent initialization,
+allocation-failure ownership, wrong ABI, and missing vendor libraries. Android NDK builds
+check the actual wrapper. This addresses a layout suspect without establishing that tiny's
+accuracy failure is resolved. First-request comparison now records `npu_accuracy` with
+`max_abs_error` and `timestep_mismatches`; accuracy thresholds are unchanged. SDK binaries
+are unmodified, and actual MTK behavior still needs 1.2.108 device logs.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report

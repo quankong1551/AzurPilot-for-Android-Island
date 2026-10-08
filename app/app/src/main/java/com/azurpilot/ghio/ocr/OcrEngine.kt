@@ -402,14 +402,16 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "onnx_reference_validation")
             val reference = runCpu(session, shape, values)
             require(expectedShape.contentEquals(reference.shape)) { "Converted OCR output shape changed" }
-            require(output.indices.all { i -> kotlin.math.abs(output[i] - reference.values[i]) <= 0.01f }) {
-                "NPU OCR output differs from the original model"
-            }
             val classes = expectedShape.last().toInt()
-            require(output.indices.step(classes).all { offset ->
-                (0 until classes).maxBy { output[offset + it] } ==
+            val maxError = output.indices.maxOf { i -> kotlin.math.abs(output[i] - reference.values[i]) }
+            val mismatches = output.indices.step(classes).count { offset ->
+                (0 until classes).maxBy { output[offset + it] } !=
                     (0 until classes).maxBy { reference.values[offset + it] }
-            }) { "NPU OCR character predictions differ" }
+            }
+            val accuracy = "max_abs_error=$maxError, timestep_mismatches=$mismatches/${output.size / classes}"
+            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "npu_accuracy", accuracy)
+            require(maxError <= 0.01f) { "NPU OCR output differs: $accuracy" }
+            require(mismatches == 0) { "NPU OCR character predictions differ: $accuracy" }
             session.validated = true
         }
     }

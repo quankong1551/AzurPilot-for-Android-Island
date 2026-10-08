@@ -44,7 +44,7 @@ class OcrAssetsTest(unittest.TestCase):
         files.update({f"assets/overlays/{name}": b"overlay" for name in
                       ["android_host.py", "android_ocr.py", "sitecustomize.py"]})
         files.update({f"lib/arm64-v8a/{name}": data for name in REQUIRED_LIBRARIES | HIAI_LIBRARIES |
-                      {"libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so"}} if arm64 else
+                      {"libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so", "libLiteRtDispatch_MediaTek.so"}} if arm64 else
                      {"lib/x86_64/libbridge.so": b"bridge"})
         if change:
             change(files)
@@ -86,13 +86,18 @@ class OcrAssetsTest(unittest.TestCase):
                 verify(archive)
 
     def test_missing_vendor(self):
-        with self.archive(change=lambda f: f.pop("lib/arm64-v8a/libLiteRtDispatch_MediaTek.so")) as archive:
+        with self.archive(change=lambda f: f.pop("lib/arm64-v8a/libLiteRtDispatch_MediaTek_Vendor.so")) as archive:
             with self.assertRaises(KeyError):
                 verify(archive)
 
     def test_missing_hiai_bridge(self):
         with self.archive(change=lambda f: f.pop("lib/arm64-v8a/libocrhiai.so")) as archive:
-            with self.assertRaisesRegex(ValueError, "Missing HiAI bridge"):
+            with self.assertRaisesRegex(ValueError, "Missing OCR bridge"):
+                verify(archive)
+
+    def test_missing_mtk_dispatch_wrapper(self):
+        with self.archive(change=lambda f: f.pop("lib/arm64-v8a/libLiteRtDispatch_MediaTek.so")) as archive:
+            with self.assertRaisesRegex(ValueError, "Missing OCR bridge"):
                 verify(archive)
 
     def test_corrupt_hiai_client(self):

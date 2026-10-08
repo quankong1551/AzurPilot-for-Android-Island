@@ -286,9 +286,11 @@ jobs:
           python3 app/scripts/test_verify_ocr_assets.py
           uv run --no-project --python 3.12 --with numpy==2.2.6 --with onnx==1.20.1 --with onnxruntime==1.26.0 rootfs/tests/test_android_ocr.py
 
-      - name: Verify OCR JNI model handles
+      - name: Verify OCR native interfaces
         if: runner.os == 'Linux'
-        run: python3 app/scripts/test_ocr_jni.py
+        run: |
+          python3 app/scripts/test_ocr_jni.py
+          python3 app/scripts/test_ocr_mtk_dispatch.py
 
       - name: Inject device reporting mTLS credentials
         env:
