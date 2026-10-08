@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -16,8 +17,34 @@ import tempfile
 
 
 def dynamic_symbols(path, readelf):
-    """读取完整动态符号表用于前后比较。 / Reads the full dynamic symbol table for comparison."""
-    return subprocess.check_output([readelf, "--dyn-syms", "--wide", str(path)])
+    """比较动态符号的完整语义，段编号用段名解析以允许删除调试段后的重新编号。
+
+    Reads full dynamic-symbol semantics, resolving section numbers by name after debug stripping.
+    """
+    environment = {**os.environ, "LC_ALL": "C"}
+    sections = subprocess.check_output([readelf, "--sections", "--wide", str(path)], env=environment)
+    symbols = subprocess.check_output([readelf, "--dyn-syms", "--wide", str(path)], env=environment)
+    return parse_dynamic_symbols(symbols, sections)
+
+
+def parse_dynamic_symbols(symbols, sections):
+    """保留符号顺序、地址、大小、类型、绑定、可见性、所属段和版本化名称。
+
+    Preserves order, addresses, sizes, types, bindings, visibility, sections, and versioned names.
+    """
+    names = {match[1]: match[2] for match in re.finditer(rb"^\s*\[\s*(\d+)\]\s+(\S+)", sections, re.M)}
+    result = []
+    for line in symbols.splitlines():
+        fields = line.split(maxsplit=7)
+        if len(fields) < 7 or not fields[0].endswith(b":") or not fields[0][:-1].isdigit():
+            continue
+        section = fields[6]
+        if section.isdigit():
+            if section not in names:
+                raise ValueError("Dynamic symbol refers to an unknown ELF section")
+            section = names[section]
+        result.append(tuple(fields[1:6]) + (section, fields[7] if len(fields) == 8 else b""))
+    return tuple(result)
 
 
 def elf_identity(path):
@@ -49,7 +76,8 @@ def compact(root, strip="strip", readelf="readelf"):
     if native is None:
         raise ValueError("Compaction requires native ELF Python and binutils")
     result = {"elf_files": 0, "compacted_files": 0, "saved_bytes": 0,
-              "skipped_foreign_elf_files": 0, "largest_savings": []}
+              "skipped_foreign_elf_files": 0, "skipped_symbol_changes": 0,
+              "symbol_change_files": [], "largest_savings": []}
     savings = []
     for directory in roots:
         if not directory.exists() or directory.is_symlink():
@@ -83,7 +111,11 @@ def compact(root, strip="strip", readelf="readelf"):
                     shutil.copy2(path, temporary)
                     subprocess.run([strip, "--strip-unneeded", "--", str(temporary)], check=True)
                     if before != dynamic_symbols(temporary, readelf):
-                        raise RuntimeError(f"Dynamic symbols changed: {path.relative_to(root)}")
+                        # 某些 patchelf wheel 的 LOCAL SECTION 标注会被 GNU strip 改坏；保留原库。
+                        result["skipped_symbol_changes"] += 1
+                        if len(result["symbol_change_files"]) < 20:
+                            result["symbol_change_files"].append(str(path.relative_to(root)))
+                        continue
                     saved = info.st_size - temporary.stat().st_size
                     if saved > 0:
                         os.utime(temporary, ns=(info.st_atime_ns, info.st_mtime_ns))

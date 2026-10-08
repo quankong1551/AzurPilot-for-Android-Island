@@ -76,6 +76,8 @@ CI 打包时移除。本版轻量 APK 约 251.81 MiB，比上一轻量测试包�
 349.0 MiB 是解压后的权重大小，不是最终 rootfs 压缩包缩减量。完整包尺寸以新 CI 产物为准。
 旧瘦身 CI 因宿主 `strip` 不支持 minicap 缓存中的其他 Android 架构失败；补丁按 ELF
 位数、字节序和机器类型筛选，保留异架构缓存不改写，并在两种原生 runner 上先运行回归。
+动态符号按段名比较完整语义，避免只比较文本段号；GNU strip 改坏 Pillow 的局部段符号
+标注时拒绝该候选并保留原库，报告跳过数量，不把未通过校验的副本写回镜像。
 
 ### 真机检查
 
@@ -182,6 +184,11 @@ be measured from the new CI artifact.
 The preceding slimming CI failed when native `strip` encountered other Android architectures
 in minicap caches. The fix filters ELF class, byte order, and machine type, retaining foreign
 cache files unchanged and running regressions on both native runner architectures first.
+Dynamic symbols compare full semantics with named sections rather than raw section numbers.
+When GNU strip damages Pillow's local-section symbol annotations, the candidate is rejected,
+the original library stays intact, and the report counts the skip. Unverified copies are never
+written back. See the [GNU readelf options](https://sourceware.org/binutils/docs/binutils/readelf.html)
+for dynamic-symbol and section-header output.
 
 ### Device checks
 

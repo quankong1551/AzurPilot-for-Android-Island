@@ -85,6 +85,42 @@ class CompactRuntimeTest(unittest.TestCase):
             self.assertEqual(len(strip_calls), 1)
             self.assertNotIn("uiautomator2cache", strip_calls[0].args[0][-1])
 
+    def test_dynamic_symbols_allow_section_renumbering_but_reject_export_changes(self):
+        before = b" 1: 0000000000001234 16 FUNC GLOBAL DEFAULT 7 ocr_fixture@@OCR_1\n"
+        after = before.replace(b"DEFAULT 7", b"DEFAULT 6")
+        sections_before = b" [ 7] .text PROGBITS\n"
+        sections_after = b" [ 6] .text PROGBITS\n"
+        parse = compact_runtime.parse_dynamic_symbols
+        expected = parse(before, sections_before)
+        self.assertEqual(expected, parse(after, sections_after))
+        for old, new in ((b"1234", b"1235"), (b"16 FUNC", b"17 FUNC"),
+                         (b"FUNC", b"OBJECT"), (b"GLOBAL", b"WEAK"),
+                         (b"DEFAULT", b"HIDDEN"), (b"ocr_fixture", b"different_export"),
+                         (b"OCR_1", b"OCR_2")):
+            self.assertNotEqual(expected, parse(after.replace(old, new), sections_after))
+        self.assertNotEqual(expected, parse(after, sections_after.replace(b".text", b".data")))
+        with self.assertRaises(ValueError):
+            parse(after, sections_before)
+
+    def test_rejected_strip_output_keeps_original_library_and_removes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "rootfs"
+            package = root / "opt/azurpilot/.venv/lib"
+            package.mkdir(parents=True)
+            source = base / "source.c"
+            source.write_text("int ocr_fixture(int value) { return value * 7; }\n")
+            target = package / "fixture.so"
+            subprocess.run(["cc", "-shared", "-fPIC", "-g", str(source), "-o", str(target)], check=True)
+            original = target.read_bytes()
+            with mock.patch.object(compact_runtime, "dynamic_symbols", side_effect=[(b"original",), (b"changed",)]):
+                report = compact_runtime.compact(root)
+            self.assertEqual(report["skipped_symbol_changes"], 1)
+            self.assertEqual(report["compacted_files"], 0)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse(list(package.glob(".strip-*")))
+            self.assertEqual(ctypes.CDLL(str(target)).ocr_fixture(6), 42)
+
 
 if __name__ == "__main__":
     unittest.main()
