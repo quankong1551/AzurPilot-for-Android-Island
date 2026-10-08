@@ -22,6 +22,7 @@ C_API = r"""
 #include <jni.h>
 #include <cstddef>
 #include <cstdint>
+#include "litert/c/litert_layout.h"
 struct Model { int custom; } model;
 // 按钉版 ModelWrapper 首成员布局构造不同地址，避免错误指针也通过检查。
 struct Wrapper { void* model; unsigned char buffer[32]; } wrapper;
@@ -60,6 +61,16 @@ extern "C" int32_t LiteRtCompiledModelIsFullyAccelerated(void* handle, bool* ful
     *fully = compiled.result == 1;
     return 0;
 }
+extern "C" int32_t LiteRtGetCompiledModelOutputTensorLayouts(
+        void* handle, size_t signature, size_t count, LiteRtLayout* layouts, bool update) {
+    if (handle != &compiled || signature != 0 || count != 1 || !update || compiled.result < 0) return 1;
+    layouts[0] = {};
+    layouts[0].rank = 3;
+    layouts[0].dimensions[0] = 1;
+    layouts[0].dimensions[1] = 80;
+    layouts[0].dimensions[2] = 18385;
+    return 0;
+}
 """
 
 MODEL = """
@@ -91,6 +102,9 @@ public class OcrNative {
     public native String mediatekDriverError(boolean requireApusys);
     public native String mediatekAdapterLibrary();
     public native boolean softmaxInPlace(float[] values, int classes);
+    public native int openMemoryModel(java.nio.ByteBuffer values, String directory, boolean allowMemfd);
+    public native void closeMemoryModel(int fd);
+    public native long[] outputShape(CompiledModel model, String runtimeVersion);
 }
 """
 
@@ -106,7 +120,7 @@ public class Fixture {
     static void expect(int expected, int actual) {
         if (actual != expected) throw new AssertionError("Expected " + expected + ", got " + actual);
     }
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         OcrNative bridge = new OcrNative();
         if (args.length > 0 && args[0].equals("compiled_api_absent")) {
             expect(-1, bridge.compiledModelAcceleration(new CompiledModel(compile(1)), "2.1.0rc1"));
@@ -155,6 +169,31 @@ public class Fixture {
         expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), "2.2.0"));
         expect(-1, bridge.compiledModelAcceleration(null, "2.1.0rc1"));
         expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), null));
+        if (!java.util.Arrays.equals(new long[] {1, 80, 18385},
+                bridge.outputShape(new CompiledModel(compile(1)), "2.1.0rc1")))
+            throw new AssertionError("Actual compiled output layout not used");
+        if (bridge.outputShape(new CompiledModel(compile(-1)), "2.1.0rc1") != null ||
+                bridge.outputShape(new CompiledModel(1), "wrong") != null)
+            throw new AssertionError("Invalid output layout accepted");
+        java.nio.ByteBuffer bytes = java.nio.ByteBuffer.allocateDirect(8);
+        bytes.putLong(12345L);
+        int fd = bridge.openMemoryModel(bytes, System.getProperty("java.io.tmpdir"), true);
+        if (fd < 0) throw new AssertionError("Anonymous model creation failed");
+        byte[] actual = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("/proc/self/fd/" + fd));
+        bytes.flip();
+        byte[] expected = new byte[8]; bytes.get(expected);
+        if (!java.util.Arrays.equals(actual, expected)) throw new AssertionError("Anonymous model bytes differ");
+        bridge.closeMemoryModel(fd);
+        if (java.nio.file.Files.exists(java.nio.file.Path.of("/proc/self/fd/" + fd)))
+            throw new AssertionError("Anonymous model leaked");
+        fd = bridge.openMemoryModel(bytes, System.getProperty("java.io.tmpdir"), false);
+        if (fd < 0) throw new AssertionError("Older Android anonymous-file fallback failed");
+        actual = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("/proc/self/fd/" + fd));
+        if (!java.util.Arrays.equals(actual, expected)) throw new AssertionError("Fallback model bytes differ");
+        bridge.closeMemoryModel(fd);
+        if (bridge.openMemoryModel(java.nio.ByteBuffer.allocate(8), "unused", true) != -1)
+            throw new AssertionError("Heap buffer accepted");
+        System.out.println("OCR JNI: output layouts and anonymous model lifetime passed");
         if (bridge.mediatekDriverError(false) == null)
             throw new AssertionError("Missing MTK driver must be rejected before SDK loading");
         float[] logits = {1000, 999, -1000, -1000, -999, 1000};
@@ -196,7 +235,8 @@ def main():
         api = directory / "api.cpp"
         api.write_text(C_API)
         flags = [compiler, "-std=c++17", "-shared", "-fPIC", "-Wall", "-Wextra", "-O2",
-                 f"-I{jdk / 'include'}", f"-I{jdk / 'include/linux'}"]
+                 f"-I{jdk / 'include'}", f"-I{jdk / 'include/linux'}",
+                 f"-I{NATIVE.parent / 'third_party/litert'}"]
         subprocess.run(flags + [str(api), "-o", str(directory / "libLiteRt.so")], check=True)
         subprocess.run(flags + [str(args.source), "-ldl", "-o",
                                str(directory / "libocrdiagnostics.so")], check=True)

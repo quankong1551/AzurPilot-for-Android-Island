@@ -438,18 +438,24 @@ def main():
     mode.add_argument("--normalize-existing", action="store_true",
                       help="Normalize bundled LiteRT constants and revalidate without reconverting ONNX")
     args = parser.parse_args()
+    if json.loads((ASSETS / "manifest.json").read_text()).get("version") == 2:
+        # 形状描述必须与权重字节同时生成，避免旧导出器覆盖 v2 清单。
+        from prepare_ocr_cpu_models import main as prepare_cpu
+        if args.normalize_existing:
+            parser.error("Use prepare_ocr_cpu_models.py for model format 2")
+        return prepare_cpu()
     previous = {}
     if (ASSETS / "manifest.json").is_file():
         previous = {item["sha256"]: item for item in
                     json.loads((ASSETS / "manifest.json").read_text())["models"]}
     models = []
     for relative, expected_hash in SOURCES.items():
-        source = ASSETS / "models" / relative
+        source = ROOT / ".tmp/ocr-sources" / relative
         if sha256(source) != expected_hash:
             raise ValueError(f"Upstream model hash mismatch: {relative}")
         model = onnx.load(source)
         item = {
-            "asset": source.relative_to(ASSETS).as_posix(),
+            "asset": "models/" + relative,
             "sha256": expected_hash,
             "inputs": [node_info(n) for n in model.graph.input],
             "outputs": [node_info(n) for n in model.graph.output],

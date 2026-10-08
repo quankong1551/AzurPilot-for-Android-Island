@@ -5,6 +5,7 @@ import android.os.Build
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.AppPaths
 import com.azurpilot.ghio.ocr.OcrServer
+import com.azurpilot.ghio.ocr.OcrModelProvisioner
 import com.azurpilot.ghio.provision.RuntimeArch
 import com.azurpilot.ghio.provision.RootfsProvisioner
 import com.azurpilot.ghio.service.RunForegroundService
@@ -223,8 +224,13 @@ class ProotHost(
         // 否则设置刚改完立刻重启时拿到的还是旧值
         awaitSettingsLoaded()
         syncHostOverlay()
-        runCatching { ocrServer.start() }.onFailure {
-            Timber.w(it, "OCR worker unavailable; AP will use original CPU inference")
+        runCatching {
+            ocrServer.start()
+            OcrModelProvisioner.install(app, rootfsDir)
+        }.getOrElse {
+            Timber.e(it, "Host LiteRT OCR preparation failed")
+            fail("OCR: ${it.message}")
+            return@withLock
         }
         writeRemoteAccessConfig()
         val proc = runCatching { spawnSession() }.getOrElse {

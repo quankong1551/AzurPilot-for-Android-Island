@@ -4,10 +4,6 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.system.Os
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
-import ai.onnxruntime.TensorInfo
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -16,17 +12,16 @@ import com.google.ai.edge.litert.NpuAcceleratorProvider
 import kotlinx.serialization.json.*
 import timber.log.Timber
 import java.io.File
-import java.nio.FloatBuffer
 import java.nio.file.Files
 import java.security.MessageDigest
 
 /**
- * 在 OCR 工作进程串行推理白名单模型；驱动错误和不支持的尺寸回退原始 ONNX CPU。
+ * 在 OCR 工作进程串行推理白名单模型；驱动错误和不支持的尺寸回退同一份 LiteRT 权重的 CPU。
  *
  * LiteRT 使用厂商插件，海思使用严格的 HiAI 会话，不注册 NNAPI。缓存最多两个模型。
  * 所有公开方法在服务工作线程调用，内部同步保证模型与缓冲区不会并发访问。
  *
- * Serializes allowlisted OCR inference in the OCR worker, falling back to original ONNX CPU
+ * Serializes allowlisted OCR inference in the OCR worker, falling back to CPU using the same LiteRT weights
  * for driver failures and unsupported sizes. LiteRT uses vendor plugins and Kirin uses strict
  * HiAI sessions, never registering NNAPI. At most two models are cached. Public methods run on workers;
  * internal synchronization protects sessions and buffers.
@@ -57,6 +52,8 @@ class OcrEngine(
     private val activity = mutableMapOf<String, JsonObject>()
     private val provider = BundledProvider(context)
     private var environment: Environment? = null
+    private var gpuSoftmax: OcrGpuSoftmax? = null
+    private var gpuSoftmaxFailure: String? = disabledModels.values.firstOrNull { "gpu_softmax" in it }
     private val trace = OcrTrace(context)
     private var mediatekAdapter: String? = null
     private var mediatekTargetPolicy: String? = null
@@ -66,7 +63,7 @@ class OcrEngine(
             check(isDirectory || mkdirs()) { "Could not create OCR model cache" }
         }
         val retained = models.values.flatMap { spec ->
-            listOfNotNull(spec, spec["litert"]?.jsonObject, spec["mnn"]?.jsonObject)
+            listOfNotNull(spec["litert"]?.jsonObject, spec["mnn"]?.jsonObject)
                 .map { it.getValue("sha256").jsonPrimitive.content }
         }.toSet()
         // 单一 OCR 工作进程首次加载权重前清理；只移除本缓存的旧哈希，不触碰 AP 模型。
@@ -79,6 +76,11 @@ class OcrEngine(
         }
         if (prunedModelCacheBytes > 0) trace.record("*", "model_cache_pruned", prunedModelCacheBytes.toString())
         directory
+    }
+
+    init {
+        // 工作进程启动即回收旧源权重，不必等到用户再次发起 OCR。
+        modelDirectory
     }
 
     /**
@@ -101,10 +103,12 @@ class OcrEngine(
         if (!enabled) {
             sessions.values.forEach { session ->
                 session.closeNpu()
-                session.backend = if (session.cpu != null) "onnx_cpu" else "uninitialized"
+                session.backend = if (session.cpu != null) "litert_cpu" else "uninitialized"
             }
             environment?.close()
             environment = null
+            gpuSoftmax?.close()
+            gpuSoftmax = null
         }
         trace.record("*", "hardware_acceleration_setting", enabled.toString())
     }
@@ -118,6 +122,10 @@ class OcrEngine(
     @Synchronized
     fun status(): JsonObject = buildJsonObject {
         put("api_version", 1)
+        put("model_format_version", 2)
+        put("cpu_runtime", "litert")
+        put("source_weights_bundled", false)
+        gpuSoftmaxFailure?.let { put("gpu_softmax_error", it) }
         put("worker_process_isolated", true)
         put("worker_pid", android.os.Process.myPid())
         put("runtime", "litert_and_hiai")
@@ -147,7 +155,7 @@ class OcrEngine(
         mediatekAdapter?.let { put("mediatek_adapter_library", it) }
         mediatekTargetPolicy?.let { put("mediatek_target_policy", it) }
         val bundled = provider.isLibraryReady() || provider.isHiaiReady()
-        val recognizers = models.filterValues { "litert" in it }.keys
+        val recognizers = models.filterValues { it["npu_supported"]?.jsonPrimitive?.boolean == true }.keys
         val disabled = recognizers.count { it in failures || "*" in failures }
         put("npu_libraries_bundled", bundled)
         // 兼容已有 AP 客户端；此字段只表示库存在，实际运行证据在 sessions 中。
@@ -167,7 +175,8 @@ class OcrEngine(
                 add(buildJsonObject {
                     put("model_sha256", hash)
                     put("name", spec.getValue("asset").jsonPrimitive.content.substringAfterLast('/'))
-                    put("testable", "litert" in spec)
+                    put("testable", spec["kind"]?.jsonPrimitive?.content == "recognition")
+                    put("npu_supported", spec["npu_supported"] ?: JsonPrimitive(false))
                     put("backend", last?.get("backend") ?: JsonPrimitive("uninitialized"))
                     put("ap_requests", last?.get("ap_requests") ?: JsonPrimitive(0))
                     put("diagnostic_requests", last?.get("diagnostic_requests") ?: JsonPrimitive(0))
@@ -191,6 +200,9 @@ class OcrEngine(
                     put("hiai_npu_only_session_ready", session.hiai != 0L)
                     put("npu_delegation_verified", session.inferenceSucceeded && session.hasNpuEvidence)
                     put("npu_hardware_profile_verified", false)
+                    put("terminal_softmax_backend", session.softmaxBackend)
+                    session.softmaxMs?.let { put("terminal_softmax_ms", it) }
+                    session.gpuRenderer?.let { put("gpu_renderer", it) }
                 })
             }
         })
@@ -216,11 +228,17 @@ class OcrEngine(
             put("shape", JsonArray(shape.map(::JsonPrimitive)))
             put("npu_dispatch_partitions", if (result.backend.startsWith("litert_npu"))
                 sessions[hash]?.partitions ?: 0 else 0)
-            if (result.backend == "onnx_cpu") {
+            sessions[hash]?.let { session ->
+                put("terminal_softmax_backend", session.softmaxBackend)
+                session.softmaxMs?.let { put("terminal_softmax_ms", it) }
+                session.gpuRenderer?.let { put("gpu_renderer", it) }
+            }
+            if (result.backend == "litert_cpu") {
                 put("cpu_reason", when {
                     !hardwareAccelerationEnabled -> "user_disabled"
                     hash in failures || "*" in failures -> "npu_failed"
-                    "litert" !in describe(hash) -> "detector"
+                    describe(hash)["kind"]?.jsonPrimitive?.content == "detector" -> "detector"
+                    describe(hash)["npu_supported"]?.jsonPrimitive?.boolean != true -> "model_not_accelerated"
                     shape[2] != 48L || shape[3] != 320L -> "dynamic_shape"
                     else -> "npu_unavailable"
                 })
@@ -252,8 +270,8 @@ class OcrEngine(
             dimension.jsonPrimitive.longOrNull?.let { require(shape[index] == it) }
         }
         val conversion = spec["litert"]?.jsonObject
-        if (conversion != null) {
-            // 白名单识别器的时间轴步长为 8；先限输出大小，避免 ORT 在拒绝报文前分配大张量。
+        if (conversion != null && spec["kind"]?.jsonPrimitive?.content == "recognition") {
+            // 时间轴步长为 8；先限输出大小，避免运行库分配超过协议上限的张量。
             val classes = conversion.getValue("output_shape").jsonArray.last().jsonPrimitive.long
             require(shape[0] * ((shape[3] + 7) / 8) * classes <= 64 * 1024 * 1024 / 4) {
                 "OCR output exceeds the API limit"
@@ -267,7 +285,7 @@ class OcrEngine(
             }
             Session(spec)
         }
-        if (hardwareAccelerationEnabled && conversion != null && shape[2] == 48L && shape[3] == 320L &&
+        if (hardwareAccelerationEnabled && spec["npu_supported"]?.jsonPrimitive?.boolean == true && conversion != null && shape[2] == 48L && shape[3] == 320L &&
             (provider.isLibraryReady() || provider.isHiaiReady())
             && hash !in failures && "*" !in failures) {
             try {
@@ -279,7 +297,7 @@ class OcrEngine(
                 trace.record(hash, "npu_failed", failures[hash])
                 trace.captureNative(hash)
                 session.closeNpu()
-                Timber.w(error, "OCR NPU failed; falling back to ONNX CPU")
+                Timber.w(error, "OCR NPU failed; falling back to LiteRT CPU")
             } catch (error: LinkageError) {
                 failures[hash] = error.message?.take(300) ?: "NPU library linkage failed"
                 trace.record(hash, "npu_linkage_failed", failures[hash])
@@ -292,16 +310,16 @@ class OcrEngine(
     }
 
     /**
-     * 用内置数字图片测量所选识别器，与原 ONNX 比较；不计为 AP 业务调用。
+     * 用内置数字图片测量所选识别器，与独立 LiteRT CPU 比较；不计为 AP 业务调用。
      *
-     * 在服务工作线程执行；预热三次，再取二十次平均。CPU 对照为独立 ONNX 会话，
-     * 先用执行节点分析确认 CPUExecutionProvider，再关闭分析以免污染计时。
+     * 在服务工作线程执行；预热三次，再取二十次平均。CPU 对照为独立 LiteRT 会话，
+     * 只请求 CPU，不注册厂商 provider，验证图中没有 NPU dispatch 分区。
      * 测试报告数值差与字符一致性，不因此切换后端；不能代替游戏识别质量或硬件性能验证。
      *
-     * Benchmarks a selected recognizer with a bundled digit image against original ONNX.
+     * Benchmarks a selected recognizer with a bundled digit image against isolated LiteRT CPU.
      * Runs on a server worker without counting AP business calls. Cold time includes initialization;
-     * steady time averages twenty runs after three warmups. A separate ONNX baseline verifies
-     * CPUExecutionProvider via node profiling, then disables profiling before measurement.
+     * steady time averages twenty runs after three warmups. A separate LiteRT baseline requests only CPU without a vendor provider and verifies
+     * that no NPU dispatch partitions were compiled.
      * Score differences and character agreement are diagnostic only, never a fallback gate.
      * Success does not prove game accuracy or hardware performance.
      */
@@ -311,7 +329,7 @@ class OcrEngine(
     }
 
     private fun testModel(hash: String): JsonObject {
-        require("litert" in describe(hash)) { "Only bundled recognition models can be tested" }
+        require(describe(hash)["kind"]?.jsonPrimitive?.content == "recognition") { "Only bundled recognition models can be tested" }
         val values = testValues()
         val shape = longArrayOf(1, 3, 48, 320)
         val coldStart = System.nanoTime()
@@ -345,20 +363,24 @@ class OcrEngine(
             put("max_abs_error", maxError)
             put("score_difference_triggers_fallback", false)
             put("character_predictions_equal", equalPredictions)
+            put("terminal_softmax_backend", sessions[hash]?.softmaxBackend ?: "in_model")
+            sessions[hash]?.softmaxMs?.let { put("terminal_softmax_ms", it) }
+            sessions[hash]?.gpuRenderer?.let { put("gpu_renderer", it) }
+            gpuSoftmaxFailure?.let { put("gpu_softmax_error", it) }
             put("npu_dispatch_partitions", sessions[hash]?.partitions ?: 0)
             put("npu_hardware_profile_verified", false)
         }
     }
 
     /**
-     * 独立创建原 ONNX CPU 会话，不加载 NPU 模型，也不改业务会话与调用计数。
+     * 独立创建 LiteRT CPU 会话，不加载 NPU 模型，也不改业务会话与调用计数。
      *
-     * Creates an isolated original ONNX CPU session without loading NPU models or changing
+     * Creates an isolated CPU using the same LiteRT weights session without loading NPU models or changing
      * business sessions and request counters.
      */
     @Synchronized
     fun testCpu(hash: String): JsonObject {
-        require("litert" in describe(hash)) { "Only bundled recognition models can be tested" }
+        require(describe(hash)["kind"]?.jsonPrimitive?.content == "recognition") { "Only bundled recognition models can be tested" }
         val shape = longArrayOf(1, 3, 48, 320)
         val cpu = benchmarkCpu(hash, shape, testValues())
         return buildJsonObject {
@@ -368,6 +390,49 @@ class OcrEngine(
             put("warmup_runs", WARMUP_RUNS)
             put("measured_runs", MEASURED_RUNS)
             cpu.evidence.forEach { (key, value) -> put(key, value) }
+        }
+    }
+
+    /**
+     * 单独验证 GPU Softmax，包含上传、同步与读回，不依赖 NPU 编译成功。
+     *
+     * Tests GPU Softmax including upload, synchronization, and readback, independently of NPU.
+     * Uses synthetic logits and an isolated CPU reference; never counts as an AP call.
+     */
+    @Synchronized
+    fun testGpuSoftmax(hash: String): JsonObject {
+        check(hardwareAccelerationEnabled) { "Hardware acceleration is disabled by the user" }
+        check(gpuSoftmaxFailure == null) { "GPU Softmax previously failed: $gpuSoftmaxFailure" }
+        val conversion = describe(hash).getValue("litert").jsonObject
+        check(conversion["output_postprocess"]?.jsonPrimitive?.content == "softmax") {
+            "This model does not use an external terminal Softmax"
+        }
+        val classes = conversion.getValue("output_shape").jsonArray.last().jsonPrimitive.int
+        val logits = FloatArray(40 * classes) { ((it * 37L) % 997).toFloat() / 10f - 50f }
+        val reference = logits.copyOf()
+        check(OcrNative.softmaxInPlace(reference, classes))
+        trace.activeModel(hash)
+        trace.record(hash, "gpu_softmax_test")
+        val gpu = gpuSoftmax ?: OcrGpuSoftmax().also { gpuSoftmax = it }
+        var output = logits.copyOf()
+        repeat(WARMUP_RUNS) { gpu.run(logits.copyOf(), classes) }
+        val samples = (1..MEASURED_RUNS).map {
+            output = logits.copyOf()
+            val started = System.nanoTime()
+            gpu.run(output, classes)
+            (System.nanoTime() - started) / 1_000_000.0
+        }
+        return buildJsonObject {
+            put("model_sha256", hash)
+            put("test_mode", "terminal_softmax_only")
+            put("gpu_execution_verified", true)
+            put("gpu_renderer", gpu.renderer)
+            put("shape", buildJsonArray { add(1); add(40); add(classes) })
+            put("steady_ms", samples.average())
+            put("steady_samples_ms", JsonArray(samples.map(::JsonPrimitive)))
+            put("measurement_scope", "upload_compute_synchronize_readback_and_validation")
+            put("max_abs_error", output.indices.maxOf { kotlin.math.abs(output[it] - reference[it]) })
+            put("business_call_proof", false)
         }
     }
 
@@ -423,20 +488,9 @@ class OcrEngine(
     }
 
     private fun benchmarkCpu(hash: String, shape: LongArray, values: FloatArray): CpuBenchmark {
-        val prefix = File(context.cacheDir, "ocr-cpu-profile-${System.nanoTime()}").absolutePath
         val session = Session(describe(hash))
-        var profilePath: String? = null
         try {
-            session.cpu = createCpuSession(session, prefix)
             var output = runCpu(session, shape, values)
-            profilePath = session.cpu!!.endProfiling()
-            val events = Json.parseToJsonElement(File(profilePath).readText()).jsonArray
-            val nodes = events.map { it.jsonObject }.filter {
-                it["cat"]?.jsonPrimitive?.content == "Node" &&
-                    it["args"]?.jsonObject?.get("provider") != null
-            }
-            val providers = nodes.map { it.getValue("args").jsonObject.getValue("provider").jsonPrimitive.content }.toSet()
-            check(providers == setOf("CPUExecutionProvider")) { "CPU profiling did not confirm exclusive CPU execution: $providers" }
             repeat(WARMUP_RUNS) { output = runCpu(session, shape, values) }
             val samples = (1..MEASURED_RUNS).map {
                 val start = System.nanoTime()
@@ -444,22 +498,20 @@ class OcrEngine(
                 (System.nanoTime() - start) / 1_000_000.0
             }
             return CpuBenchmark(output, buildJsonObject {
-                put("cpu_backend", "onnx_cpu")
-                put("cpu_execution_providers", JsonArray(providers.sorted().map(::JsonPrimitive)))
-                put("cpu_profile_node_count", nodes.size)
+                put("cpu_backend", "litert_cpu")
+                put("cpu_runtime", runtime.getValue("litert"))
+                put("cpu_requested_accelerators", buildJsonArray { add("CPU") })
+                put("cpu_vendor_provider_registered", false)
+                put("cpu_npu_dispatch_partitions", 0)
                 put("cpu_execution_verified", true)
                 put("cpu_intra_op_threads", 2)
                 put("cpu_session_isolated", true)
-                put("cpu_profiling_during_measurement", false)
-                put("measurement_scope", "warm_model_inference_with_tensor_copy_and_finite_check")
+                put("measurement_scope", "warm_model_inference_with_tensor_copy_softmax_and_finite_check")
                 put("cpu_ms", samples.average())
                 put("cpu_samples_ms", JsonArray(samples.map(::JsonPrimitive)))
             })
         } finally {
-            // 仅清理此测试生成的分析文件；关闭分析失败时仍关闭独立会话。
-            if (profilePath == null) profilePath = runCatching { session.cpu?.endProfiling() }.getOrNull()
             session.close()
-            profilePath?.let { File(it).delete() }
         }
     }
 
@@ -481,6 +533,11 @@ class OcrEngine(
 
     private fun runLite(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray,
         useGpu: Boolean = false): Output {
+        if (conversion["output_postprocess"]?.jsonPrimitive?.content != "softmax") {
+            session.softmaxBackend = "in_model"
+            session.softmaxMs = null
+            session.gpuRenderer = null
+        }
         val hash = session.spec.getValue("sha256").jsonPrimitive.content
         if (session.lite == null) {
             if (provider.vendor == "mediatek") {
@@ -490,7 +547,7 @@ class OcrEngine(
                     trace.record(other.spec.getValue("sha256").jsonPrimitive.content,
                         "litert_session_close", "mediatek_model_switch")
                     other.closeNpu()
-                    other.backend = if (other.cpu != null) "onnx_cpu" else "uninitialized"
+                    other.backend = if (other.cpu != null) "litert_cpu" else "uninitialized"
                 }
                 if (Build.VERSION.SDK_INT >= 31 && Build.SOC_MODEL.equals("MT6985", ignoreCase = true)) {
                     // 此芯片的 SDK 8 编译目标缺失会主动 abort；限制 MDLA，余下算子由 LiteRT 分区。
@@ -556,10 +613,7 @@ class OcrEngine(
             }
             require(nonFinite == 0) { "LiteRT OCR output contains $nonFinite non-finite values" }
             if (conversion["output_postprocess"]?.jsonPrimitive?.content == "softmax") {
-                // 大字典末尾 Softmax 在 CPU 以稳定算法计算，AP 仍收到原模型的概率。
-                val classes = expectedShape.last().toInt()
-                check(OcrNative.softmaxInPlace(result, classes)) { "CPU Softmax rejected OCR logits" }
-                if (firstRun) trace.record(hash, "litert_postprocess", "softmax_cpu")
+                terminalSoftmax(session, result, expectedShape.last().toInt())
             }
             result.copyInto(output, index * sampleSize)
         }
@@ -567,11 +621,15 @@ class OcrEngine(
         session.inferenceSucceeded = true
         if (firstRun) trace.record(hash, "litert_inference_succeeded")
         session.backend = if (useGpu) "litert_npu_gpu_requested_with_cpu_fallback"
+            else if (session.softmaxBackend == "gpu") "litert_npu_gpu_softmax_with_cpu_fallback"
             else "litert_npu_with_cpu_fallback"
         return Output(expectedShape, output, session.backend)
     }
 
     private fun runHiai(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray): Output {
+        session.softmaxBackend = "in_model"
+        session.softmaxMs = null
+        session.gpuRenderer = null
         val expectedShape = conversion.getValue("output_shape").jsonArray.map { it.jsonPrimitive.long }.toLongArray()
         if (session.hiai == 0L) {
             trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "hiai_model_load")
@@ -596,31 +654,84 @@ class OcrEngine(
         return Output(expectedShape, output, session.backend)
     }
 
-    private fun runCpu(session: Session, shape: LongArray, values: FloatArray): Output {
-        val env = OrtEnvironment.getEnvironment()
-        val cpu = session.cpu ?: createCpuSession(session).also { session.cpu = it }
-        val input = session.spec.getValue("inputs").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content
-        OnnxTensor.createTensor(env, FloatBuffer.wrap(values), shape).use { tensor ->
-            cpu.run(mapOf(input to tensor)).use { results ->
-                val result = results[0] as OnnxTensor
-                val info = result.info as TensorInfo
-                val buffer = result.floatBuffer
-                val output = FloatArray(buffer.remaining())
-                buffer.get(output)
-                require(output.all(Float::isFinite))
-                session.backend = "onnx_cpu"
-                return Output(info.shape, output, session.backend)
+    private fun terminalSoftmax(session: Session, logits: FloatArray, classes: Int) {
+        val hash = session.spec.getValue("sha256").jsonPrimitive.content
+        val started = System.nanoTime()
+        if (gpuSoftmaxFailure == null) {
+            // GPU 读回失败可能部分改写数组；只有完整校验成功才替换原 logits。
+            val probabilities = logits.copyOf()
+            try {
+                trace.record(hash, "gpu_softmax_run")
+                val gpu = gpuSoftmax ?: OcrGpuSoftmax().also { gpuSoftmax = it }
+                gpu.run(probabilities, classes)
+                probabilities.copyInto(logits)
+                session.softmaxBackend = "gpu"
+                session.gpuRenderer = gpu.renderer
+                session.softmaxMs = (System.nanoTime() - started) / 1_000_000.0
+                trace.record(hash, "gpu_softmax_succeeded", gpu.renderer)
+                return
+            } catch (error: Exception) {
+                gpuSoftmaxFailure = error.message?.take(300) ?: error.javaClass.simpleName
+            } catch (error: LinkageError) {
+                gpuSoftmaxFailure = error.message?.take(300) ?: "GPU linkage failed"
             }
+            trace.record(hash, "gpu_softmax_failed", gpuSoftmaxFailure)
+            runCatching { gpuSoftmax?.close() }
+            gpuSoftmax = null
         }
+        check(OcrNative.softmaxInPlace(logits, classes)) { "CPU Softmax rejected OCR logits" }
+        session.softmaxBackend = "cpu_after_gpu_error"
+        session.gpuRenderer = null
+        session.softmaxMs = (System.nanoTime() - started) / 1_000_000.0
     }
 
-    private fun createCpuSession(session: Session, profilingPrefix: String? = null): OrtSession =
-        OrtSession.SessionOptions().use { options ->
-            options.addCPU(true)
-            options.setIntraOpNumThreads(2)
-            profilingPrefix?.let { options.enableProfiling(it) }
-            OrtEnvironment.getEnvironment().createSession(materialize(session.spec).absolutePath, options)
+    private fun runCpu(session: Session, shape: LongArray, values: FloatArray): Output {
+        val conversion = session.spec.getValue("litert").jsonObject
+        val singleShape = shape.copyOf().apply { this[0] = 1 }
+        if (session.cpu == null || session.cpuShape?.contentEquals(singleShape) != true) {
+            session.cpu?.close()
+            session.cpu = null
+            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "litert_cpu_compile")
+            session.cpu = OcrLiteCpu(materialize(conversion), conversion, singleShape,
+                runtime.getValue("litert").jsonPrimitive.content, context.cacheDir)
+            session.cpuShape = singleShape
         }
+        val cpu = session.cpu!!
+        val expected = cpu.outputShape.copyOf()
+        val sampleSize = expected.fold(1L, Long::times).toInt()
+        val batch = shape[0].toInt()
+        require(sampleSize.toLong() * batch <= 64 * 1024 * 1024 / 4)
+        val output = FloatArray(sampleSize * batch)
+        val plane = (shape[2] * shape[3]).toInt()
+        val inputSize = 3 * plane
+        session.softmaxBackend = "in_model_cpu"
+        session.softmaxMs = null
+        session.gpuRenderer = null
+        repeat(batch) { index ->
+            val source = values.copyOfRange(index * inputSize, (index + 1) * inputSize)
+            val input = if (conversion.getValue("input_layout").jsonPrimitive.content == "nhwc") {
+                FloatArray(inputSize) { position -> source[(position % 3) * plane + position / 3] }
+            } else source
+            val result = cpu.run(input)
+            if (conversion["output_postprocess"]?.jsonPrimitive?.content == "softmax") {
+                val started = System.nanoTime()
+                check(OcrNative.softmaxInPlace(result, expected.last().toInt())) { "CPU Softmax rejected OCR logits" }
+                session.softmaxBackend = "cpu"
+                session.softmaxMs = (System.nanoTime() - started) / 1_000_000.0
+            }
+            if (conversion["output_layout"]?.jsonPrimitive?.content == "nhwc") {
+                val channels = expected[3].toInt()
+                val outputPlane = sampleSize / channels
+                repeat(sampleSize) { position ->
+                    output[index * sampleSize + position] = result[(position % outputPlane) * channels + position / outputPlane]
+                }
+            } else result.copyInto(output, index * sampleSize)
+        }
+        val outputShape = if (conversion["output_layout"]?.jsonPrimitive?.content == "nhwc")
+            longArrayOf(shape[0], expected[3], expected[1], expected[2]) else expected.apply { this[0] = shape[0] }
+        session.backend = "litert_cpu"
+        return Output(outputShape, output, session.backend)
+    }
 
     private fun materialize(spec: JsonObject): File {
         val hash = spec.getValue("sha256").jsonPrimitive.content
@@ -658,6 +769,8 @@ class OcrEngine(
         sessions.clear()
         environment?.close()
         environment = null
+        gpuSoftmax?.close()
+        gpuSoftmax = null
     }
 
     /**
@@ -681,7 +794,11 @@ class OcrEngine(
         var lite: CompiledModel? = null
         var hiai = 0L
         var model: Model? = null
-        var cpu: OrtSession? = null
+        var cpu: OcrLiteCpu? = null
+        var cpuShape: LongArray? = null
+        var softmaxBackend = "in_model"
+        var softmaxMs: Double? = null
+        var gpuRenderer: String? = null
         var inputs: List<com.google.ai.edge.litert.TensorBuffer>? = null
         var outputs: List<com.google.ai.edge.litert.TensorBuffer>? = null
         var inferenceSucceeded = false

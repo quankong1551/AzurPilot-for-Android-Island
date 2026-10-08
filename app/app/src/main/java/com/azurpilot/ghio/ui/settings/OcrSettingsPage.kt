@@ -166,7 +166,7 @@ fun OcrSettingsPage(
                 }
                 val reason = when (model.text("cpu_reason")) {
                     "user_disabled" -> R.string.ocr_user_disabled
-                    "detector" -> R.string.ocr_cpu_detector
+                    "detector", "model_not_accelerated" -> R.string.ocr_cpu_detector
                     "dynamic_shape" -> R.string.ocr_cpu_shape
                     "npu_unavailable" -> R.string.ocr_cpu_unavailable
                     "npu_failed" -> R.string.ocr_cpu_failed
@@ -195,7 +195,8 @@ private fun OcrHint(text: String) {
 
 @Composable
 private fun backendLabel(backend: String): String = stringResource(when (backend) {
-    "onnx_cpu", "original_runtime_cpu" -> R.string.ocr_backend_cpu
+    "litert_cpu", "onnx_cpu", "original_runtime_cpu" -> R.string.ocr_backend_cpu
+    "litert_npu_gpu_softmax_with_cpu_fallback" -> R.string.ocr_backend_litert_gpu_softmax
     "litert_npu_with_cpu_fallback" -> R.string.ocr_backend_litert
     "hiai_npu" -> R.string.ocr_backend_hiai
     else -> R.string.ocr_backend_pending

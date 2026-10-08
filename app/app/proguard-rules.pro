@@ -68,6 +68,3 @@
 -keep class com.google.ai.edge.litert.** { *; }
 -keep class com.azurpilot.ghio.ocr.OcrNative { *; }
 -keep class com.azurpilot.ghio.ocr.OcrHiaiNative { *; }
-
-# ONNX 的 JNI 按固定类名构造输出类型；仅保留 native 方法仍会导致 FindClass 失败并 abort。
--keep class ai.onnxruntime.** { *; }

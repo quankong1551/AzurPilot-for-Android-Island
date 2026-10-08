@@ -55,8 +55,11 @@ class OcrServer(private val context: Context, private val settings: AppSettingsM
     /** 经过实际 API 测试，原生退出时重试 CPU。 / Tests through the real API, retrying CPU after native exits. */
     fun test(hash: String): JsonObject = request("test", hash).getValue("result").jsonObject
 
-    /** 用独立 CPU 会话分析执行后端并计时。 / Profiles and times an isolated CPU session. */
+    /** 只请求 CPU 的独立 LiteRT 会话计时。 / Times an isolated CPU-only LiteRT session. */
     fun testCpu(hash: String): JsonObject = request("test_cpu", hash).getValue("result").jsonObject
+
+    /** 单独验证 GPU 末尾 Softmax。 / Tests terminal GPU Softmax independently. */
+    fun testGpuSoftmax(hash: String): JsonObject = request("test_gpu_softmax", hash).getValue("result").jsonObject
 
     /** 对照 NPU 与 GPU 联合委派。 / Compares combined NPU/GPU delegation. */
     fun testMixed(hash: String): JsonObject = request("test_mixed", hash).getValue("result").jsonObject
@@ -160,7 +163,7 @@ class OcrServer(private val context: Context, private val settings: AppSettingsM
             try {
                 Socket().use { client ->
                     client.connect(InetSocketAddress("127.0.0.1", PORT), 3_000)
-                    client.soTimeout = if (method in setOf("test", "test_cpu", "test_mixed",
+                    client.soTimeout = if (method in setOf("test", "test_cpu", "test_mixed", "test_gpu_softmax",
                         "set_hardware_acceleration")) 240_000 else 15_000
                     val header = buildJsonObject {
                         put("method", method)

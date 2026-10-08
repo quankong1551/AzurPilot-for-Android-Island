@@ -12,9 +12,10 @@ import subprocess
 import sys
 
 METHODS = ["help", "debug-last", "debug-export", "ocr-status", "ocr-test", "ocr-test-all",
-           "ocr-test-cpu", "ocr-test-mixed", "ocr-hardware-acceleration", "ocr-ap-test",
+           "ocr-test-cpu", "ocr-test-mixed", "ocr-test-gpu-softmax", "ocr-hardware-acceleration", "ocr-ap-test",
            "ocr-ap-config-test", "runtime-status", "runtime-start", "storage-status"]
 MODEL_NAMES = {"tiny": "PP-OCRv6_tiny_rec.onnx", "small": "PP-OCRv6_small_rec.onnx",
+               "pro": "PP-OCRv6_medium_rec.onnx", "det": "PP-OCRv6_tiny_det.onnx",
                "en": "alocr-en-us-v2.6.nvc.onnx", "zh": "alocr-zh-cn-v3.dtk.onnx"}
 
 

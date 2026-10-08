@@ -46,17 +46,36 @@ def verify(archive):
     hiai = json.loads(archive.read("assets/ocr/hiai-runtime.json"))
     if runtime["litert"] != LITERT_VERSION:
         raise ValueError("LiteRT runtime and vendor plugins have mismatched versions")
+    if manifest.get("version") != 2:
+        raise ValueError("OCR model format 2 required")
+    if any(name.startswith("assets/ocr/") and name.endswith(".onnx") for name in names):
+        raise ValueError("Original OCR weights must not be bundled")
+    if any("onnxruntime" in name for name in names if name.startswith("lib/")):
+        raise ValueError("Obsolete Android ONNX runtime must not be bundled")
     for model in manifest["models"]:
-        if "litert" in model and "mnn" not in model:
+        if model.get("source_weight_bundled") is not False or "litert" not in model:
+            raise ValueError("All OCR models require a weight-free source identity and LiteRT CPU conversion")
+        if model.get("npu_supported") and "mnn" not in model:
             raise ValueError(f"Missing HiAI OCR conversion: {model['asset']}")
-        postprocess = model.get("litert", {}).get("output_postprocess")
+        conversion = model["litert"]
+        patches = conversion.get("cpu_shape_patches", [])
+        data = archive.read("assets/ocr/" + conversion["asset"])
+        if not patches:
+            raise ValueError("Missing CPU shape descriptors")
+        for patch in patches:
+            offset, size = patch["offset"], patch["size"]
+            if size not in (1, 4) or offset < 0 or offset + size > len(data):
+                raise ValueError("Invalid CPU shape descriptor bounds")
+            if int.from_bytes(data[offset:offset + size], "little", signed=True) != patch["expected"]:
+                raise ValueError("CPU shape descriptor differs from model bytes")
+        postprocess = conversion.get("output_postprocess")
         if postprocess not in (None, "softmax"):
             raise ValueError("Unknown OCR output postprocess")
         if postprocess == "softmax":
             shape = model["litert"].get("output_shape", [])
             if len(shape) != 3 or shape[:2] != [1, 40] or shape[-1] <= 16384:
-                raise ValueError("CPU Softmax requires the verified large-dictionary output contract")
-        for spec in [model] + [model[key] for key in ["litert", "mnn"] if key in model]:
+                raise ValueError("Terminal Softmax requires the verified large-dictionary output contract")
+        for spec in [model[key] for key in ["litert", "mnn"] if key in model]:
             actual = hashlib.sha256(archive.read(f"assets/ocr/{spec['asset']}")).hexdigest()
             if actual != spec["sha256"]:
                 raise ValueError(f"OCR model checksum mismatch: {spec['asset']}")

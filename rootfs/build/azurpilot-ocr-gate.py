@@ -3,7 +3,7 @@
 
 由 build-azurpilot.sh 装入 rootfs（/opt/azurpilot/azurpilot-ocr-gate.py），须在
 rootfs 内部用其 venv Python 执行（模型与 onnxruntime 都只存在于 rootfs 内）：
-逐一加载四个模型并喂入零张量跑一遍前向，任一模型缺失、无输出或输出含非有限值
+原始权重仅用于构建阶段；逐一加载六个模型并喂入零张量，任一模型缺失、无输出或含非有限值
 即抛错、非零退出。
 
 Runs a real CPU inference pass over the ONNX OCR models used by AzurPilot as a
@@ -23,12 +23,14 @@ import onnxruntime as ort
 
 
 ROOT = Path(__file__).resolve().parent
-# 四个识别器覆盖 App 内置的原始 ONNX，防止裁剪运行库后 CPU 回退失效。
+# 在删除源权重前检查五个识别器和检测器；发布镜像不再执行此开发对照。
 MODELS = (
     'bin/ocr_models/ppocr-v6/PP-OCRv6_tiny_rec.onnx',
     'bin/ocr_models/ppocr-v6/PP-OCRv6_small_rec.onnx',
+    'bin/ocr_models/ppocr-v6/PP-OCRv6_medium_rec.onnx',
     'bin/ocr_models/azur_lane/alocr-en-us-v2.6.nvc.onnx',
     'bin/ocr_models/zh-CN/alocr-zh-cn-v3.dtk.onnx',
+    'bin/ocr_models/det/PP-OCRv6_tiny_det.onnx',
 )
 
 
@@ -54,8 +56,9 @@ def main():
         session = ort.InferenceSession(str(model), sess_options=options,
                                        providers=['CPUExecutionProvider'])
         source = session.get_inputs()[0]
-        # 冒烟推理只需张量能通过形状校验：动态维取占位值，宽度维（第 4 维）取 320、其余取 1。
-        shape = tuple(d if isinstance(d, int) else (320 if index == 3 else 1)
+        # 检测器的空间尺寸按 32 对齐，不能把动态高度设成 1。
+        baseline = (1, 3, 64, 64) if '_det.onnx' in relative else (1, 3, 48, 320)
+        shape = tuple(d if isinstance(d, int) else baseline[index]
                       for index, d in enumerate(source.shape))
         inputs = np.zeros(shape, dtype=np.float32)
         output = session.run(None, {source.name: inputs})

@@ -13,6 +13,13 @@
 #include <cmath>
 #include <algorithm>
 #include <string>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
+#include <vector>
+#include "third_party/litert/litert/c/litert_layout.h"
 
 namespace {
 // C API 参数使用原始模型指针，不能直接传入 Kotlin 的 ModelWrapper 指针。
@@ -66,6 +73,73 @@ jlong ReadHandle(JNIEnv* env, jobject object) {
     return env->GetLongField(object, handle_field);
 }
 }  // namespace
+
+// 匿名文件仅承载当前会话的图视图；APK 和持久缓存不保留第二份权重。
+// Anonymous files hold session graph views without a second persistent weight copy.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_azurpilot_ghio_ocr_OcrNative_openMemoryModel(
+        JNIEnv* env, jobject, jobject buffer, jstring directory, jboolean allow_memfd) {
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong size = env->GetDirectBufferCapacity(buffer);
+    if (data == nullptr || size <= 0 || size > 256 * 1024 * 1024) return -1;
+    int fd = allow_memfd == JNI_TRUE ? static_cast<int>(syscall(SYS_memfd_create, "ocr-litert-cpu", 1)) : -1;
+    if (fd < 0 && directory != nullptr) {
+        // Android 9/10 不依赖 memfd；先 unlink，再写入，不留下持久权重文件。
+        const char* path = env->GetStringUTFChars(directory, nullptr);
+        if (path == nullptr) return -1;
+        std::string pattern = std::string(path) + "/ocr-cpu-XXXXXX";
+        env->ReleaseStringUTFChars(directory, path);
+        std::vector<char> temporary(pattern.begin(), pattern.end());
+        temporary.push_back('\0');
+        fd = mkstemp(temporary.data());
+        if (fd >= 0 && (unlink(temporary.data()) != 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) != 0)) {
+            close(fd);
+            return -1;
+        }
+    }
+    if (fd < 0) return -1;
+    size_t offset = 0;
+    while (offset < static_cast<size_t>(size)) {
+        const ssize_t written = write(fd, static_cast<const char*>(data) + offset, size - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { close(fd); return -1; }
+        offset += written;
+    }
+    lseek(fd, 0, SEEK_SET);
+    return fd;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_azurpilot_ghio_ocr_OcrNative_closeMemoryModel(JNIEnv*, jobject, jint fd) {
+    if (fd >= 0) close(fd);
+}
+
+// 编译会话的真实输出布局可能已经改变，不能读取源模型里的静态 40 时间步。
+// Read the compiled output layout rather than the source model's static time axis.
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_azurpilot_ghio_ocr_OcrNative_outputShape(
+        JNIEnv* env, jobject, jobject compiled_model, jstring runtime_version) {
+    if (!SupportsVersion(env, runtime_version)) return nullptr;
+    auto* handle = reinterpret_cast<void*>(ReadHandle(env, compiled_model));
+    if (handle == nullptr) return nullptr;
+    void* library = dlopen("libLiteRt.so", RTLD_NOW | RTLD_LOCAL);
+    if (library == nullptr) return nullptr;
+    using GetLayouts = int32_t (*)(void*, size_t, size_t, LiteRtLayout*, bool);
+    auto api = reinterpret_cast<GetLayouts>(dlsym(library, "LiteRtGetCompiledModelOutputTensorLayouts"));
+    LiteRtLayout layout{};
+    const bool valid = api != nullptr && api(handle, 0, 1, &layout, true) == 0 &&
+            layout.rank > 0 && layout.rank <= 4;
+    dlclose(library);
+    if (!valid) return nullptr;
+    jlong values[4]{};
+    for (size_t i = 0; i < layout.rank; ++i) {
+        if (layout.dimensions[i] <= 0) return nullptr;
+        values[i] = layout.dimensions[i];
+    }
+    jlongArray result = env->NewLongArray(layout.rank);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, layout.rank, values);
+    return result;
+}
 
 // SDK 8 初始化直接调用配置入口，MDLA 创建还需 APUSys；提前检查以避开已知 abort。
 //

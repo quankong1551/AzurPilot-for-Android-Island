@@ -65,9 +65,9 @@ def main():
     manifest_path = ASSETS / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     for spec in manifest["models"]:
-        if "litert" not in spec:
+        if not spec.get("npu_supported"):
             continue
-        source = ASSETS / spec["asset"]
+        source = ROOT / ".tmp/ocr-sources" / spec["asset"].removeprefix("models/")
         if hashlib.sha256(source.read_bytes()).hexdigest() != spec["sha256"]:
             raise ValueError("Original OCR model checksum changed")
         converted = ASSETS / "mnn" / (source.stem + ".mnn")

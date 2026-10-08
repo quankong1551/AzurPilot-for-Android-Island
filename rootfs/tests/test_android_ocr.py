@@ -61,7 +61,7 @@ class Handler(socketserver.StreamRequestHandler):
             values = np.frombuffer(self.rfile.read(request["length"]), dtype="<f4").reshape(request["shape"])
             data = (values * 2).tobytes()
             shape = [-1] if self.server.malformed else request["shape"]
-            reply = {"ok": True, "backend": "onnx_cpu", "length": len(data), "outputs": [{"name": "y", "shape": shape}]}
+            reply = {"ok": True, "backend": "litert_cpu", "length": len(data), "outputs": [{"name": "y", "shape": shape}]}
             if self.server.truncated:
                 data = data[:4]
         wire = json.dumps(reply).encode() + b"\n" + data
@@ -104,7 +104,7 @@ class OcrProtocolTest(unittest.TestCase):
         np.testing.assert_array_equal(session.run(["y"], {"x": self.values})[0], self.values * 2)
         self.assertIsNone(session._socket)
         self.assertEqual(CpuSession.created, 0)
-        self.assertEqual(session._last_backend, "onnx_cpu")
+        self.assertEqual(session._last_backend, "litert_cpu")
         self.assertEqual(session._host_runs, 1)
         self.assertEqual(session._last_shape, [1, 3, 48, 320])
         self.assertEqual(self.server.last_source, "ap")
@@ -115,17 +115,22 @@ class OcrProtocolTest(unittest.TestCase):
         np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
         self.assertFalse(session._failed)
 
-    def test_truncated_payload_falls_back_once(self):
+    def test_truncated_payload_reports_error_and_later_call_recovers(self):
         session = self.session()
         self.server.truncated = True
-        for _ in range(2):
-            np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * -3)
-        self.assertEqual(CpuSession.created, 1)
+        with self.assertRaisesRegex(RuntimeError, "Truncated OCR tensor"):
+            session.run(None, {"x": self.values})
+        self.assertEqual(CpuSession.created, 0)
+        self.server.truncated = False
+        np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
+        self.assertFalse(session._failed)
 
-    def test_malformed_shape_falls_back(self):
+    def test_malformed_shape_reports_error_without_original_weights(self):
         session = self.session()
         self.server.malformed = True
-        np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * -3)
+        with self.assertRaisesRegex(RuntimeError, "Invalid OCR output shape"):
+            session.run(None, {"x": self.values})
+        self.assertEqual(CpuSession.created, 0)
 
     def test_wrong_token_and_unknown_hash_rejected(self):
         for kwargs in [{"token": "wrong"}, {"hash": "wrong"}]:
@@ -156,9 +161,21 @@ class OcrProtocolTest(unittest.TestCase):
                 ocr.install()
                 self.assertIs(ort.InferenceSession, factory)
                 model.write_bytes(b"updated model")
-                self.assertIsInstance(factory(str(model)), CpuSession)
+                with self.assertRaisesRegex(RuntimeError, "Unknown model"):
+                    factory(str(model))
+                model.write_text(json.dumps({"android_ocr_model": 2, "sha256": MODEL_HASH}))
+                self.assertIsInstance(factory(str(model)), ocr.AndroidSession)
                 self.assertIsInstance(factory(b"memory model"), CpuSession)
                 self.assertIsInstance(factory(str(root / "other.onnx")), CpuSession)
+
+    def test_descriptor_rejects_invalid_version_and_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model.onnx"
+            for value in [{"android_ocr_model": 1, "sha256": MODEL_HASH},
+                          {"android_ocr_model": 2, "sha256": "bad"}]:
+                path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError, "descriptor"):
+                    ocr.model_identity(path)
 
     def ap_test(self, changed_model=False, original_cpu=False, fail_host=False):
         """模拟 AP 工厂契约，验证接线测试不会接受静默回退。
@@ -207,7 +224,7 @@ class OcrProtocolTest(unittest.TestCase):
         result = self.ap_test()
         self.assertTrue(result["ok"])
         self.assertTrue(result["sample_text_matches"])
-        self.assertEqual(result["backend"], "onnx_cpu")
+        self.assertEqual(result["backend"], "litert_cpu")
         self.assertEqual(result["host_runs"], 1)
         self.assertFalse(result["instance_settings_changed"])
         self.assertEqual(self.server.last_source, "diagnostic")
@@ -221,7 +238,7 @@ class OcrProtocolTest(unittest.TestCase):
             self.ap_test(original_cpu=True)
 
     def test_ap_integration_rejects_silent_original_runtime_fallback(self):
-        with self.assertRaisesRegex(RuntimeError, "host integration failed"):
+        with self.assertRaisesRegex(RuntimeError, "Truncated OCR tensor"):
             self.ap_test(fail_host=True)
 
     def configured_ap_test(self, backend):
@@ -343,8 +360,10 @@ class OcrProtocolTest(unittest.TestCase):
                 self.assertIsInstance(session, ort.InferenceSession)
                 np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
                 self.server.truncated = True
-                np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * -3)
-                self.assertIsInstance(session._cpu, original)
+                with self.assertRaisesRegex(RuntimeError, "Truncated OCR tensor"):
+                    session.run(None, {"x": self.values})
+                self.server.truncated = False
+                np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
 
 
 if __name__ == "__main__":

@@ -284,6 +284,8 @@ jobs:
         run: |
           python3 app/scripts/fetch_ocr_runtime.py
           python3 app/scripts/test_verify_ocr_assets.py
+          python3 rootfs/tests/test_android_ocr_adapter.py
+          python3 rootfs/tests/test_compact_ocr_models.py
           uv run --no-project --python 3.12 --with numpy==2.2.6 --with onnx==1.20.1 --with onnxruntime==1.26.0 rootfs/tests/test_android_ocr.py
 
       - name: Verify OCR native interfaces

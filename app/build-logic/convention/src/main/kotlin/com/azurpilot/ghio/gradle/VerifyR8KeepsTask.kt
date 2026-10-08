@@ -36,12 +36,6 @@ internal val R8_CRITICAL_CLASSES = setOf(
     "com.google.ai.edge.litert.JniHandle",
     "com.google.ai.edge.litert.LiteRtException",
     "com.google.ai.edge.litert.TensorBufferRequirements",
-    "ai.onnxruntime.OnnxJavaType",
-    "ai.onnxruntime.TensorInfo",
-    "ai.onnxruntime.TensorInfo\$OnnxTensorType",
-    "ai.onnxruntime.OnnxTensor",
-    "ai.onnxruntime.OnnxValue",
-    "ai.onnxruntime.OrtSession",
 )
 
 /**

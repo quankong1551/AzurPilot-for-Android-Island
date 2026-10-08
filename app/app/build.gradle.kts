@@ -264,7 +264,6 @@ tasks.matching { it.name.startsWith("package") || it.name.startsWith("assemble")
 
 dependencies {
     implementation(libs.litert)
-    implementation(libs.onnxruntime.android)
     // 隐藏框架 API 的实现只在运行时的平台上存在，编译期仅需签名镜像，故 compileOnly
     compileOnly(project(":hidden-api"))
 

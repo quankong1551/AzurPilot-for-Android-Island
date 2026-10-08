@@ -23,12 +23,12 @@ class OcrAssetsTest(unittest.TestCase):
         checksum = hashlib.sha256(data).hexdigest()
         files = {
             "AndroidManifest.xml": " ".join(sorted(MEDIATEK_SYSTEM_LIBRARIES)).encode(),
-            "assets/ocr/manifest.json": json.dumps({"models": [{"asset": "models/test.onnx", "sha256": checksum,
-                "litert": {"asset": "litert/test.tflite", "sha256": checksum},
+            "assets/ocr/manifest.json": json.dumps({"version": 2, "models": [{"source_weight_bundled": False, "npu_supported": True, "asset": "models/test.onnx", "sha256": checksum,
+                "litert": {"asset": "litert/test.tflite", "sha256": checksum,
+                    "cpu_shape_patches": [{"offset": 0, "size": 1, "expected": 116, "value": 1}]},
                 "mnn": {"asset": "mnn/test.mnn", "sha256": checksum}}]}),
             "assets/ocr/runtime.json": json.dumps({"litert": LITERT_VERSION, "libraries": {
                 name: checksum for name in REQUIRED_LIBRARIES}}),
-            "assets/ocr/models/test.onnx": data,
             "assets/ocr/test/sample.png": b"\x89PNG\r\n\x1a\n" + bytes(8) + (320).to_bytes(4, "big") + (48).to_bytes(4, "big"),
             "assets/ocr/litert/test.tflite": data,
             "assets/ocr/mnn/test.mnn": data,
@@ -54,6 +54,25 @@ class OcrAssetsTest(unittest.TestCase):
                 archive.writestr(name, value)
         buffer.seek(0)
         return zipfile.ZipFile(buffer)
+
+    def test_original_weights_rejected(self):
+        with self.archive(change=lambda f: f.update({"assets/ocr/models/old.onnx": b"weights"})) as archive:
+            with self.assertRaisesRegex(ValueError, "Original OCR weights"):
+                verify(archive)
+
+    def test_obsolete_onnx_android_runtime_rejected(self):
+        with self.archive(change=lambda f: f.update({"lib/arm64-v8a/libonnxruntime.so": b"runtime"})) as archive:
+            with self.assertRaisesRegex(ValueError, "Obsolete Android ONNX"):
+                verify(archive)
+
+    def test_corrupt_cpu_shape_descriptor_rejected(self):
+        def change(files):
+            manifest = json.loads(files["assets/ocr/manifest.json"])
+            manifest["models"][0]["litert"]["cpu_shape_patches"][0]["expected"] = 0
+            files["assets/ocr/manifest.json"] = json.dumps(manifest)
+        with self.archive(change=change) as archive:
+            with self.assertRaisesRegex(ValueError, "CPU shape descriptor differs"):
+                verify(archive)
 
     def test_valid_vendor_package(self):
         with self.archive() as archive:
@@ -81,7 +100,7 @@ class OcrAssetsTest(unittest.TestCase):
                         verify(archive)
 
     def test_corrupt_model(self):
-        with self.archive(change=lambda f: f.update({"assets/ocr/models/test.onnx": b"wrong"})) as archive:
+        with self.archive(change=lambda f: f.update({"assets/ocr/litert/test.tflite": b"test bad"})) as archive:
             with self.assertRaisesRegex(ValueError, "model checksum"):
                 verify(archive)
 
@@ -105,7 +124,7 @@ class OcrAssetsTest(unittest.TestCase):
             verify(archive)
         for shape in [[1, 40, 97], [2, 40, 18385], [1, 39, 18385], []]:
             with self.subTest(shape=shape), self.archive(change=change(shape)) as archive:
-                with self.assertRaisesRegex(ValueError, "CPU Softmax requires"):
+                with self.assertRaisesRegex(ValueError, "Terminal Softmax requires"):
                     verify(archive)
 
     def test_missing_vendor(self):

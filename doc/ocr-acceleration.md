@@ -4,8 +4,12 @@
 
 ### 调用链
 
-APK 内置原始 ONNX 权重，以及四个识别器的 LiteRT 和 MNN FP32 模型。AP 的 ONNX 会话工厂由
-`android_ocr.py` 在 Android 运行时代理，按文件内容 SHA-256 匹配 APK 白名单，向
+2026-10-09 起使用模型格式 2：原始权重已移除，CPU 复用 LiteRT，末尾 Softmax 可在 GPU 执行。
+细节与验证边界见 [同权重 CPU 和 GPU Softmax](ocr-litert-cpu-gpu-20261009.md)。
+
+APK 内置五个识别器和一个检测器的 LiteRT FP32 模型；海思另保留四个 MNN 转换。原始
+ONNX、NCNN 和旧 CnOCR 权重不再随 APK 或 rootfs 发布。AP 的 ONNX 会话工厂由
+`android_ocr.py` 在 Android 运行时代理，按模型身份文件中的源 SHA-256 匹配 APK 白名单，向
 `127.0.0.1:22302` 发送预处理后的 NCHW 张量。宿主负责推理，AP 保留语言字典、CTC
 解码和后处理。接口运行于私有绑定的 `:ocr` 工作进程，与主界面和特权设备桥分离，
 不需要 root 或 Shizuku 权限。
@@ -14,7 +18,7 @@ LiteRT CompiledModel 通过厂商编译、dispatch 插件调用 NPU，未注册 
 高通使用 QNN HTP，联发科使用 NeuroPilot。海思使用独立的 MNN → HiAI 后端：
 V320 客户端明确请求 NPU，禁用 MNN 的 CPU 备援。模型和库随 APK 安装，运行时不依赖
 Google Play 服务下载或网络连接。每次 PRoot 启动会同步 APK overlay，已有 rootfs
-也可随轻量 APK 更新接入。上游热更新后的新权重不会误匹配旧模型，自动保留原推理路径。
+也可随轻量 APK 更新接入。上游改变权重时要求更新 APK，不会误用旧转换或静默运行原权重。
 宿主为当前厂商创建独立的库目录，其中只放指向安装目录的符号链接，防止另一厂商的
 离线编译器抢先接管模型；APK 更新后会刷新链接。
 Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI 系统库；Android 12+
@@ -32,7 +36,7 @@ Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI
 | 海思 / 麒麟 | MNN → HiAI NPU | Android 10+、ARM64，内置官方示例的 NPU 最小库集；需兼容的 HiAI 驱动，全部算子必须被后端接受 |
 | 三星 Exynos | CPU 回退 | 已取得公开 AI LiteCore SDK，但四个内置识别器的 AOT 编译均失败；尚未启用此后端 |
 | Google Tensor | CPU 回退 | AOT 需要外部 Beta SDK 和芯片专用产物；尚未取得 SDK |
-| Android 9 / x86_64 | ONNX CPU | 保留原 App 的安装范围；Android 10–11 可尝试海思后端 |
+| Android 9 / x86_64 | LiteRT CPU | 保留原 App 的安装范围；Android 10–11 可尝试海思后端 |
 
 不能仅凭厂商或 SoC 名称承诺 NPU 可用。LiteRT 官方的厂商与芯片范围参见
 [NPU 文档](https://developers.google.com/edge/litert/next/npu)、
@@ -43,8 +47,8 @@ Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI
 本实现只对完整打包的后端尝试推理。
 
 固定形状识别请求 `[N,3,48,320]` 可尝试 NPU，`N` 拆成单图且不改变输入宽度。
-其他宽度、动态尺寸检测器、未内置模型和显式 NCNN 后端不做形状改写。前两者使用宿主
-ONNX CPU，后两者保留 AP 原推理路径。CPU 会话缓存最多两个，单宿主串行推理；
+其他宽度、检测器和 pro 档使用宿主 LiteRT CPU，不改写图片宽度。Android 的保存 NCNN 配置
+在内存中转接宿主并保留模型档位；未内置版本明确报错。CPU 会话缓存最多两个，单宿主串行推理；
 钉版 MTK dispatch 使用全局 adapter，因此同时只保留一个 MTK NPU 会话。
 
 ### 回退与状态
@@ -55,9 +59,9 @@ ONNX CPU，后两者保留 AP 原推理路径。CPU 会话缓存最多两个，�
 Kotlin 的单独 NPU 选项会自动加上 CPU，所以创建成功不能证明 NPU 执行。
 `litert_all_ops_delegated` 也可能由 CPU delegate 置为真，不能单独用于判定 NPU。
 **设置 → OCR 加速 → 使用硬件加速** 默认开启，选择保存到 App DataStore。
-关闭时等待当前推理结束、释放硬件会话，后续 App 测试与 AP 请求直接使用原 ONNX CPU；
+关闭时等待当前推理结束、释放硬件会话，后续 App 测试与 AP 请求直接使用同权重 LiteRT CPU；
 不用重启 AP。冷启动和 OCR 工作进程重建先读取保存值，避免先按默认值运行一次 NPU。
-此开关控制宿主白名单模型，AP 显式选择的 NCNN 和未内置权重仍按原配置执行。
+此开关控制 Android 宿主 OCR；配置文件不被改写，未知模型要求更新 APK。
 
 开启时仅在硬件库、驱动、编译、推理或输出尺寸、有限值检查发生实际错误时关闭该模型的
 硬件会话并回退 CPU；不支持的厂商和尺寸也使用 CPU。1.2.116 起不再在业务调用中额外运行
@@ -67,7 +71,7 @@ CPU 对照，也不因分数差或字符分类差回退。诊断测试仍显示�
 加载 MTK adapter 前，先尝试打开系统 `libapuwareutils_v2.mtk.so` 或
 `libapuwareutils.mtk.so`，确认其导出 `queryHwConfigInternal`。8.0.10 adapter 的
 初始化会直接调用该入口，缺失时会跳转空地址。Manifest 把两库声明为可选公开依赖；
-无法打开或入口缺失时报告原因并使用 ONNX CPU。若 v2 库能打开但缺少入口，则直接拒绝，
+无法打开或入口缺失时报告原因并使用 LiteRT CPU。若 v2 库能打开但缺少入口，则直接拒绝，
 因为 adapter 在这种情况下不会改试旧版库。此检查只排除已知初始化故障，不保证驱动兼容。
 
 钉版 LiteRT 的 adapter 加载器会遍历全部候选，以最后成功加载者为准。
@@ -172,13 +176,13 @@ SDK 没有二进制修改，实际 MTK 结果仍需 1.2.108 真机日志验证�
 [MT6985 真机验收记录](ocr-mt6985-validation-20261008.md)。
 当时将运行时门槛调整为 `0.15`，并要求字符预测一致；1.2.116 起按用户要求移除此门槛，
 由硬件加速开关决定选择，分数差仅作诊断。`0.15` 是概率尺度上的绝对差，不是字符错误率。
-small / 中文的末尾 Softmax 从 LiteRT 图中拆出，在宿主 CPU 以稳定算法计算。
-主体继续交由 NPU 分区执行，原始 ONNX 权重、公开输出形状及 AP 解码不变。
+small / 中文的末尾 Softmax 从 LiteRT 图中拆出；本版优先在 GPU 计算，GPU 实际错误时
+使用稳定 CPU 算法。主体交由 NPU 分区执行，公开输出形状及 AP 解码不变，原权重不再发布。
 
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
-`hiai_npu_only_session_ready` 记录软件层面的就绪证据。任何错误均回退原 ONNX，
-不会使用另一套转换模型的 CPU 实现冒充 NPU。
+`hiai_npu_only_session_ready` 记录软件层面的就绪证据。错误回退 LiteRT CPU，
+转换模型的 CPU 执行明确报告为 CPU。
 
 厂商可能只接受部分算子，所以 `litert_npu_with_cpu_fallback` 允许其余算子由 CPU 执行。
 `npu_dispatch_partitions` 与 `npu_delegation_verified` 提供软件层面的分区和成功运行证据，
@@ -196,7 +200,7 @@ cd /opt/azurpilot
 输入输出原始张量为 little-endian FP32，JSON 行头之后按 `length` 读取二进制数据。
 `describe` 和 `run` 要求 `model_sha256`，所有请求要求 `AZURPILOT_ANDROID_TOKEN`；
 `status` 仅返回状态。服务只绑定回环地址，头部限 16 KiB，数据限 64 MiB，连接最多四个。
-客户端每次请求释放连接，网络中断重试一次；服务无法访问时惰性创建原 CPU 会话。
+客户端每次请求释放连接，网络中断重试一次；服务无法访问时明确报错，不运行原权重。
 
 ### App 内测试
 
@@ -212,8 +216,8 @@ cd /opt/azurpilot
 
 点击 **运行测试**，选择的识别器通过带口令的真实回环 API 推理 `ocr/test/sample.png`。
 测试图片为本项目生成的 320×48 白底数字「12345」。首次耗时包含模型初始化；
-稳定耗时及原始 ONNX CPU 对照分别预热三次，再测二十次并保存逐次结果。CPU 对照
-使用独立会话，通过节点执行记录确认只有 `CPUExecutionProvider`，分析结束后才计时。
+稳定耗时及独立 LiteRT CPU 对照分别预热三次，再测二十次并保存逐次结果。CPU 对照
+只请求 CPU、不传厂商 provider，且检查图中没有 NPU dispatch 分区；不借用业务会话。
 两者均为固定尺寸单模型推理，含张量复制与有限值检查，不含 AP 图像处理、传输和解码。
 结果比较形状、最大绝对误差和
 各时间步字符分类，仅供参考，不因此回退。CPU 成功不会被标记为 NPU 成功。
@@ -223,7 +227,7 @@ AP 已运行时，同一个按钮还通过 PRoot 启动使用正常环境变量�
 `module.ocr.al_ocr._create_ocr`，验证原有 RapidOCR 预处理、宿主推理和 CTC 解码。
 模型版本不一致、会话工厂未接入或静默回退原 Python 推理都会报告失败。示例文字是否
 正确识别单独显示；接线成功不代替游戏画面的识别质量测试。该测试显式选择所选 ONNX
-识别器，不修改实例配置。实际任务选用 NCNN 或未知版本权重时保留上游原推理方式。
+识别器，不修改实例配置。Android 的 NCNN 选择转接宿主，未知版本明确报错。
 AP 未启动时仍可测试内置模型，页面会提示启动 AP 后重新测试接线。
 
 `ocr-ap-config-test` 额外读取当前实例的保存配置，调用正常 `AlOcr.ocr`，不强制 ONNX
@@ -232,7 +236,7 @@ AP 未启动时仍可测试内置模型，页面会提示启动 AP 后重新测�
 
 **复制测试报告** 包含芯片、运行库版本、实际后端、调用计数、耗时、数值对照和 AP
 识别结果，不包含认证口令。诊断调用不增加 AP 业务计数；业务计数只代表此 OCR 工作进程
-收到的宿主请求，未匹配的上游权重和 NCNN 请求不会进入宿主。
+收到的宿主请求，不代表整个历史任务的累计次数。
 
 ### 构建与验证
 
@@ -265,20 +269,21 @@ cd app
 python scripts/verify_ocr_assets.py app/build/outputs/apk/debug/*.apk
 ```
 
-模型权重与转换产物入库，普通 APK 构建不需要转换器。在 Linux / Python 3.12 中重新转换：
+仅转换产物入库，普通 APK 构建不需要转换器。原始参考文件放在忽略的 `.tmp/ocr-sources/`，
+路径与原 AP 的 `bin/ocr_models/` 下层一致，并按清单 SHA-256 校验。在 Linux / Python 3.12 中重新转换：
 
 ```bash
 uv venv /var/tmp/alas-ocr-convert --python 3.12
 uv pip install --python /var/tmp/alas-ocr-convert/bin/python -r app/scripts/ocr-models-requirements.txt
-/var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_models.py
-/var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_models.py --verify-only
+/var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_cpu_models.py
+/var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_cpu_models.py --verify-only
 /var/tmp/alas-ocr-convert/bin/python app/scripts/test_ocr_model_ranks.py
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_hiai_models.py
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_hiai_models.py --verify-only
 ```
 
-已有 LiteRT 产物可用 `prepare_ocr_models.py --normalize-existing` 修正常量秩并重做
-数值校验，无需重新运行 ONNX 转换器。`--verify-only` 会拒绝尚未修正的输入秩。
+模型格式 2 必须用 `prepare_ocr_cpu_models.py` 同时更新字节描述和转换哈希，
+`--verify-only` 复验多尺寸的原 ONNX 数值对照。
 
 四个识别器的空白、全黑和固定随机张量 CPU 对照均通过：LiteRT 最大绝对误差约 `4.6e-5`，
 MNN 约 `0.0058`，每个时间步的字符分类一致。MNN 使用 FP32 高精度配置，但算子融合
@@ -306,9 +311,13 @@ SDK 下载地址，要求 `GOOGLE_TENSOR_SDK_BETA` 本地文件或 `GOOGLE_TENSO
 
 ### Call path
 
-The APK bundles original ONNX weights and LiteRT and MNN FP32 models for four recognizers.
+As of 2026-10-09, model format 2 removes source weights, shares LiteRT weights with CPU, and
+supports terminal GPU Softmax. See [CPU weight sharing and GPU Softmax](ocr-litert-cpu-gpu-20261009.md).
+
+The APK bundles LiteRT FP32 models for five recognizers and one detector, plus four MNN
+conversions for HiAI. Original ONNX, NCNN, and legacy CnOCR weights are no longer shipped.
 `android_ocr.py` proxies AP's ONNX session factory only in the Android runtime, matches
-file SHA-256 hashes against the APK allowlist, and sends preprocessed NCHW tensors to
+source hashes in identity descriptors against the APK allowlist, and sends preprocessed NCHW tensors to
 `127.0.0.1:22302`. The app performs inference; AP retains dictionaries, CTC decoding, and
 postprocessing. A privately bound `:ocr` worker hosts the endpoint, separate from the UI
 and privileged device bridge. It requires neither root nor Shizuku permissions.
@@ -318,7 +327,7 @@ QNN HTP for Qualcomm and NeuroPilot for MediaTek. A separate MNN → HiAI backen
 V320 client to request the NPU explicitly and disables MNN CPU backup. Models and libraries install with the
 APK and require neither Play services downloads nor a network connection during inference.
 Each PRoot start refreshes overlays from APK assets, including existing rootfs installations.
-New upstream weights retain their original path when their hashes no longer match.
+Changed upstream weights require an APK update; stale conversions and original-weight fallback are rejected.
 The host exposes only the current vendor's plugins through a directory of symlinks to the
 installed native libraries, preventing another vendor's offline compiler from taking the
 model first. APK updates refresh those links.
@@ -339,7 +348,7 @@ the corresponding service interfaces to apps.
 | HiSilicon / Kirin | MNN → HiAI NPU | Android 10+, ARM64; official demo's minimal NPU libraries bundled; compatible HiAI drivers required, and the backend must accept all operators |
 | Samsung Exynos | CPU fallback | Public AI LiteCore SDK obtained, but AOT compilation failed for all four bundled recognizers; backend not enabled |
 | Google Tensor | CPU fallback | AOT requires an external beta SDK and chip-specific artifacts; SDK not obtained |
-| Android 9 / x86_64 | ONNX CPU | Preserves the installation range; Android 10–11 may use the HiAI backend |
+| Android 9 / x86_64 | LiteRT CPU | Preserves the installation range; Android 10–11 may use the HiAI backend |
 
 Vendor or SoC names alone do not establish NPU availability. Consult the official
 [NPU overview](https://developers.google.com/edge/litert/next/npu),
@@ -350,8 +359,9 @@ attempts only complete bundled backends. HiAI clients come from the
 [XNN configuration headers](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dijun-v-oss/platform/O1/npu/mnne/include/xnn/c_api/XnnConfig.h).
 
 Recognizer requests shaped `[N,3,48,320]` may use NPU; batches split into single images
-without changing width. Other widths and the dynamic detector use host ONNX CPU. Unbundled
-models and explicit NCNN configurations retain AP's original path. The host serializes
+without changing width. Other widths, the detector, and pro use host LiteRT CPU. Saved NCNN
+settings route to the host in memory, retaining the selected model tier. Unknown versions fail
+explicitly. The host serializes
 inference and caches at most two CPU sessions. The pinned MTK dispatch uses a global adapter,
 so only one MTK NPU session remains live at a time.
 
@@ -365,9 +375,9 @@ NPU-only option, so creation alone is not evidence of NPU execution.
 CPU delegates can also set `litert_all_ops_delegated` to true; it is never sufficient NPU evidence.
 **Settings → OCR acceleration → Use hardware acceleration** is enabled by default and persists
 in the app DataStore. Disabling waits for current inference, frees hardware sessions, and sends
-subsequent app tests and AP requests directly to original ONNX CPU without restarting AP.
+subsequent app tests and AP requests directly to LiteRT CPU with the same weights without restarting AP.
 Cold startup and worker recovery load the saved choice before binding. This switch controls host
-allowlisted models; explicit NCNN and unbundled weights retain their upstream configuration.
+OCR models; saved configuration files are unchanged and unknown models require an APK update.
 
 When enabled, only actual library, driver, compilation, inference, output-size or finite-value
 failures gate a model to CPU. Unsupported vendors and dimensions also use CPU. Since 1.2.116,
@@ -379,7 +389,7 @@ Before loading the MTK adapter, the host opens the system `libapuwareutils_v2.mt
 `libapuwareutils.mtk.so` and checks for `queryHwConfigInternal`. The 8.0.10 adapter calls
 this entry directly during initialization; a missing entry causes a null-address jump.
 The manifest declares both libraries as optional public dependencies. Unavailable libraries
-or entries produce a reported ONNX CPU fallback. An open v2 library without the entry is
+or entries produce a reported LiteRT CPU fallback. An open v2 library without the entry is
 rejected immediately, because the adapter does not try the legacy library in that case.
 This check excludes the known initialization fault, without proving driver compatibility.
 
@@ -506,14 +516,15 @@ and connected to AP. See [MT6985 device validation](ocr-mt6985-validation-202610
 NaN isolation, model-switch fixes, and limitations. That version used a `0.15` probability
 difference gate and required matching predictions. Since 1.2.116 these gates were removed at
 the user's request: the acceleration switch controls the choice and score differences are
-diagnostics only. This is not a character error rate. Small and Chinese terminal Softmax runs as stable
-CPU postprocessing while the model body uses NPU partitions. Original ONNX weights, public
-output shapes, and AP decoding remain unchanged.
+diagnostics only. This is not a character error rate. Small and Chinese terminal Softmax now
+prefers GPU, falling back to stable CPU postprocessing on actual GPU errors while the model
+body uses NPU partitions. Public output shapes and AP decoding stay intact; source weights
+are no longer shipped.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
-`hiai_npu`; `hiai_npu_only_session_ready` records software readiness. Errors fall back to original
-ONNX instead of using converted-model CPU execution as NPU evidence.
+`hiai_npu`; `hiai_npu_only_session_ready` records software readiness. Errors fall back to LiteRT
+CPU, explicitly reported as CPU execution rather than NPU evidence.
 
 `litert_npu_with_cpu_fallback` permits remaining operators to execute on CPU.
 `npu_dispatch_partitions` and `npu_delegation_verified` provide software evidence of partitioning
@@ -529,7 +540,7 @@ Requests contain one JSON line followed by `length` little-endian FP32 bytes. `d
 and `run` require `model_sha256`; every request requires `AZURPILOT_ANDROID_TOKEN`. `status`
 returns diagnostics only. The loopback-only service limits headers to 16 KiB, payloads to
 64 MiB, and connections to four. Clients release each connection, retry network interruption
-once, and lazily create the original CPU session if the service cannot be used.
+once, and report failures explicitly if the service cannot be used, without original weights.
 
 ### In-app tests
 
@@ -547,9 +558,9 @@ proving game accuracy or hardware profiling. `user_disabled` indicates the user'
 
 **Run test** sends the selected recognizer through the authenticated loopback API using
 `ocr/test/sample.png`, a project-generated 320×48 white image containing "12345". First-run
-time includes initialization. Steady and original ONNX CPU measurements each
-use three warmups and twenty timed runs with raw samples. CPU uses an isolated session;
-actual node profiling verifies exclusive `CPUExecutionProvider`, then ends before timing.
+time includes initialization. Steady and isolated LiteRT CPU measurements each use three
+warmups and twenty timed runs with raw samples. CPU requests only CPU without a vendor
+provider and checks that no NPU dispatch partitions were compiled; business sessions are separate.
 Both measure fixed-shape model inference, tensor copies, and finite checks; they exclude AP
 image processing, transport, and decoding. The test compares shapes, maximum absolute error, and per-timestep character
 classes for reference without changing the backend. A successful CPU test does not claim NPU use.
@@ -561,7 +572,7 @@ RapidOCR preprocessing, host inference, and CTC decoding. Changed weights, an un
 session factory, or silent original-Python fallback fail the integration test. Sample text
 accuracy is shown separately; integration success does not prove game-image accuracy.
 This explicitly selects the chosen ONNX recognizer without changing instance settings.
-Actual tasks using NCNN or unknown weight versions retain upstream inference. With AP
+Android NCNN selections route to the host; unknown versions fail explicitly. With AP
 stopped, bundled-model tests remain available and the page asks users to start AP and retest.
 
 `ocr-ap-config-test` additionally reads saved instance settings and calls normal `AlOcr.ocr`
@@ -572,7 +583,7 @@ business counts, integration/configuration tests are not evidence of live game c
 **Copy test report** includes the chip, runtime versions, actual backends, request counts,
 timings, numerical comparisons, and AP recognition results, without authentication tokens.
 Diagnostic calls do not increase AP task counts. Business counts cover host requests in
-this OCR worker process; unmatched upstream weights and NCNN calls never enter the host.
+this OCR worker process rather than cumulative task history.
 
 ### Build and verification
 
@@ -600,13 +611,14 @@ records source provenance, modifications, and library hashes.
 
 Run `fetch_ocr_runtime.py`, packaging tests, the NumPy-dependent protocol tests, the preferred
 Kotlin compile check, slim debug assembly, and `verify_ocr_assets.py` as shown above.
-Weights and converted models are committed, so ordinary builds need no converter.
+Only converted models are committed, so ordinary builds need no converter. Developer source
+references live in ignored `.tmp/ocr-sources/`, using paths below AP's `bin/ocr_models/` and
+verified source hashes from the manifest.
 For regeneration, use Linux / Python 3.12 and the pinned `ocr-models-requirements.txt` environment
 shown in the Chinese section, then run both preparation scripts and their `--verify-only` checks.
 Run `test_ocr_model_ranks.py` in the same environment for normalization regression coverage.
-Existing LiteRT artifacts can use `prepare_ocr_models.py --normalize-existing` to repair
-constant ranks and revalidate outputs without rerunning ONNX conversion. `--verify-only`
-rejects unnormalized input ranks.
+Model format 2 uses `prepare_ocr_cpu_models.py` to regenerate matching byte descriptors and
+model hashes. `--verify-only` repeats multi-shape source ONNX comparisons.
 
 All four recognizers passed CPU comparison on blank, black, and seeded random tensors. Maximum
 absolute error was about `4.6e-5` for LiteRT and `0.0058` for MNN, with identical tested

@@ -44,7 +44,7 @@ import java.util.zip.ZipOutputStream
 class AdbDebugProvider : ContentProvider() {
     private val commandLock = Semaphore(1)
     private val methods = listOf("help", "debug-last", "debug-export", "ocr-status", "ocr-test",
-        "ocr-test-all", "ocr-test-cpu", "ocr-test-mixed", "ocr-hardware-acceleration",
+        "ocr-test-all", "ocr-test-cpu", "ocr-test-mixed", "ocr-test-gpu-softmax", "ocr-hardware-acceleration",
         "ocr-ap-test", "ocr-ap-config-test", "runtime-status", "runtime-start", "storage-status")
     private val server: OcrServer get() = GlobalContext.get().get()
     private val host: ProotHost get() = GlobalContext.get().get()
@@ -107,7 +107,7 @@ class AdbDebugProvider : ContentProvider() {
         return try {
             require(method in methods) { "Unknown debug command; use help" }
             require(extras == null || extras.isEmpty) { "Debug commands do not accept extras" }
-            require(method in listOf("ocr-test", "ocr-test-cpu", "ocr-test-mixed", "ocr-ap-test",
+            require(method in listOf("ocr-test", "ocr-test-cpu", "ocr-test-mixed", "ocr-test-gpu-softmax", "ocr-ap-test",
                 "ocr-hardware-acceleration") || arg == null) { "Unexpected argument" }
             save(report("running"))
             if (method.startsWith("ocr-") || method.startsWith("runtime-")) {
@@ -123,6 +123,7 @@ class AdbDebugProvider : ContentProvider() {
                 })
                 "ocr-test" -> server.test(modelHash(arg))
                 "ocr-test-cpu" -> server.testCpu(modelHash(arg))
+                "ocr-test-gpu-softmax" -> server.testGpuSoftmax(modelHash(arg))
                 "ocr-test-mixed" -> server.testMixed(modelHash(arg))
                 "ocr-test-all" -> {
                     val candidates = server.status().getValue("model_status").jsonArray

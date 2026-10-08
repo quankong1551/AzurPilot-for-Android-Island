@@ -46,9 +46,9 @@ internal class OcrWorkerServer(
     val address: String get() = if (socket != null) "127.0.0.1:$PORT" else ""
 
     /**
-     * 幂等启动；失败记录日志，让 AP 保留原 CPU 路径。
+     * 幂等启动；失败记录日志并保持空地址，由宿主阻止 AP 启动。
      *
-     * Starts idempotently; failures keep AP's original CPU path.
+     * Starts idempotently; failures retain an empty address so the host prevents AP startup.
      */
     @Synchronized
     fun start() {
@@ -71,7 +71,7 @@ internal class OcrWorkerServer(
                             try {
                                 serve(client)
                             } catch (error: LinkageError) {
-                                // 驱动链接错误不能让宿主进程退出；连接关闭后 Python 会回退原模型。
+                                // 链接错误只关闭连接，由客户端重试或报告失败，不终止宿主。
                                 Timber.w(error, "OCR runtime linkage failed")
                             } finally {
                                 client.close()
@@ -89,7 +89,7 @@ internal class OcrWorkerServer(
             Timber.i("OCR API listening on %s", address)
         } catch (error: Exception) {
             listener.close()
-            Timber.w(error, "OCR API unavailable; AP will use original CPU inference")
+            Timber.w(error, "OCR API unavailable; AP startup requires the host OCR service")
         }
     }
 
@@ -117,6 +117,10 @@ internal class OcrWorkerServer(
                         }
                         "test_cpu" -> withInferenceBuffers {
                             val result = engine.testCpu(request.getValue("model_sha256").jsonPrimitive.content)
+                            send(output, buildJsonObject { put("ok", true); put("result", result) })
+                        }
+                        "test_gpu_softmax" -> withInferenceBuffers {
+                            val result = engine.testGpuSoftmax(request.getValue("model_sha256").jsonPrimitive.content)
                             send(output, buildJsonObject { put("ok", true); put("result", result) })
                         }
                         "test_mixed" -> withInferenceBuffers {

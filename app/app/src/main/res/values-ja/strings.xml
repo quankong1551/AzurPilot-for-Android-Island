@@ -678,10 +678,10 @@
     <string name="ocr_backend_pending">未実行</string>
     <string name="ocr_cold_time">初回の時間</string>
     <string name="ocr_steady_time">現在の単一モデル推論平均</string>
-    <string name="ocr_cpu_time">独立 ONNX CPU 平均</string>
+    <string name="ocr_cpu_time">独立 LiteRT CPU 平均</string>
     <string name="ocr_precision_passed">すべての時刻で文字の選択が CPU と一致しました。</string>
     <string name="ocr_measurement_hint">入力 1×3×48×320、3 回の準備後に 20 回計測。テンソルコピーを含み、AP の画像処理・通信・復号は含みません。初回は初期化と検証を含みます。</string>
-    <string name="ocr_cpu_verified">ノード実行記録で CPU を確認。計測中は解析を無効にしています。</string>
+    <string name="ocr_cpu_verified">独立セッションは CPU のみを指定。ベンダープラグインと NPU 分割はありません。</string>
     <string name="ocr_ap_backend">直近の AP 業務バックエンド</string>
     <string name="ocr_ap_no_calls">業務呼び出しはまだありません</string>
     <string name="ocr_ap_shape">直近の AP 入力形状</string>
@@ -694,10 +694,11 @@
     <string name="ocr_ap_requests">AP タスクの呼び出し</string>
     <string name="ocr_test_requests">テスト呼び出し</string>
     <string name="ocr_last_time">直近の推論時間</string>
-    <string name="ocr_cpu_detector">文字検出は現在 CPU で実行します。</string>
+    <string name="ocr_cpu_detector">現在のモデルは LiteRT CPU で実行します。</string>
     <string name="ocr_cpu_shape">現在の画像サイズは CPU を使用します。</string>
     <string name="ocr_cpu_unavailable">アクセラレーションライブラリまたはシステムの対応がないため CPU を使用します。</string>
     <string name="ocr_cpu_failed">ハードウェアの読み込み・コンパイル・推論でエラーが発生したため CPU を使用します。</string>
     <string name="ocr_copy_report">テストレポートをコピー</string>
     <string name="ocr_milliseconds">%1$.1f ミリ秒</string>
+    <string name="ocr_backend_litert_gpu_softmax">NPU + GPU Softmax（LiteRT）</string>
 </resources>

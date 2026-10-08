@@ -150,6 +150,10 @@ python3 "$REPO_ROOT/rootfs/build/compact-runtime.py" "$ROOTFS_DIR" \
 # 冒烟验证：重依赖可在 guest 内真实导入，且 psutil 子进程枚举确实走兼容层打桩。
 guest /bin/sh -c 'cd /opt/azurpilot && AZURPILOT_ANDROID=1 .venv/bin/python -c "import cv2,numpy,scipy,onnxruntime,rapidocr,ncnn,psutil,numba,uvloop,av; import module.api.app, module.device.device, module.ocr.al_ocr; assert numba.njit(lambda x: x + 1)(2) == 3; assert scipy.linalg.norm(numpy.array([3.,4.])) == 5.; loop = uvloop.new_event_loop(); loop.close(); assert psutil.Process.children.__module__ == \"android_process_compat\"; print(\"IMPORTS_OK\")"'
 guest /bin/sh -c 'cd /opt/azurpilot && .venv/bin/python azurpilot-ocr-gate.py'
+# 原模型只用于上述构建对照；发布镜像用宿主身份文件，字典与配置保留。
+python3 "$REPO_ROOT/rootfs/build/compact-ocr-models.py" "$ROOTFS_DIR" \
+    "$REPO_ROOT/app/app/src/main/assets/ocr/manifest.json"
+rm -f "$ROOTFS_DIR/opt/azurpilot/azurpilot-ocr-gate.py"
 mkdir -p "$ROOTFS_DIR/opt/azurpilot/log"
 
 # 生成 BUILD_MANIFEST：记录上游提交、ABI 与关键产物哈希；rootfs_version 由上游提交
@@ -172,6 +176,7 @@ for name in filter(None, tracked.split(b'\0')):
     path = repo_root / os.fsdecode(name)
     content_hash.update(str(path.relative_to(inputs)).encode())
     content_hash.update(path.read_bytes())
+content_hash.update((repo_root / 'app/app/src/main/assets/ocr/manifest.json').read_bytes())
 manifest = {
     'rootfs_version': os.environ['SOURCE_COMMIT'][:12] + '-' + content_hash.hexdigest()[:10],
     'runtime': 'azurpilot-android',
@@ -180,6 +185,8 @@ manifest = {
     'azurpilot_commit': os.environ['SOURCE_COMMIT'],
     'rootfs_arch': os.environ['TARGET_ABI'],
     'android_api_version': 1,
+    'ocr_host_model_format': 2,
+    'ocr_compaction': json.loads((root / 'OCR_SIZE_REPORT.json').read_text()),
     'uv_lock_sha256': sha(root / 'uv.lock'),
     'frontend_sha256': sha(root / 'frontend/dist/index.html'),
     'python_version': '3.14.6',

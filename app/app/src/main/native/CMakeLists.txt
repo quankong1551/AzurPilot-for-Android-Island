@@ -75,6 +75,7 @@ target_link_libraries(launcher log)
 # OCR 诊断桥仅动态读取 LiteRT C API，不依赖厂商 SDK 头文件或 NNAPI。
 # The OCR diagnostics bridge reads LiteRT C APIs dynamically without vendor headers or NNAPI.
 add_library(ocrdiagnostics SHARED ocr_diagnostics.cpp)
+target_include_directories(ocrdiagnostics PRIVATE third_party/litert)
 target_link_libraries(ocrdiagnostics dl)
 
 # 使用公开 dispatch ABI 补回无填充布局修正，厂商执行库以独立名称内置。
