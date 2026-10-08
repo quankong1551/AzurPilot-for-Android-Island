@@ -97,6 +97,21 @@ MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增�
 `debug/ocr/native-<模型哈希前12位>.log`，每个模型最多约 512 KiB、采集最多两秒。
 不请求额外日志权限，系统限制或日志清除仍可能使快照为空。
 
+`launcher_logs_20261008_154409.zip` 的 test2 快照显示：MTK Neuron 拒绝
+`BatchMatMul` 的输入秩，导致英文和 tiny 识别器各自生成零个分区。对应矩阵乘法
+使用 `[1,40,K]` 激活和 `[K,C]` 常量；tiny 首层还带输入转置选项。转换脚本
+把较低秩的常量克隆为 `[1,K,C]`，复用权重缓冲区，保留原常量的其他消费者、
+输出和转置选项。四个识别器分别修正 2、9、9、9 处；没有增加运行时算子。
+依据[钉版 MTK 算子转换源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/compiler/legalizations/batch_matmul_op_legalization.cc)，
+插件将输入形状直接交给 Neuron，没有补齐两输入的秩。
+六项模型回归测试包含 16 种广播、常量位置和转置组合，通过真实 LiteRT CPU
+执行确认输出一致，并覆盖共享常量输出、重复处理和拒绝条件。四模型的 ONNX
+数值对照仍通过，最大绝对误差约 `4.6e-5`。这排除了日志中发现的秩差异，
+实际 NPU 分区、运行和精度仍需更新 APK 后真机确认。
+另在 Linux 中把 AP 冒烟测试的宿主替身改为本次 LiteRT 模型的 CPU 执行，四个
+识别器通过原 AP 工厂、RapidOCR 预处理、回环代理和 CTC 解码均识别出 `12345`。
+该检查不运行 Android 厂商驱动或完整 PRoot。
+
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
 `hiai_npu_only_session_ready` 记录软件层面的就绪证据。任何错误均回退原 ONNX，
@@ -183,11 +198,15 @@ uv venv /var/tmp/alas-ocr-convert --python 3.12
 uv pip install --python /var/tmp/alas-ocr-convert/bin/python -r app/scripts/ocr-models-requirements.txt
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_models.py
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_ocr_models.py --verify-only
+/var/tmp/alas-ocr-convert/bin/python app/scripts/test_ocr_model_ranks.py
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_hiai_models.py
 /var/tmp/alas-ocr-convert/bin/python app/scripts/prepare_hiai_models.py --verify-only
 ```
 
-四个识别器的空白和固定随机张量 CPU 对照均通过：LiteRT 最大绝对误差约 `4.6e-5`，
+已有 LiteRT 产物可用 `prepare_ocr_models.py --normalize-existing` 修正常量秩并重做
+数值校验，无需重新运行 ONNX 转换器。`--verify-only` 会拒绝尚未修正的输入秩。
+
+四个识别器的空白、全黑和固定随机张量 CPU 对照均通过：LiteRT 最大绝对误差约 `4.6e-5`，
 MNN 约 `0.0058`，每个时间步的字符分类一致。MNN 使用 FP32 高精度配置，但算子融合
 会产生不同舍入误差，采用与宿主首次请求相同的 `0.01` 容差。
 这些输入不足以代表游戏截图全集。当前开发环境没有连接的 Android 设备，
@@ -323,6 +342,23 @@ failure, the host saves this OCR process's logcat snapshot to
 of collection. No extra logging permission is requested; system restrictions or discarded
 logs can still leave the snapshot empty.
 
+The test2 snapshots in `launcher_logs_20261008_154409.zip` show Neuron rejecting
+`BatchMatMul` input ranks, leaving both the English and tiny recognizers with zero NPU
+partitions. These products combine `[1,40,K]` activations and `[K,C]` constants; the first
+tiny product also transposes its input. The preparation script clones lower-rank constant
+descriptors to `[1,K,C]`, shares weight buffers, and preserves other consumers, outputs,
+and transpose options. The four recognizers require 2, 9, 9, and 9 repairs, without adding
+runtime operators. The [pinned MTK legalization source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/mediatek/compiler/legalizations/batch_matmul_op_legalization.cc)
+passes input shapes to Neuron without aligning their ranks. Six regression tests use real
+LiteRT CPU execution, including 16 broadcasting, constant-position, and transpose combinations,
+shared constant outputs, idempotence, and rejection cases. All four ONNX comparisons still
+pass with maximum absolute error about `4.6e-5`. This removes the rank mismatch found in
+the logs; NPU partitioning, execution, and accuracy require another updated-APK device test.
+A Linux AP smoke check also replaced its host substitute with CPU execution of these updated
+LiteRT models. All four recognizers decoded `12345` through the original AP factory,
+RapidOCR preprocessing, loopback proxy, and CTC decoder. This does not run Android vendor
+drivers or the complete PRoot runtime.
+
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
 `hiai_npu`; `hiai_npu_only_session_ready` records software readiness. Errors fall back to original
@@ -405,8 +441,12 @@ Kotlin compile check, slim debug assembly, and `verify_ocr_assets.py` as shown a
 Weights and converted models are committed, so ordinary builds need no converter.
 For regeneration, use Linux / Python 3.12 and the pinned `ocr-models-requirements.txt` environment
 shown in the Chinese section, then run both preparation scripts and their `--verify-only` checks.
+Run `test_ocr_model_ranks.py` in the same environment for normalization regression coverage.
+Existing LiteRT artifacts can use `prepare_ocr_models.py --normalize-existing` to repair
+constant ranks and revalidate outputs without rerunning ONNX conversion. `--verify-only`
+rejects unnormalized input ranks.
 
-All four recognizers passed CPU comparison on blank and seeded random tensors. Maximum
+All four recognizers passed CPU comparison on blank, black, and seeded random tensors. Maximum
 absolute error was about `4.6e-5` for LiteRT and `0.0058` for MNN, with identical tested
 character predictions at every timestep. MNN uses FP32 high precision; fused operators have
 different rounding, so comparisons use the host's first-request tolerance of `0.01`. Those inputs

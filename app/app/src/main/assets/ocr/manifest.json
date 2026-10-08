@@ -32,7 +32,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/PP-OCRv6_tiny_rec.tflite",
-        "sha256": "1db0f2c7a1038deee2162912b07c0e914b8591f33e9b2f1d679a061c2fd5e533",
+        "sha256": "89331b6f728b743a5bc70529c07326179750f4b65f0e1a3770e14a3bdf6901c3",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -97,7 +97,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/PP-OCRv6_small_rec.tflite",
-        "sha256": "7dca70f6ff1852fd4f75baa5150721de08e0e3d7d91869c4ab763017e20a2a6f",
+        "sha256": "d31617e3d19594e6167461a692bbc7f9c03336da06c6d31377417f05e19ace79",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -162,7 +162,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-en-us-v2.6.nvc.tflite",
-        "sha256": "138a6dcad4e3596a43070a6752e6c01f4534d0702ea34fddda6da2304e87d337",
+        "sha256": "566b143c383fd80091705336e270de2318328073cbcfec6af8f8929a351780b3",
         "input_layout": "nhwc",
         "input_shape": [
           1,
@@ -227,7 +227,7 @@
       "custom_metadata_map": {},
       "litert": {
         "asset": "litert/alocr-zh-cn-v3.dtk.tflite",
-        "sha256": "bc03b548eab82fd5ed8667d724f46bbeb452f113671b573253a6771bee0fa917",
+        "sha256": "52730fe95fa654a9e67165a510ff452bf7c07293ae52eb74a6f5589c4d3c7326",
         "input_layout": "nhwc",
         "input_shape": [
           1,

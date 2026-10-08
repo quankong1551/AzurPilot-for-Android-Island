@@ -10,17 +10,20 @@ ONNX/LiteRT CPU comparisons; this does not replace NPU accuracy tests on devices
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import flatbuffers
 import numpy as np
 import onnx
 import onnxruntime as ort
 from onnxsim import simplify
 from ai_edge_litert.interpreter import Interpreter
+from ai_edge_litert import schema_py_generated as schema
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +52,56 @@ def node_info(node):
     }
 
 
+def normalize_batch_matmul_ranks(data):
+    """为常量矩阵补前导单维，使 BatchMatMul 两输入具有相同秩。
+
+    只克隆静态 FP32 常量的张量描述，复用原缓冲区，不修改其他消费者或乘法选项。
+    动态输入、不支持的类型和外置缓冲区拒绝改写；已经规范化的模型保持原字节。
+
+    Prepends singleton dimensions to constant matrices so BatchMatMul input ranks match.
+    Clones static FP32 tensor descriptors and shares buffers without changing other consumers
+    or multiplication options. Rejects dynamic inputs, unsupported types, and external buffers;
+    already normalized models retain their original bytes.
+    """
+    model = schema.ModelT.InitFromObj(schema.Model.GetRootAsModel(data, 0))
+    changed = 0
+    for graph in model.subgraphs:
+        for op in graph.operators:
+            code = model.operatorCodes[op.opcodeIndex]
+            if max(code.builtinCode, code.deprecatedBuiltinCode) != schema.BuiltinOperator.BATCH_MATMUL:
+                continue
+            inputs = [graph.tensors[int(index)] for index in op.inputs]
+            ranks = [len(tensor.shape) for tensor in inputs]
+            if len(ranks) != 2 or not all(2 <= rank <= 4 for rank in ranks):
+                raise ValueError(f"Unsupported BatchMatMul input ranks: {ranks}")
+            if ranks[0] == ranks[1]:
+                continue
+            slot = int(ranks[1] < ranks[0])
+            tensor = inputs[slot]
+            buffer = model.buffers[tensor.buffer]
+            if (tensor.type != schema.TensorType.FLOAT32 or tensor.isVariable or
+                    buffer.data is None or len(buffer.data) == 0 or any(d <= 0 for d in tensor.shape)):
+                raise ValueError("Mismatched BatchMatMul ranks require a static FP32 constant")
+            aligned = copy.deepcopy(tensor)
+            padding = [1] * (max(ranks) - ranks[slot])
+            aligned.shape = padding + list(tensor.shape)
+            if aligned.shapeSignature is not None:
+                aligned.shapeSignature = padding + list(tensor.shapeSignature)
+            aligned.name = (tensor.name or b"constant") + b".npu_batch_rank"
+            op.inputs = list(op.inputs)
+            op.inputs[slot] = len(graph.tensors)
+            graph.tensors.append(aligned)
+            changed += 1
+    if not changed:
+        return data, 0
+    # 重打包会移动偏移量，不能悄悄损坏未嵌入 FlatBuffer 的权重。
+    if any(getattr(buffer, "offset", 0) or getattr(buffer, "size", 0) for buffer in model.buffers):
+        raise ValueError("External LiteRT buffers cannot be repacked")
+    builder = flatbuffers.Builder(len(data))
+    builder.Finish(model.Pack(builder), file_identifier=b"TFL3")
+    return bytes(builder.Output()), changed
+
+
 def check_conversion(source, converted):
     """对照空白和随机张量，拒绝布局、算子或输出顺序错误。
 
@@ -57,6 +110,9 @@ def check_conversion(source, converted):
     original = ort.InferenceSession(str(source), providers=["CPUExecutionProvider"])
     lite = Interpreter(model_path=str(converted), num_threads=2)
     lite.allocate_tensors()
+    _, unnormalized = normalize_batch_matmul_ranks(converted.read_bytes())
+    if unnormalized:
+        raise ValueError("OCR BatchMatMul input ranks must be normalized before packaging")
     if any(op["op_name"] == "CUSTOM" for op in lite._get_ops_details()):
         raise ValueError("OCR conversions must not contain custom operators before NPU compilation")
     inp = lite.get_input_details()[0]
@@ -93,12 +149,15 @@ def check_conversion(source, converted):
 
 
 def main():
-    """生成转换产物和白名单清单；--verify-only 只复验现有产物。
+    """生成转换产物和白名单；可仅修正常量秩，或只复验现有产物。
 
-    Generates conversions and the allowlist manifest; --verify-only rechecks existing artifacts.
+    Generates conversions and the allowlist; can normalize existing constants or only reverify.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--verify-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--verify-only", action="store_true")
+    mode.add_argument("--normalize-existing", action="store_true",
+                      help="Normalize bundled LiteRT constants and revalidate without reconverting ONNX")
     args = parser.parse_args()
     previous = {}
     if (ASSETS / "manifest.json").is_file():
@@ -119,7 +178,7 @@ def main():
         }
         if "_rec.onnx" in relative or "alocr-" in relative:
             converted = ASSETS / "litert" / (source.stem + ".tflite")
-            if not args.verify_only:
+            if not args.verify_only and not args.normalize_existing:
                 work = ROOT / ".tmp/ocr-convert" / source.stem
                 work.mkdir(parents=True, exist_ok=True)
                 # 转换器可能原地简化 ONNX；原始资产的哈希必须与 AP 的模型保持一致。
@@ -144,6 +203,11 @@ def main():
                     raise ValueError(f"Expected one FP32 conversion; inspect {log}")
                 converted.parent.mkdir(parents=True, exist_ok=True)
                 converted.write_bytes(generated[0].read_bytes())
+            if not args.verify_only:
+                normalized, count = normalize_batch_matmul_ranks(converted.read_bytes())
+                if count:
+                    converted.write_bytes(normalized)
+                print(f"OCR_MATMUL_RANKS_NORMALIZED {source.name}: {count}")
             item["litert"] = check_conversion(source, converted)
             if "mnn" in previous.get(expected_hash, {}):
                 item["mnn"] = previous[expected_hash]["mnn"]
