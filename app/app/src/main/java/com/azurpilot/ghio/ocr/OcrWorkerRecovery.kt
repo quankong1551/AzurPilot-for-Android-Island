@@ -18,6 +18,7 @@ import java.io.File
  * clear the gates.
  */
 internal class OcrWorkerRecovery(private val context: Context) {
+    private val trace = OcrTrace(context)
     private val prefs = context.getSharedPreferences("ocr_worker_recovery", Context.MODE_PRIVATE)
     private val disabled = if (prefs.getInt("version", -1) == BuildConfig.VERSION_CODE) {
         runCatching {
@@ -37,22 +38,26 @@ internal class OcrWorkerRecovery(private val context: Context) {
      */
     @Synchronized
     fun recordDeath(since: Long) {
-        val exitHash = if (Build.VERSION.SDK_INT >= 30) runCatching {
+        val exit = if (Build.VERSION.SDK_INT >= 30) runCatching {
             context.getSystemService(ActivityManager::class.java)
                 .getHistoricalProcessExitReasons(context.packageName, 0, 16)
                 .firstOrNull { it.processName == "${context.packageName}:ocr" && it.timestamp >= since }
-                ?.processStateSummary?.toString(Charsets.UTF_8)
         }.getOrNull() else null
         val stage = runCatching {
             File(context.getExternalFilesDir("debug"), "ocr/stages.jsonl")
                 .readLines().lastOrNull()?.let { Json.parseToJsonElement(it).jsonObject }
                 ?.takeIf { (it["timestamp_ms"]?.jsonPrimitive?.longOrNull ?: 0) >= since }
+                ?.takeIf { it["app_version"]?.jsonPrimitive?.content == BuildConfig.VERSION_NAME }
         }.getOrNull()
-        val hash = (exitHash ?: stage?.get("model_sha256")?.jsonPrimitive?.content)
+        val hash = (exit?.processStateSummary?.toString(Charsets.UTF_8) ?:
+            stage?.get("model_sha256")?.jsonPrimitive?.content)
             ?.takeIf { Regex("[a-f0-9]{64}").matches(it) } ?: "*"
         val phase = stage?.get("stage")?.jsonPrimitive?.content.orEmpty().take(80)
         disabled[hash] = "Native OCR worker exited near $phase; NPU disabled until APK update"
         prefs.edit().putInt("version", BuildConfig.VERSION_CODE).putString("models", snapshot()).commit()
+        // 原生信号无法执行工作进程的 finally；同 UID 的主进程仍能读取其残留 logcat。
+        val workerPid = exit?.pid ?: stage?.get("pid")?.jsonPrimitive?.intOrNull
+        if (hash != "*" && workerPid != null) trace.captureNative(hash, workerPid)
         Timber.w("OCR worker exited; CPU recovery enabled for %s", hash.take(12))
     }
 }

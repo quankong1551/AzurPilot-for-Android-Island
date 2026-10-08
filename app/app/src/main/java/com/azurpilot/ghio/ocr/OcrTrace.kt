@@ -43,25 +43,26 @@ internal class OcrTrace(context: Context) {
         private set
 
     /**
-     * 保存本 OCR 进程的原生日志；厂商编译错误不会进入 Timber 文件树。
+     * 保存同一 App 的 OCR 工作进程日志；退出后由主进程按旧 PID 采集。
      *
      * 仅在初始化或失败后调用，最多等待两秒，覆盖所选模型的 512 KiB 快照。
-     * 不读取其他进程，不请求 root、Shizuku 或 READ_LOGS 权限。
+     * 只读取本 App 的日志，不请求 root、Shizuku 或 READ_LOGS 权限。
      *
-     * Saves this OCR process's native logs, which bypass Timber's file tree. Called only
-     * after initialization or failure; waits at most two seconds and overwrites a 512 KiB
-     * per-model snapshot. Reads no other process and requests no elevated logging permissions.
+     * Saves the app's OCR worker logs; the host can collect an exited worker by its old PID.
+     * Called only after initialization or failure; waits at most two seconds and overwrites a 512 KiB
+     * per-model snapshot. Reads only this app's logs and requests no elevated logging permissions.
      */
-    fun captureNative(hash: String) {
+    fun captureNative(hash: String, workerPid: Int = Process.myPid()) {
         var collector: java.lang.Process? = null
         var temporary: File? = null
         runCatching {
             val dir = directory ?: return
             check(dir.isDirectory || dir.mkdirs())
             require(hash.matches(Regex("[a-f0-9]{64}")))
+            require(workerPid > 0)
             val source = File(dir, "native-${hash.take(12)}.tmp").also { temporary = it }
             val process = ProcessBuilder("/system/bin/logcat", "-d", "-v", "threadtime",
-                "--pid=${Process.myPid()}", "-t", "600")
+                "--pid=$workerPid", "-t", "600")
                 .redirectErrorStream(true).redirectOutput(source).start()
             collector = process
             check(process.waitFor(2, TimeUnit.SECONDS)) { "OCR native log snapshot timed out" }
@@ -71,8 +72,9 @@ internal class OcrTrace(context: Context) {
                 ByteArray(minOf(input.length(), limit.toLong()).toInt()).also(input::readFully)
             }
             File(dir, "native-${hash.take(12)}.log").outputStream().use {
-                it.write(("app_version=${BuildConfig.VERSION_NAME} pid=${Process.myPid()} " +
-                    "model=$hash logcat_exit=${process.exitValue()}\n").toByteArray())
+                it.write(("app_version=${BuildConfig.VERSION_NAME} pid=$workerPid " +
+                    "collector_pid=${Process.myPid()} model=$hash " +
+                    "logcat_exit=${process.exitValue()}\n").toByteArray())
                 it.write(bytes)
             }
         }.onFailure { Timber.w(it, "OCR native log snapshot failed") }

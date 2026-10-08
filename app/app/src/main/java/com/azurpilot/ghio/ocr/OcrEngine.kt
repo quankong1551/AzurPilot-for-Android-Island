@@ -3,6 +3,7 @@ package com.azurpilot.ghio.ocr
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.system.Os
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -54,6 +55,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
     private var environment: Environment? = null
     private val trace = OcrTrace(context)
     private var mediatekAdapter: String? = null
+    private var mediatekTargetPolicy: String? = null
 
     /**
      * 返回匹配权重的原始元数据；未知哈希拒绝调用。
@@ -90,6 +92,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         put("soc", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.HARDWARE)
         put("vendor", provider.vendor)
         mediatekAdapter?.let { put("mediatek_adapter_library", it) }
+        mediatekTargetPolicy?.let { put("mediatek_target_policy", it) }
         val bundled = provider.isLibraryReady() || provider.isHiaiReady()
         val recognizers = models.filterValues { "litert" in it }.keys
         val disabled = recognizers.count { it in failures || "*" in failures }
@@ -302,6 +305,12 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         val hash = session.spec.getValue("sha256").jsonPrimitive.content
         if (session.lite == null) {
             if (provider.vendor == "mediatek") {
+                if (Build.VERSION.SDK_INT >= 31 && Build.SOC_MODEL.equals("MT6985", ignoreCase = true)) {
+                    // 此芯片的 SDK 8 编译目标缺失会主动 abort；限制 MDLA，余下算子由 LiteRT 分区。
+                    Os.setenv("MTKNN_ADAPTER_CONFIG_TARGET", "mdla", true)
+                    mediatekTargetPolicy = "mdla"
+                    trace.record(hash, "mediatek_target_policy", mediatekTargetPolicy)
+                }
                 trace.record(hash, "mediatek_driver_probe")
                 OcrNative.mediatekDriverError()?.let { error(it.take(300)) }
                 trace.record(hash, "mediatek_adapter_probe")

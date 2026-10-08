@@ -112,6 +112,19 @@ MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增�
 识别器通过原 AP 工厂、RapidOCR 预处理、回环代理和 CTC 解码均识别出 `12345`。
 该检查不运行 Android 厂商驱动或完整 PRoot。
 
+`launcher_logs_20261008_155930.zip` 的 1.2.105 两份新堆栈显示，模型已进入
+`NeuronCompilation_finish`，随后 SDK 8 在 `0x7dcedc` 调用 `abort`。
+反汇编显示目标查找结果为空时走到此分支；堆栈本身没有说明具体缺失目标，
+包中的原生日志快照仍是上一版，不能用它断言本次也发生相同秩错误。
+针对 MT6985 的测试策略在 adapter 初始化前将工作进程环境变量
+`MTKNN_ADAPTER_CONFIG_TARGET` 设为 `mdla`，尝试避免选择未注册的编译目标。
+该名称和目标字符串读取路径来自钉版 SDK 二进制；修复效果仍需真机验证。
+其他芯片保持自动选择。状态记录 `mediatek_target_policy`，目标配置不作为 NPU
+执行证据；仍要求实际分区、成功推理及原 ONNX 数值对照。
+主进程在工作进程退出后，按系统退出记录或本版最新阶段的 PID 采集同 UID 的
+logcat，覆盖所选模型的快照，避免 native abort 后只导出旧日志。采集仍有界，
+不启动常驻子进程或请求额外权限。
+
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
 `hiai_npu_only_session_ready` 记录软件层面的就绪证据。任何错误均回退原 ONNX，
@@ -358,6 +371,21 @@ A Linux AP smoke check also replaced its host substitute with CPU execution of t
 LiteRT models. All four recognizers decoded `12345` through the original AP factory,
 RapidOCR preprocessing, loopback proxy, and CTC decoder. This does not run Android vendor
 drivers or the complete PRoot runtime.
+
+The two new 1.2.105 tombstones in `launcher_logs_20261008_155930.zip` reached
+`NeuronCompilation_finish` before SDK 8 called `abort` at `0x7dcedc`. Disassembly shows
+this branch follows an empty compilation-target lookup. The stacks do not identify the
+missing target, and the included native snapshots are from the previous APK, so they
+cannot establish a repeated rank failure in this run. For MT6985, the test policy sets
+the worker's `MTKNN_ADAPTER_CONFIG_TARGET` environment variable to `mdla` before adapter
+initialization to try to avoid selecting unregistered compilation targets. The variable
+and target-string lookup are present in the pinned SDK binary; effectiveness still needs
+device testing. Other chips retain automatic selection. `mediatek_target_policy` records
+the setting, which is not NPU evidence: actual partitions, successful inference, and original
+ONNX comparisons remain required. After worker death, the host collects same-UID logcat
+using the exit record's PID or the current APK's latest stage PID, replacing the selected
+model snapshot so native aborts do not leave only stale logs. Collection stays bounded
+without persistent child processes or additional privileges.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
