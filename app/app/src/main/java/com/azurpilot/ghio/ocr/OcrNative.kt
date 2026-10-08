@@ -37,10 +37,12 @@ internal object OcrNative {
 
     /**
      * 在加载 MTK adapter 前检查其必需的系统入口，缺失时返回原因。
+     * MDLA 策略还检查 APUSys 执行库能否加载，不调用私有驱动函数。
      *
-     * Checks the required system entry point before loading MTK adapters; returns missing-driver details.
+     * Checks the required system entry before loading MTK adapters and returns missing-driver details.
+     * The MDLA policy also checks APUSys library loading without calling private driver functions.
      */
-    external fun mediatekDriverError(): String?
+    external fun mediatekDriverError(requireApusys: Boolean): String?
 
     /**
      * 检查钉版插件最终选中的 MTK adapter，缺少基本入口时抛异常。

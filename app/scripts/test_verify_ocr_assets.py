@@ -11,7 +11,7 @@ import unittest
 import zipfile
 
 from verify_ocr_assets import (HIAI_LIBRARIES, HIAI_SOURCE_COMMIT, LITERT_VERSION,
-                               MNN_SOURCE_COMMIT, REQUIRED_LIBRARIES, verify)
+                               MEDIATEK_SYSTEM_LIBRARIES, MNN_SOURCE_COMMIT, REQUIRED_LIBRARIES, verify)
 
 
 class OcrAssetsTest(unittest.TestCase):
@@ -22,7 +22,7 @@ class OcrAssetsTest(unittest.TestCase):
         data = b"test weights"
         checksum = hashlib.sha256(data).hexdigest()
         files = {
-            "AndroidManifest.xml": b"<manifest/>",
+            "AndroidManifest.xml": " ".join(sorted(MEDIATEK_SYSTEM_LIBRARIES)).encode(),
             "assets/ocr/manifest.json": json.dumps({"models": [{"asset": "models/test.onnx", "sha256": checksum,
                 "litert": {"asset": "litert/test.tflite", "sha256": checksum},
                 "mnn": {"asset": "mnn/test.mnn", "sha256": checksum}}]}),
@@ -62,6 +62,15 @@ class OcrAssetsTest(unittest.TestCase):
     def test_x86_cpu_package(self):
         with self.archive(arm64=False) as archive:
             verify(archive)
+
+    def test_missing_apusys_declaration(self):
+        for encoding in ["utf-8", "utf-16le"]:
+            with self.subTest(encoding=encoding):
+                manifest = " ".join(sorted(MEDIATEK_SYSTEM_LIBRARIES - {"libapuwareapusys_v2.mtk.so"}))
+                with self.archive(change=lambda f: f.update({
+                        "AndroidManifest.xml": manifest.encode(encoding)})) as archive:
+                    with self.assertRaisesRegex(ValueError, "Missing MediaTek system library declaration"):
+                        verify(archive)
 
     def test_legacy_mgvi_declaration_rejected(self):
         for encoding in ["utf-8", "utf-16le"]:

@@ -312,7 +312,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
                     trace.record(hash, "mediatek_target_policy", mediatekTargetPolicy)
                 }
                 trace.record(hash, "mediatek_driver_probe")
-                OcrNative.mediatekDriverError()?.let { error(it.take(300)) }
+                OcrNative.mediatekDriverError(mediatekTargetPolicy == "mdla")?.let { error(it.take(300)) }
                 trace.record(hash, "mediatek_adapter_probe")
                 mediatekAdapter = OcrNative.mediatekAdapterLibrary()
                 trace.record(hash, "mediatek_adapter_selected", mediatekAdapter)

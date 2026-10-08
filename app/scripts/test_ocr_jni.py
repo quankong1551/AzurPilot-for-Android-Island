@@ -88,7 +88,7 @@ public class OcrNative {
     static { System.loadLibrary("ocrdiagnostics"); }
     public native int countCustomOps(Model model, String runtimeVersion);
     public native int compiledModelAcceleration(CompiledModel model, String runtimeVersion);
-    public native String mediatekDriverError();
+    public native String mediatekDriverError(boolean requireApusys);
     public native String mediatekAdapterLibrary();
 }
 """
@@ -124,8 +124,16 @@ public class Fixture {
             System.out.println("OCR JNI: " + args[0] + " passed");
             return;
         }
+        if (args.length > 0 && args[0].startsWith("apusys_")) {
+            String error = bridge.mediatekDriverError(true);
+            if (args[0].equals("apusys_present") ? error != null :
+                    error == null || !error.contains("APUSys driver unavailable"))
+                throw new AssertionError("Unexpected APUSys probe: " + error);
+            System.out.println("OCR JNI: " + args[0] + " passed");
+            return;
+        }
         if (args.length > 0) {
-            boolean available = bridge.mediatekDriverError() == null;
+            boolean available = bridge.mediatekDriverError(false) == null;
             if (available != args[0].equals("driver_present"))
                 throw new AssertionError("Unexpected MTK driver probe: " + available);
             System.out.println("OCR JNI: " + args[0] + " passed");
@@ -146,7 +154,7 @@ public class Fixture {
         expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), "2.2.0"));
         expect(-1, bridge.compiledModelAcceleration(null, "2.1.0rc1"));
         expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), null));
-        if (bridge.mediatekDriverError() == null)
+        if (bridge.mediatekDriverError(false) == null)
             throw new AssertionError("Missing MTK driver must be rejected before SDK loading");
         System.out.println("OCR JNI: 7 regression checks passed");
         System.out.println("OCR JNI: 7 compiled-session checks passed");
@@ -198,6 +206,22 @@ def main():
         utility = directory / "libapuwareutils_v2.mtk.so"
         subprocess.run(flags + [str(api), "-o", str(utility)], check=True)
         subprocess.run(java + ["driver_present"], env=env, check=True)
+        subprocess.run(java + ["apusys_absent"], env=env, check=True)
+        # 执行库缺失要拒绝；存在时只检查加载，fixture 的私有入口一旦被调用就 abort。
+        apusys = directory / "libapuwareapusys_v2.mtk.so"
+        subprocess.run(flags + [str(api), "-o", str(apusys)], check=True)
+        subprocess.run(java + ["apusys_present"], env=env, check=True)
+        # 驱动文件存在但缺少其传递依赖，同样不能放行进入 SDK 编译。
+        dependency = directory / "libmissing_apusys_dependency.so"
+        api.write_text('extern "C" int apusys_dependency() { return 0; }\n')
+        subprocess.run(flags + [str(api), "-o", str(dependency)], check=True)
+        api.write_text('extern "C" int apusys_dependency();\n'
+                       'extern "C" int apusys_entry() { return apusys_dependency(); }\n')
+        subprocess.run(flags + [str(api), f"-L{directory}", "-lmissing_apusys_dependency",
+                               "-o", str(apusys)], check=True)
+        dependency.unlink()
+        subprocess.run(java + ["apusys_broken_dependency"], env=env, check=True)
+        apusys.unlink()
         # SDK 不会绕过已打开但缺少入口的 v2 库，旧库有入口也必须拒绝。
         shutil.copyfile(utility, directory / "libapuwareutils.mtk.so")
         api.write_text('extern "C" int wrong_driver_api() { return 0; }\n')

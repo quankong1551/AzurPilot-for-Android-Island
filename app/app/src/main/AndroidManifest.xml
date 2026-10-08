@@ -64,6 +64,15 @@
         <!-- NeuroPilot 的初始化会查询 APU 配置；Android 12+ 必须声明公开的工具库。 -->
         <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" />
         <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" />
+        <!-- SDK 还会动态加载执行和编译目标库；漏声明会在创建 MDLA 设备时 abort。 -->
+        <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwarexrp.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwarexrp_v2.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwarehmp.mtk.so" android:required="false" />
+        <uses-native-library android:name="libcmdl_ndk.mtk.so" android:required="false" />
+        <uses-native-library android:name="libcmdl_ndk.mtk.vndk.so" android:required="false" />
+        <uses-native-library android:name="libnir_neon_driver_ndk.mtk.so" android:required="false" />
+        <uses-native-library android:name="libnir_neon_driver_ndk.mtk.vndk.so" android:required="false" />
 
         <!-- 厂商原生代码独立运行，信号退出不会连带关闭 UI、PRoot 和特权桥。 -->
         <service android:name=".ocr.OcrWorkerService"

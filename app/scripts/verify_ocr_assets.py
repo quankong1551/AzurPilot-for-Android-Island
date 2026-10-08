@@ -14,6 +14,12 @@ import zipfile
 from pathlib import Path
 
 LITERT_VERSION = "2.1.0rc1"
+MEDIATEK_SYSTEM_LIBRARIES = {
+    "libapuwareutils.mtk.so", "libapuwareutils_v2.mtk.so", "libapuwareapusys_v2.mtk.so",
+    "libapuwarexrp.mtk.so", "libapuwarexrp_v2.mtk.so", "libapuwarehmp.mtk.so",
+    "libcmdl_ndk.mtk.so", "libcmdl_ndk.mtk.vndk.so",
+    "libnir_neon_driver_ndk.mtk.so", "libnir_neon_driver_ndk.mtk.vndk.so",
+}
 REQUIRED_LIBRARIES = {
     "libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
     "libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
@@ -48,6 +54,9 @@ def verify(archive):
             if actual != spec["sha256"]:
                 raise ValueError(f"OCR model checksum mismatch: {spec['asset']}")
     if any(name.startswith("lib/arm64-v8a/") for name in names):
+        for name in MEDIATEK_SYSTEM_LIBRARIES:
+            if not any(name.encode(encoding) in android_manifest for encoding in ["utf-8", "utf-16le"]):
+                raise ValueError(f"Missing MediaTek system library declaration: {name}")
         if set(runtime["libraries"]) != REQUIRED_LIBRARIES:
             raise ValueError("Incomplete OCR vendor runtime manifest")
         for name, checksum in runtime["libraries"].items():

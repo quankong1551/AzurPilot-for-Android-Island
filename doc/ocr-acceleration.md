@@ -26,7 +26,7 @@ Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI
 | 平台 | 当前实现 | 条件和限制 |
 | --- | --- | --- |
 | 高通 | LiteRT → QNN HTP | Android 12+、ARM64，内置 v68/v69/v73/v75/v79/v81 Skel 和 Stub；实际以驱动和算子编译成功为准 |
-| 联发科 | LiteRT → NeuroPilot | Android 12+、ARM64，内置 8.0.10 / 9.0.3 adapter；系统必须有兼容的 NeuroPilot 服务 |
+| 联发科 | LiteRT → NeuroPilot | Android 12+、ARM64，内置 8.0.10 / 9.0.3 adapter；系统必须开放兼容的 APU 驱动 |
 | 小米手机中的高通 / 联发科芯片 | 使用芯片对应后端 | 按 SoC 厂商识别，与手机品牌无关 |
 | 小米玄戒 | CPU 回退 | 已找到官方 XNN 接口头文件，尚未取得匹配的用户态运行库和模型转换器 |
 | 海思 / 麒麟 | MNN → HiAI NPU | Android 10+、ARM64，内置官方示例的 NPU 最小库集；需兼容的 HiAI 驱动，全部算子必须被后端接受 |
@@ -79,8 +79,8 @@ C 模型 API。诊断桥按该钉版布局读取首成员 `LiteRtModel`，仅接
 [上游钉版源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h)。
 `CompiledModel.handle` 已是原始 C 会话，不能再次按 `ModelWrapper` 解包。
 `test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查、八项已编译
-会话检查、三项 MTK
-驱动入口检查和四项 adapter 选择检查。模拟库复现旧 MGVI 覆盖内置 SDK、缺失入口的
+会话检查、三项 MTK 驱动入口检查、三项 APUSys 加载检查和四项 adapter 选择检查。
+模拟库复现旧 MGVI 覆盖内置 SDK、缺失入口的
 条件，并检查 8/9 SDK 选择；它不验证 Android 驱动。
 
 首次初始化和校验阶段同步保存到启动器日志的 `debug/ocr/stages.jsonl`，复制 OCR 报告
@@ -124,6 +124,18 @@ MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增�
 主进程在工作进程退出后，按系统退出记录或本版最新阶段的 PID 采集同 UID 的
 logcat，覆盖所选模型的快照，避免 native abort 后只导出旧日志。采集仍有界，
 不启动常驻子进程或请求额外权限。
+
+`launcher_logs_20261008_161220.zip` 的 1.2.106 快照确认 SDK 已采纳 `mdla` 策略，
+为英文识别器从 342 个算子中选中 308 个，生成 35 个候选分区。随后加载
+`libapuwareapusys_v2.mtk.so` 失败，无法创建 MDLA 设备，仍在相同位置主动 `abort`。
+候选分区不是已完成编译或成功推理的证据。Manifest 补齐 SDK 动态引用的 APUSys、
+XRP、HMP、CMDL 和 NEON 库可选声明；此前只有 APU 配置工具库可见。
+依据 [Android 的非 NDK 库规则](https://developer.android.com/guide/topics/manifest/uses-native-library-element)，
+Android 12+ 需要显式请求厂商公开库。APK 校验器也要求这些依赖声明，防止后续遗漏。
+MT6985 的 MDLA 策略在加载 adapter 前先尝试打开 APUSys 执行库；失败时报告链接错误，
+保留原 ONNX CPU 路径，避免进入已知崩溃分支。JNI 回归覆盖执行库缺失、存在和传递
+依赖缺失，且不调用私有驱动入口。声明和加载检查仍不能证明系统服务权限、驱动兼容
+或硬件执行，修复后的实际运行需要真机确认。
 
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
@@ -272,7 +284,7 @@ the corresponding service interfaces to apps.
 | Platform | Implementation | Conditions and limits |
 | --- | --- | --- |
 | Qualcomm | LiteRT → QNN HTP | Android 12+, ARM64; bundled v68/v69/v73/v75/v79/v81 Skel and Stub libraries; driver and operator compilation must succeed |
-| MediaTek | LiteRT → NeuroPilot | Android 12+, ARM64; bundled 8.0.10 / 9.0.3 adapters; compatible system NeuroPilot services required |
+| MediaTek | LiteRT → NeuroPilot | Android 12+, ARM64; bundled 8.0.10 / 9.0.3 adapters; compatible APU drivers must be exposed to apps |
 | Xiaomi phones with Qualcomm / MediaTek SoCs | Corresponding SoC backend | Uses the SoC vendor rather than phone brand |
 | Xiaomi Xring | CPU fallback | Official XNN interface headers found; matching user-space runtime and model converter not obtained |
 | HiSilicon / Kirin | MNN → HiAI NPU | Android 10+, ARM64; official demo's minimal NPU libraries bundled; compatible HiAI drivers required, and the backend must accept all operators |
@@ -332,7 +344,8 @@ The layout follows the
 [pinned upstream source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h).
 `CompiledModel.handle` is already the raw C session and must not be unwrapped as `ModelWrapper`.
 `test_ocr_jni.py` compiles production JNI on a Linux JVM for seven model-handle checks,
-eight compiled-session checks, three MTK driver-entry checks, and four adapter-selection checks.
+eight compiled-session checks, three MTK driver-entry checks, three APUSys loading checks,
+and four adapter-selection checks.
 Mock libraries reproduce
 legacy MGVI overriding the bundled SDK and missing entries, and check SDK 8/9 selection.
 These checks do not validate Android vendor drivers.
@@ -386,6 +399,21 @@ ONNX comparisons remain required. After worker death, the host collects same-UID
 using the exit record's PID or the current APK's latest stage PID, replacing the selected
 model snapshot so native aborts do not leave only stale logs. Collection stays bounded
 without persistent child processes or additional privileges.
+
+The 1.2.106 snapshot in `launcher_logs_20261008_161220.zip` confirms the SDK accepted the
+`mdla` policy: it selected 308 of 342 English-recognizer operators and produced 35 candidate
+partitions. Loading `libapuwareapusys_v2.mtk.so` then failed, preventing MDLA device creation
+and reaching the same SDK `abort`. Candidate partitions do not prove completed compilation
+or successful inference. The manifest now declares the SDK's dynamically referenced APUSys,
+XRP, HMP, CMDL, and NEON libraries as optional dependencies; previously only the APU
+configuration utilities were exposed. [Android's non-NDK library rules](https://developer.android.com/guide/topics/manifest/uses-native-library-element)
+require explicit requests for public vendor libraries on Android 12+. The APK verifier
+also requires these declarations to prevent omissions. Before adapter loading, MT6985's
+MDLA policy probes APUSys library loading. Failure reports the linker error and preserves
+original ONNX CPU execution, avoiding the known crash branch. JNI regressions cover an
+absent library, a present library, and missing transitive dependencies without calling
+private driver entries. Declarations and loading checks do not establish service access,
+driver compatibility, or hardware execution; the updated path still needs device testing.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report

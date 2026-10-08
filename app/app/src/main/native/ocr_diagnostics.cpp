@@ -65,15 +65,25 @@ jlong ReadHandle(JNIEnv* env, jobject object) {
 }
 }  // namespace
 
-// SDK 8 初始化会直接调用 queryHwConfigInternal；缺失时必须在加载 adapter 前拒绝。
+// SDK 8 初始化直接调用配置入口，MDLA 创建还需 APUSys；提前检查以避开已知 abort。
+//
+// Checks the configuration entry and, when requested, the APUSys library before SDK loading
+// to avoid known initialization crashes. Does not call private driver functions.
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_azurpilot_ghio_ocr_OcrNative_mediatekDriverError(JNIEnv* env, jobject) {
+Java_com_azurpilot_ghio_ocr_OcrNative_mediatekDriverError(
+        JNIEnv* env, jobject, jboolean require_apusys) {
     std::string errors;
     for (const char* name : {"libapuwareutils_v2.mtk.so", "libapuwareutils.mtk.so"}) {
         void* library = dlopen(name, RTLD_NOW | RTLD_LOCAL);
         if (library != nullptr) {
             void* query = dlsym(library, "queryHwConfigInternal");
             if (query != nullptr) {
+                if (require_apusys == JNI_TRUE &&
+                    dlopen("libapuwareapusys_v2.mtk.so", RTLD_NOW | RTLD_LOCAL) == nullptr) {
+                    const char* error = dlerror();
+                    return env->NewStringUTF((std::string("MediaTek APUSys driver unavailable: ") +
+                            (error != nullptr ? error : "libapuwareapusys_v2.mtk.so")).c_str());
+                }
                 // 保持工具库存活，adapter 稍后还要按名称查找同一入口；不调用私有查询函数。
                 return nullptr;
             }
