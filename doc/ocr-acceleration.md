@@ -49,7 +49,11 @@ ONNX CPU，后两者保留 AP 原推理路径。模型缓存最多两个，单�
 ### 回退与状态
 
 宿主首先确认原 LiteRT 模型没有 custom 操作，再通过公开 C 模型 API 检查 JIT 后的
-主图是否生成 custom dispatch 分区。没有分区时拒绝静默 CPU 替代。首个真实请求会
+主图是否生成 custom dispatch 分区，并用已编译会话的
+`LiteRtCompiledModelIsFullyAccelerated` 补充诊断。没有分区时拒绝静默 CPU 替代。
+Kotlin 的单独 NPU 选项会自动加上 CPU，所以创建成功不能证明 NPU 执行。
+`litert_all_ops_delegated` 也可能由 CPU delegate 置为真，不能单独用于判定 NPU。
+首个真实请求会
 与原 ONNX CPU 输出对照：输出尺寸相同、最大绝对误差不超过 0.01、每个时间步的字符
 分类一致。失败则关闭 NPU 会话，该模型在本次 OCR 工作进程内使用 CPU。
 
@@ -73,7 +77,9 @@ LiteRT 2.1.0rc1 的 Kotlin `Model.handle` 指向 JNI `ModelWrapper`，不能直�
 C 模型 API。诊断桥按该钉版布局读取首成员 `LiteRtModel`，仅接受 `2.1.0rc1`；构建也会
 拒绝未经重新验证的升级。包装对象布局依据
 [上游钉版源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h)。
-`test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查、三项 MTK
+`CompiledModel.handle` 已是原始 C 会话，不能再次按 `ModelWrapper` 解包。
+`test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查、八项已编译
+会话检查、三项 MTK
 驱动入口检查和四项 adapter 选择检查。模拟库复现旧 MGVI 覆盖内置 SDK、缺失入口的
 条件，并检查 8/9 SDK 选择；它不验证 Android 驱动。
 
@@ -84,6 +90,12 @@ Android 12+ 如仍保留原生 tombstone，则附带 `debug/process-exits/trace_
 因此所有推理库放在 `:ocr` 进程。工作进程退出后，主进程记录当前模型并重新绑定，
 该模型改用 CPU；无法确定模型时暂禁全部 NPU。禁用记录持续到 APK 版本升级，避免
 重启再次触发同一崩溃。AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
+
+MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增原生崩溃，但两个
+测试模型仍因「没有分区」使用 CPU。这份日志缺少厂商编译错误，尚不能确定具体
+算子或驱动原因。初始化完成或失败后保存本 OCR 进程的 logcat 快照到
+`debug/ocr/native-<模型哈希前12位>.log`，每个模型最多约 512 KiB、采集最多两秒。
+不请求额外日志权限，系统限制或日志清除仍可能使快照为空。
 
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
@@ -136,7 +148,7 @@ AP 未启动时仍可测试内置模型，页面会提示启动 AP 后重新测�
 ### 构建与验证
 
 2026-10-08 的软件验收已通过 Kotlin 编译、Debug/Release 打包、R8 保留检查、12 项
-协议测试、12 项打包质量门测试和文案一致性检查。Linux 侧还从固定 AP 源码提取并原样
+协议测试、13 项打包质量门测试和文案一致性检查。Linux 侧还从固定 AP 源码提取并原样
 执行 `RecOnlyOCR`、`OcrSettings` 和识别器工厂，配合真实 RapidOCR 3.9.0 与 ONNX CPU
 宿主协议替身，四个识别模型均正确解码测试图片的「12345」。这项隔离依赖的验证未执行
 完整 PRoot 运行时或 Android 厂商驱动；完整手机调用由 App 内测试入口验证。
@@ -253,7 +265,11 @@ inference and caches at most two models.
 
 The host checks that the original LiteRT model has no custom operators, then uses the
 public C model API to check for custom dispatch partitions in the JIT-transformed main graph.
-No partitions means rejecting silent CPU substitution. The first real request is compared
+`LiteRtCompiledModelIsFullyAccelerated` provides additional compiled-session diagnostics.
+No partitions means rejecting silent CPU substitution. Kotlin adds CPU automatically to the
+NPU-only option, so creation alone is not evidence of NPU execution.
+CPU delegates can also set `litert_all_ops_delegated` to true; it is never sufficient NPU evidence.
+The first real request is compared
 against original ONNX CPU output: identical dimensions, absolute error at most 0.01, and
 identical character predictions at every timestep. Failure closes the NPU session and keeps that
 model on CPU for the current OCR worker process.
@@ -282,8 +298,10 @@ passed directly to C model APIs. The diagnostics bridge reads its first `LiteRtM
 under the pinned layout and accepts only `2.1.0rc1`; builds also reject unvalidated upgrades.
 The layout follows the
 [pinned upstream source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h).
+`CompiledModel.handle` is already the raw C session and must not be unwrapped as `ModelWrapper`.
 `test_ocr_jni.py` compiles production JNI on a Linux JVM for seven model-handle checks,
-three MTK driver-entry checks, and four adapter-selection checks. Mock libraries reproduce
+eight compiled-session checks, three MTK driver-entry checks, and four adapter-selection checks.
+Mock libraries reproduce
 legacy MGVI overriding the bundled SDK and missing entries, and check SDK 8/9 selection.
 These checks do not validate Android vendor drivers.
 
@@ -296,6 +314,14 @@ so all inference libraries run in `:ocr`. After worker death, the main process r
 active model and rebinds with CPU recovery for that model, or all NPU models if unknown.
 Gates persist until an APK version upgrade to prevent repeating the crash after restart.
 AP and in-app tests use the same loopback API and retry a broken connection once.
+
+MT6985 logs from 1.2.103 passed adapter selection and compilation calls without a new native
+crash. Both tested models still fell back to CPU for missing partitions. Those logs lack vendor
+compilation errors, so the operator or driver cause remains unknown. After initialization or
+failure, the host saves this OCR process's logcat snapshot to
+`debug/ocr/native-<first12HashChars>.log`, capped at roughly 512 KiB per model and two seconds
+of collection. No extra logging permission is requested; system restrictions or discarded
+logs can still leave the snapshot empty.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
@@ -353,7 +379,7 @@ this OCR worker process; unmatched upstream weights and NCNN calls never enter t
 ### Build and verification
 
 Software acceptance on 2026-10-08 passed Kotlin compilation, debug/release assembly, R8
-keep checks, 12 protocol tests, 12 packaging-gate tests, and string consistency checks.
+keep checks, 12 protocol tests, 13 packaging-gate tests, and string consistency checks.
 A Linux smoke check also extracted and executed the unchanged `RecOnlyOCR`, `OcrSettings`,
 and recognizer factory from the pinned AP source, with real RapidOCR 3.9.0 and an ONNX CPU
 substitute for the host protocol. All four recognizers decoded "12345" correctly. This

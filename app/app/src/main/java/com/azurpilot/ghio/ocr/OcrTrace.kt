@@ -9,6 +9,7 @@ import kotlinx.serialization.json.*
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * 在首次原生初始化和验证前同步记录阶段，原生信号退出后仍可导出最后位置。
@@ -40,6 +41,45 @@ internal class OcrTrace(context: Context) {
     /** 最近一条阶段，供诊断报告复制。 / Latest stage for the copyable diagnostic report. */
     var latest: JsonObject? = null
         private set
+
+    /**
+     * 保存本 OCR 进程的原生日志；厂商编译错误不会进入 Timber 文件树。
+     *
+     * 仅在初始化或失败后调用，最多等待两秒，覆盖所选模型的 512 KiB 快照。
+     * 不读取其他进程，不请求 root、Shizuku 或 READ_LOGS 权限。
+     *
+     * Saves this OCR process's native logs, which bypass Timber's file tree. Called only
+     * after initialization or failure; waits at most two seconds and overwrites a 512 KiB
+     * per-model snapshot. Reads no other process and requests no elevated logging permissions.
+     */
+    fun captureNative(hash: String) {
+        var collector: java.lang.Process? = null
+        var temporary: File? = null
+        runCatching {
+            val dir = directory ?: return
+            check(dir.isDirectory || dir.mkdirs())
+            require(hash.matches(Regex("[a-f0-9]{64}")))
+            val source = File(dir, "native-${hash.take(12)}.tmp").also { temporary = it }
+            val process = ProcessBuilder("/system/bin/logcat", "-d", "-v", "threadtime",
+                "--pid=${Process.myPid()}", "-t", "600")
+                .redirectErrorStream(true).redirectOutput(source).start()
+            collector = process
+            check(process.waitFor(2, TimeUnit.SECONDS)) { "OCR native log snapshot timed out" }
+            val limit = 512 * 1024
+            val bytes = java.io.RandomAccessFile(source, "r").use { input ->
+                input.seek((input.length() - limit).coerceAtLeast(0))
+                ByteArray(minOf(input.length(), limit.toLong()).toInt()).also(input::readFully)
+            }
+            File(dir, "native-${hash.take(12)}.log").outputStream().use {
+                it.write(("app_version=${BuildConfig.VERSION_NAME} pid=${Process.myPid()} " +
+                    "model=$hash logcat_exit=${process.exitValue()}\n").toByteArray())
+                it.write(bytes)
+            }
+        }.onFailure { Timber.w(it, "OCR native log snapshot failed") }
+        // logcat 只做有界快照，工作进程重建不能遗留常驻采集器。
+        collector?.takeIf { it.isAlive }?.destroyForcibly()
+        temporary?.delete()
+    }
 
     /** 同步落盘；日志失败不阻止推理。 / Flushes to disk without failing inference on log errors. */
     fun record(hash: String, stage: String, message: String? = null) {

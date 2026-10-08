@@ -18,6 +18,7 @@ using GetSubgraph = int32_t (*)(void*, size_t, void**);
 using GetOpCount = int32_t (*)(void*, size_t*);
 using GetOp = int32_t (*)(void*, size_t, void**);
 using GetOpCode = int32_t (*)(void*, int32_t*);
+using IsFullyAccelerated = int32_t (*)(void*, bool*);
 constexpr int32_t kCustomOp = 32;
 
 // 覆盖编译与 dispatch 的基本入口，拒绝缺少接口的旧系统 adapter。
@@ -40,6 +41,27 @@ jstring AdapterFailure(JNIEnv* env, const std::string& message) {
         env->DeleteLocalRef(exception);
     }
     return nullptr;
+}
+
+bool SupportsVersion(JNIEnv* env, jstring runtime_version) {
+    if (runtime_version == nullptr) return false;
+    const char* version = env->GetStringUTFChars(runtime_version, nullptr);
+    if (version == nullptr) return false;
+    const bool supported = std::strcmp(version, "2.1.0rc1") == 0;
+    env->ReleaseStringUTFChars(runtime_version, version);
+    return supported;
+}
+
+jlong ReadHandle(JNIEnv* env, jobject object) {
+    if (object == nullptr) return 0;
+    jclass object_class = env->GetObjectClass(object);
+    jfieldID handle_field = env->GetFieldID(object_class, "handle", "J");
+    env->DeleteLocalRef(object_class);
+    if (handle_field == nullptr) {
+        env->ExceptionClear();
+        return 0;
+    }
+    return env->GetLongField(object, handle_field);
 }
 }  // namespace
 
@@ -114,20 +136,8 @@ Java_com_azurpilot_ghio_ocr_OcrNative_mediatekAdapterLibrary(JNIEnv* env, jobjec
 extern "C" JNIEXPORT jint JNICALL
 Java_com_azurpilot_ghio_ocr_OcrNative_countCustomOps(
         JNIEnv* env, jobject, jobject model, jstring runtime_version) {
-    if (model == nullptr || runtime_version == nullptr) return -1;
-    const char* version = env->GetStringUTFChars(runtime_version, nullptr);
-    if (version == nullptr) return -1;
-    const bool supported = std::strcmp(version, "2.1.0rc1") == 0;
-    env->ReleaseStringUTFChars(runtime_version, version);
-    if (!supported) return -1;
-    jclass model_class = env->GetObjectClass(model);
-    jfieldID handle_field = env->GetFieldID(model_class, "handle", "J");
-    env->DeleteLocalRef(model_class);
-    if (handle_field == nullptr) {
-        env->ExceptionClear();
-        return -1;
-    }
-    auto* wrapper = reinterpret_cast<void*>(env->GetLongField(model, handle_field));
+    if (!SupportsVersion(env, runtime_version)) return -1;
+    auto* wrapper = reinterpret_cast<void*>(ReadHandle(env, model));
     if (wrapper == nullptr) return -1;
     // 上游此版本 ModelWrapper 的首成员是 LiteRtModel；memcpy 避免伪造结构的别名访问。
     // 来源：https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/
@@ -160,4 +170,26 @@ Java_com_azurpilot_ghio_ocr_OcrNative_countCustomOps(
     }
     dlclose(library);
     return custom;
+}
+
+// CompiledModel.handle 已是原始 C 会话，不能按 ModelWrapper 解包。
+// CPU delegate 也可能令全部委派为真，调用方不得据此单独宣称 NPU 执行。
+//
+// CompiledModel.handle is the raw C session, unlike ModelWrapper. Returns 1 for full
+// delegation, 0 for remaining undelegated ops, or -1 for unavailable diagnostics.
+// CPU delegates can also return 1, so this result alone is never NPU evidence.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_azurpilot_ghio_ocr_OcrNative_compiledModelAcceleration(
+        JNIEnv* env, jobject, jobject compiled_model, jstring runtime_version) {
+    if (!SupportsVersion(env, runtime_version)) return -1;
+    auto* handle = reinterpret_cast<void*>(ReadHandle(env, compiled_model));
+    if (handle == nullptr) return -1;
+    void* library = dlopen("libLiteRt.so", RTLD_NOW | RTLD_LOCAL);
+    if (library == nullptr) return -1;
+    auto api = reinterpret_cast<IsFullyAccelerated>(
+            dlsym(library, "LiteRtCompiledModelIsFullyAccelerated"));
+    bool fully = false;
+    const int result = api != nullptr && api(handle, &fully) == 0 ? (fully ? 1 : 0) : -1;
+    dlclose(library);
+    return result;
 }

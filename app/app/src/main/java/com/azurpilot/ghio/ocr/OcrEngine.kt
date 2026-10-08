@@ -99,7 +99,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         put("npu_state", when {
             !bundled -> "unavailable"
             disabled == recognizers.size -> "disabled"
-            sessions.values.any { it.validated && (it.partitions > 0 || it.hiai != 0L) } -> "verified"
+            sessions.values.any { it.validated && it.hasNpuEvidence } -> "verified"
             disabled > 0 -> "partially_disabled"
             else -> "untested"
         })
@@ -128,9 +128,9 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
                     put("backend", session.backend)
                     put("npu_requested", session.lite != null || session.hiai != 0L)
                     put("npu_dispatch_partitions", session.partitions)
+                    put("litert_all_ops_delegated", session.allOpsDelegated)
                     put("hiai_npu_only_session_ready", session.hiai != 0L)
-                    put("npu_delegation_verified", session.validated &&
-                        (session.partitions > 0 || session.hiai != 0L))
+                    put("npu_delegation_verified", session.validated && session.hasNpuEvidence)
                     put("npu_hardware_profile_verified", false)
                 })
             }
@@ -212,11 +212,13 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             } catch (error: Exception) {
                 failures[hash] = error.message?.take(300) ?: error.javaClass.simpleName
                 trace.record(hash, "npu_failed", failures[hash])
+                trace.captureNative(hash)
                 session.closeNpu()
                 Timber.w(error, "OCR NPU failed; falling back to ONNX CPU")
             } catch (error: LinkageError) {
                 failures[hash] = error.message?.take(300) ?: "NPU library linkage failed"
                 trace.record(hash, "npu_linkage_failed", failures[hash])
+                trace.captureNative(hash)
                 session.closeNpu()
                 Timber.w(error, "OCR NPU libraries unavailable")
             }
@@ -317,9 +319,17 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             session.lite = CompiledModel.create(
                 model, CompiledModel.Options(Accelerator.NPU), env,
             )
-            trace.record(hash, "litert_graph_after_compile")
             session.partitions = OcrNative.countCustomOps(model, version)
-            check(session.partitions > 0) { "LiteRT did not delegate any OCR partition to the NPU" }
+            val acceleration = OcrNative.compiledModelAcceleration(session.lite!!, version)
+            session.allOpsDelegated = acceleration == 1
+            trace.record(hash, "litert_graph_after_compile",
+                "custom_ops=${session.partitions}, all_ops_delegated=$acceleration")
+            trace.captureNative(hash)
+            // CPU delegate 也能令全部委派为真；只有实际 dispatch 分区可作为 NPU 证据。
+            check(session.partitions > 0) {
+                "LiteRT NPU delegation unavailable: custom_ops=${session.partitions}, " +
+                    "all_ops_delegated=$acceleration; see debug/ocr/native-${hash.take(12)}.log"
+            }
             trace.record(hash, "litert_buffers")
             session.inputs = session.lite!!.createInputBuffers()
             session.outputs = session.lite!!.createOutputBuffers()
@@ -473,6 +483,8 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
         var outputs: List<com.google.ai.edge.litert.TensorBuffer>? = null
         var validated = false
         var partitions = 0
+        var allOpsDelegated = false
+        val hasNpuEvidence get() = partitions > 0 || hiai != 0L
         var backend = "uninitialized"
         fun closeNpu() {
             if (hiai != 0L) {
@@ -489,6 +501,7 @@ class OcrEngine(private val context: Context, disabledModels: Map<String, String
             model = null
             validated = false
             partitions = 0
+            allOpsDelegated = false
         }
         override fun close() {
             closeNpu()

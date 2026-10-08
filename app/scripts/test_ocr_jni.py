@@ -25,6 +25,7 @@ C_API = r"""
 struct Model { int custom; } model;
 // 按钉版 ModelWrapper 首成员布局构造不同地址，避免错误指针也通过检查。
 struct Wrapper { void* model; unsigned char buffer[32]; } wrapper;
+struct Compiled { int result; } compiled;
 extern "C" JNIEXPORT jlong JNICALL Java_test_Fixture_wrap(JNIEnv*, jclass, jint custom) {
     model.custom = custom;
     wrapper.model = custom < 0 ? nullptr : &model;
@@ -49,6 +50,16 @@ extern "C" int32_t LiteRtGetOpCode(void* op, int32_t* code) {
     *code = reinterpret_cast<size_t>(op) <= static_cast<size_t>(model.custom) ? 32 : 18;
     return 0;
 }
+extern "C" JNIEXPORT jlong JNICALL Java_test_Fixture_compile(JNIEnv*, jclass, jint result) {
+    compiled.result = result;
+    return reinterpret_cast<jlong>(&compiled);
+}
+extern "C" int32_t LiteRtCompiledModelIsFullyAccelerated(void* handle, bool* fully) {
+    // 编译会话必须直接传入，按 ModelWrapper 解包会得到另一地址并被拒绝。
+    if (handle != &compiled || compiled.result < 0) return 1;
+    *fully = compiled.result == 1;
+    return 0;
+}
 """
 
 MODEL = """
@@ -62,12 +73,21 @@ public class Model extends JniHandle {
 }
 """
 
+COMPILED_MODEL = """
+package com.google.ai.edge.litert;
+public class CompiledModel extends JniHandle {
+    public CompiledModel(long value) { super(value); }
+}
+"""
+
 BRIDGE = """
 package com.azurpilot.ghio.ocr;
 import com.google.ai.edge.litert.Model;
+import com.google.ai.edge.litert.CompiledModel;
 public class OcrNative {
     static { System.loadLibrary("ocrdiagnostics"); }
     public native int countCustomOps(Model model, String runtimeVersion);
+    public native int compiledModelAcceleration(CompiledModel model, String runtimeVersion);
     public native String mediatekDriverError();
     public native String mediatekAdapterLibrary();
 }
@@ -77,14 +97,21 @@ FIXTURE = """
 package test;
 import com.azurpilot.ghio.ocr.OcrNative;
 import com.google.ai.edge.litert.Model;
+import com.google.ai.edge.litert.CompiledModel;
 public class Fixture {
     static { System.loadLibrary("LiteRt"); }
     public static native long wrap(int custom);
+    public static native long compile(int result);
     static void expect(int expected, int actual) {
         if (actual != expected) throw new AssertionError("Expected " + expected + ", got " + actual);
     }
     public static void main(String[] args) {
         OcrNative bridge = new OcrNative();
+        if (args.length > 0 && args[0].equals("compiled_api_absent")) {
+            expect(-1, bridge.compiledModelAcceleration(new CompiledModel(compile(1)), "2.1.0rc1"));
+            System.out.println("OCR JNI: compiled_api_absent passed");
+            return;
+        }
         if (args.length > 0 && args[0].startsWith("adapter_")) {
             String actual;
             try {
@@ -112,9 +139,17 @@ public class Fixture {
         expect(-1, bridge.countCustomOps(new Model(1), "2.2.0"));
         expect(-1, bridge.countCustomOps(null, "2.1.0rc1"));
         expect(-1, bridge.countCustomOps(new Model(1), null));
+        expect(1, bridge.compiledModelAcceleration(new CompiledModel(compile(1)), "2.1.0rc1"));
+        expect(0, bridge.compiledModelAcceleration(new CompiledModel(compile(0)), "2.1.0rc1"));
+        expect(-1, bridge.compiledModelAcceleration(new CompiledModel(compile(-1)), "2.1.0rc1"));
+        expect(-1, bridge.compiledModelAcceleration(new CompiledModel(0), "2.1.0rc1"));
+        expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), "2.2.0"));
+        expect(-1, bridge.compiledModelAcceleration(null, "2.1.0rc1"));
+        expect(-1, bridge.compiledModelAcceleration(new CompiledModel(1), null));
         if (bridge.mediatekDriverError() == null)
             throw new AssertionError("Missing MTK driver must be rejected before SDK loading");
         System.out.println("OCR JNI: 7 regression checks passed");
+        System.out.println("OCR JNI: 7 compiled-session checks passed");
         System.out.println("OCR JNI: driver_absent passed");
     }
 }
@@ -142,6 +177,7 @@ def main():
                                str(directory / "libocrdiagnostics.so")], check=True)
         sources = []
         for path, text in [("com/google/ai/edge/litert/Model.java", MODEL),
+                           ("com/google/ai/edge/litert/CompiledModel.java", COMPILED_MODEL),
                            ("com/azurpilot/ghio/ocr/OcrNative.java", BRIDGE),
                            ("test/Fixture.java", FIXTURE)]:
             source = directory / path
@@ -153,6 +189,10 @@ def main():
         java = [str(jdk / "bin/java"), f"-Djava.library.path={directory}",
                 "-cp", str(directory), "test.Fixture"]
         subprocess.run(java, env=env, check=True)
+        # 在新 JVM 去掉会话检查导出，验证 API 不可用时不会宣称 NPU 成功。
+        api.write_text(C_API.replace("LiteRtCompiledModelIsFullyAccelerated", "MissingAccelerationApi"))
+        subprocess.run(flags + [str(api), "-o", str(directory / "libLiteRt.so")], check=True)
+        subprocess.run(java + ["compiled_api_absent"], env=env, check=True)
         # 探测只能检查入口，不能调用未公开的硬件配置 ABI。
         api.write_text('#include <cstdlib>\nextern "C" void* queryHwConfigInternal(int*) { std::abort(); }\n')
         utility = directory / "libapuwareutils_v2.mtk.so"

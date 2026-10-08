@@ -1,6 +1,7 @@
 package com.azurpilot.ghio.ocr
 
 import com.google.ai.edge.litert.Model
+import com.google.ai.edge.litert.CompiledModel
 
 /**
  * 读取钉版 LiteRT 的公开 C 模型 API，确认 JIT 确实生成了厂商 dispatch 分区。
@@ -22,6 +23,17 @@ internal object OcrNative {
      * Main-graph custom op count, or -1 if unavailable or the version mismatches.
      */
     external fun countCustomOps(model: Model, runtimeVersion: String): Int
+
+    /**
+     * 从已编译会话检查全图委派；1 为全部委派，0 为剩余未委派算子，-1 为检查不可用。
+     *
+     * CPU delegate 也可能返回 1；此结果不能单独作为 NPU 执行证据。
+     *
+     * Checks delegation on the compiled session: 1 for full delegation, 0 for remaining
+     * undelegated ops, and -1 if unavailable. CPU delegates can also return 1;
+     * this result alone is never evidence of NPU execution.
+     */
+    external fun compiledModelAcceleration(model: CompiledModel, runtimeVersion: String): Int
 
     /**
      * 在加载 MTK adapter 前检查其必需的系统入口，缺失时返回原因。
