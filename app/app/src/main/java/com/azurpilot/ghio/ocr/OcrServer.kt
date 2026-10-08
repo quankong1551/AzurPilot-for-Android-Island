@@ -1,230 +1,171 @@
 package com.azurpilot.ghio.ocr
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.Looper
 import com.azurpilot.ghio.proot.AndroidControlAuth
 import kotlinx.serialization.json.*
 import timber.log.Timber
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
-import java.net.InetAddress
+import java.io.EOFException
+import java.io.IOException
 import java.net.InetSocketAddress
-import java.net.ServerSocket
 import java.net.Socket
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.security.MessageDigest
-import java.util.concurrent.Semaphore
-import kotlin.concurrent.thread
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * 在 App 进程提供带口令的回环 OCR 张量 API，独立于特权设备桥。
+ * 在宿主绑定私有 OCR 工作进程，状态和测试均走 AP 同用的认证回环接口。
  *
- * 一行 JSON 后跟 little-endian FP32 字节。服务在运行时或用户测试时监听，随 App 进程终止；
- * 四个连接槽和有界报文避免无限线程或内存。推理在工作线程执行，模型锁由 [OcrEngine] 管理。
+ * 公开阻塞方法由 IO 线程调用。原生退出后记录失败模型并重绑，失败模型改用 CPU。
+ * 重试仅用于确认 Binder 已死亡的连接错误，不将普通 API 错误误报为原生崩溃。
  *
- * Provides an authenticated loopback OCR tensor API in the app process, separate from the
- * privileged device bridge. JSON lines precede little-endian FP32 bytes. The service starts
- * with the runtime or a user test and ends with the app process. Four connection slots and bounded messages
- * prevent unbounded threads/memory. Workers infer under [OcrEngine]'s model lock.
+ * Binds the private OCR worker. Status and tests use AP's authenticated loopback API.
+ * Blocking methods run on IO. Native exits gate failed models and rebind to CPU. Retries
+ * require a dead Binder, distinguishing connection loss from ordinary API errors.
  */
 class OcrServer(private val context: Context) {
-    private val engine by lazy { OcrEngine(context) }
-    private val clients = Semaphore(4)
-    private val inference = Semaphore(1)
-    @Volatile private var socket: ServerSocket? = null
-
-    /**
-     * 当前监听地址；启动失败时为空。
-     *
-     * Active listener address, empty when startup failed.
-     */
-    val address: String get() = if (socket != null) "127.0.0.1:$PORT" else ""
-
-    /** 返回共享引擎的状态，仅在 IO 线程读取。 / Reads shared engine status on an IO worker. */
-    fun status(): JsonObject = engine.status()
-
-    /**
-     * 从 IO 线程经过实际认证回环接口运行测试，与 AP 使用相同引擎。
-     *
-     * Tests the shared AP engine through the authenticated loopback API on an IO worker.
-     */
-    fun test(hash: String): JsonObject {
-        start()
-        check(address.isNotEmpty()) { "OCR API could not start" }
-        Socket().use { client ->
-            client.connect(InetSocketAddress("127.0.0.1", PORT), 3_000)
-            client.soTimeout = 240_000
-            val request = buildJsonObject {
-                put("method", "test")
-                put("model_sha256", hash)
-                put("token", AndroidControlAuth.get(context))
-            }
-            send(BufferedOutputStream(client.getOutputStream()), request)
-            val reply = Json.parseToJsonElement(readLine(BufferedInputStream(client.getInputStream()))
-                ?: error("OCR test returned no response")).jsonObject
-            check(reply["ok"]?.jsonPrimitive?.boolean == true) {
-                reply["error"]?.jsonPrimitive?.content ?: "OCR test failed"
-            }
-            return reply.getValue("result").jsonObject
-        }
+    private val lock = Any()
+    private val recovery = OcrWorkerRecovery(context)
+    private val callbacks = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "ocr-lifecycle").apply { isDaemon = true }
     }
+    @Volatile private var connection: ServiceConnection? = null
+    @Volatile private var worker: IBinder? = null
+    private var ready = CountDownLatch(0)
+    private var boundAt = 0L
+
+    /** 当前工作进程地址，绑定失败时为空。 / Worker address, empty when binding failed. */
+    val address: String get() = if (worker?.isBinderAlive == true) "127.0.0.1:$PORT" else ""
+
+    /** 返回工作进程状态，不初始化模型会话。 / Reads worker status without initializing sessions. */
+    fun status(): JsonObject = request("status").getValue("status").jsonObject
+
+    /** 经过实际 API 测试，原生退出时重试 CPU。 / Tests through the real API, retrying CPU after native exits. */
+    fun test(hash: String): JsonObject = request("test", hash).getValue("result").jsonObject
 
     /**
-     * 幂等启动；失败记录日志，让 AP 保留原 CPU 路径。
+     * 幂等绑定并等待就绪，仅允许工作线程调用。
      *
-     * Starts idempotently; failures keep AP's original CPU path.
+     * Binds idempotently and waits for readiness on workers only.
      */
-    @Synchronized
-    fun start() {
-        if (socket != null) return
-        val listener = ServerSocket()
-        try {
-            engine.status()
-            listener.reuseAddress = true
-            listener.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT), 4)
-            socket = listener
-            thread(isDaemon = true, name = "ocr-accept") {
-                try {
-                    while (!listener.isClosed) {
-                        val client = try { listener.accept() } catch (_: Exception) { break }
-                        if (!clients.tryAcquire()) {
-                            client.close()
-                            continue
-                        }
-                        thread(isDaemon = true, name = "ocr-client") {
-                            try {
-                                serve(client)
-                            } catch (error: LinkageError) {
-                                // 驱动链接错误不能让宿主进程退出；连接关闭后 Python 会回退原模型。
-                                Timber.w(error, "OCR runtime linkage failed")
-                            } finally {
-                                client.close()
-                                clients.release()
+    fun start() = bind(wait = true)
+
+    private fun bind(wait: Boolean) {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "OCR binding must run off the main thread" }
+        val stale = synchronized(lock) {
+            if (worker?.isBinderAlive == false) connection?.let { it to boundAt } else null
+        }
+        stale?.let { lost(it.first, it.second, true) }
+        val latch = synchronized(lock) {
+            if (worker?.isBinderAlive == true) return
+            if (connection == null) {
+                val signal = CountDownLatch(1)
+                val since = System.currentTimeMillis()
+                val next = object : ServiceConnection {
+                    override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                        callbacks.execute {
+                            synchronized(lock) {
+                                if (connection === this) worker = service
                             }
+                            signal.countDown()
                         }
                     }
-                } finally {
-                    listener.close()
-                    synchronized(this@OcrServer) {
-                        if (socket === listener) socket = null
+                    override fun onServiceDisconnected(name: ComponentName) {
+                        callbacks.execute {
+                            lost(this, since, true)
+                            // 不等待同一执行器上的连接回调；AP 已持有固定地址，重绑恢复其重试。
+                            runCatching { bind(wait = false) }
+                                .onFailure { Timber.w(it, "OCR worker recovery binding failed") }
+                        }
+                    }
+                    override fun onBindingDied(name: ComponentName) {
+                        callbacks.execute { lost(this, since, false) }
+                    }
+                    override fun onNullBinding(name: ComponentName) {
+                        callbacks.execute { lost(this, since, false) }
                     }
                 }
+                connection = next
+                ready = signal
+                boundAt = since
+                val intent = Intent(context, OcrWorkerService::class.java)
+                    .putExtra("token", AndroidControlAuth.get(context))
+                    .putExtra("disabled_models", recovery.snapshot())
+                if (!context.bindService(intent, next, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)) {
+                    connection = null
+                    signal.countDown()
+                }
             }
-            Timber.i("OCR API listening on %s", address)
-        } catch (error: Exception) {
-            listener.close()
-            Timber.w(error, "OCR API unavailable; AP will use original CPU inference")
+            ready
+        }
+        if (wait) check(latch.await(10, TimeUnit.SECONDS) && address.isNotEmpty()) {
+            "OCR worker could not start"
         }
     }
 
-    private fun serve(client: Socket) {
-        client.use { connection ->
-            connection.soTimeout = 90_000
-            val input = BufferedInputStream(connection.getInputStream())
-            val output = BufferedOutputStream(connection.getOutputStream())
-            val expectedToken = AndroidControlAuth.get(context).toByteArray()
+    private fun lost(previous: ServiceConnection, since: Long, crashed: Boolean) {
+        synchronized(lock) {
+            if (connection !== previous) return
+            if (crashed) recovery.recordDeath(since)
+            worker = null
+            connection = null
+            ready.countDown()
+            runCatching { context.unbindService(previous) }
+        }
+    }
+
+    private fun request(method: String, hash: String? = null): JsonObject {
+        repeat(2) { attempt ->
+            start()
+            val binding = synchronized(lock) { Triple(connection, worker, boundAt) }
             try {
-                while (true) {
-                    val line = readLine(input) ?: return
-                    val request = Json.parseToJsonElement(line).jsonObject
-                    val token = request["token"]?.jsonPrimitive?.content.orEmpty().toByteArray()
-                    require(MessageDigest.isEqual(expectedToken, token)) { "Unauthorized OCR request" }
-                    when (request.getValue("method").jsonPrimitive.content) {
-                        "status" -> send(output, buildJsonObject { put("ok", true); put("status", engine.status()) })
-                        "test" -> withInferenceBuffers {
-                            val result = engine.test(request.getValue("model_sha256").jsonPrimitive.content)
-                            send(output, buildJsonObject { put("ok", true); put("result", result) })
-                        }
-                        "describe" -> send(output, buildJsonObject {
-                            put("ok", true)
-                            put("model", engine.describe(request.getValue("model_sha256").jsonPrimitive.content))
-                        })
-                        "run" -> withInferenceBuffers {
-                            val hash = request.getValue("model_sha256").jsonPrimitive.content
-                            val spec = engine.describe(hash)
-                            val shape = request.getValue("shape").jsonArray.map { it.jsonPrimitive.long }.toLongArray()
-                            require(shape.size == 4 && shape.all { it in 1..4096 })
-                            val count = shape.fold(1L, Long::times)
-                            require(count in 1..MAX_PAYLOAD / 4L)
-                            val length = request.getValue("length").jsonPrimitive.int
-                            require(length.toLong() == count * 4L)
-                            val name = spec.getValue("inputs").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content
-                            require(request.getValue("input_name").jsonPrimitive.content == name)
-                            val payload = ByteArray(length)
-                            var offset = 0
-                            while (offset < length) {
-                                val read = input.read(payload, offset, length - offset)
-                                check(read > 0) { "Truncated OCR request" }
-                                offset += read
-                            }
-                            val floats = FloatArray(count.toInt())
-                            ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(floats)
-                            val source = request["source"]?.jsonPrimitive?.content ?: "ap"
-                            require(source in setOf("ap", "diagnostic"))
-                            val result = engine.run(hash, shape, floats, source)
-                            require(result.values.size <= MAX_PAYLOAD / 4)
-                            val replyBytes = ByteArray(result.values.size * 4)
-                            ByteBuffer.wrap(replyBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().put(result.values)
-                            val outputName = spec.getValue("outputs").jsonArray.single().jsonObject.getValue("name")
-                            send(output, buildJsonObject {
-                                put("ok", true)
-                                put("backend", result.backend)
-                                put("length", replyBytes.size)
-                                put("outputs", buildJsonArray { add(buildJsonObject {
-                                    put("name", outputName)
-                                    put("shape", JsonArray(result.shape.map(::JsonPrimitive)))
-                                }) })
-                            }, replyBytes)
-                        }
-                        else -> error("Unknown OCR method")
+                Socket().use { client ->
+                    client.connect(InetSocketAddress("127.0.0.1", PORT), 3_000)
+                    client.soTimeout = if (method == "test") 240_000 else 15_000
+                    val header = buildJsonObject {
+                        put("method", method)
+                        put("token", AndroidControlAuth.get(context))
+                        hash?.let { put("model_sha256", it) }
                     }
+                    BufferedOutputStream(client.getOutputStream()).also {
+                        it.write((header.toString() + "\n").toByteArray(Charsets.UTF_8))
+                        it.flush()
+                    }
+                    val input = BufferedInputStream(client.getInputStream())
+                    val bytes = ByteArrayOutputStream()
+                    while (true) {
+                        val next = input.read()
+                        if (next == -1) throw EOFException("OCR worker closed the connection")
+                        if (next == 10) break
+                        require(bytes.size() < 1024 * 1024) { "OCR response header exceeds the limit" }
+                        bytes.write(next)
+                    }
+                    val reply = Json.parseToJsonElement(bytes.toString(Charsets.UTF_8.name())).jsonObject
+                    check(reply["ok"]?.jsonPrimitive?.boolean == true) {
+                        reply["error"]?.jsonPrimitive?.content ?: "OCR request failed"
+                    }
+                    return reply
                 }
-            } catch (error: Exception) {
-                runCatching {
-                    send(output, buildJsonObject {
-                        put("ok", false)
-                        put("error", error.message?.take(300) ?: "OCR request failed")
-                    })
+            } catch (error: IOException) {
+                // Socket EOF 可能略早于 Binder 死亡通知；只等一次短窗口，避免误判普通网络错误。
+                if (attempt == 0 && error is EOFException && binding.second?.isBinderAlive == true) {
+                    Thread.sleep(200)
                 }
-                Timber.d("OCR connection closed: %s", error.javaClass.simpleName)
+                val dead = binding.second?.isBinderAlive == false
+                if (dead) binding.first?.let { lost(it, binding.third, true) }
+                if (!dead || attempt == 1) throw error
+                Timber.w("OCR worker connection lost; retrying with CPU recovery")
             }
         }
+        error("OCR worker retry exhausted")
     }
 
-    private inline fun withInferenceBuffers(action: () -> Unit) {
-        // 模型锁只保护推理；收发缓冲也必须串行，否则等待的客户端会各占两份大输入。
-        inference.acquire()
-        try {
-            action()
-        } finally {
-            inference.release()
-        }
-    }
-
-    private fun readLine(input: BufferedInputStream): String? {
-        val bytes = ByteArrayOutputStream()
-        while (bytes.size() < 16 * 1024) {
-            val next = input.read()
-            if (next == -1) {
-                check(bytes.size() == 0) { "Truncated OCR header" }
-                return null
-            }
-            if (next == 10) return bytes.toString(Charsets.UTF_8.name())
-            bytes.write(next)
-        }
-        error("OCR request header exceeds 16 KiB")
-    }
-
-    private fun send(output: BufferedOutputStream, header: JsonObject, bytes: ByteArray = byteArrayOf()) {
-        output.write(header.toString().toByteArray())
-        output.write(10)
-        output.write(bytes)
-        output.flush()
-    }
-
-    private companion object {
-        const val PORT = 22302
-        const val MAX_PAYLOAD = 64 * 1024 * 1024
-    }
+    private companion object { const val PORT = 22302 }
 }

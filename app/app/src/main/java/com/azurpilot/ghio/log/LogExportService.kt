@@ -67,6 +67,9 @@ class LogExportService(
      *   null = nothing to export, or packing failed
      */
     suspend fun exportZip(kind: LogExportKind): File? = withContext(AppDispatchers.IO) {
+        if (kind == LogExportKind.LAUNCHER) {
+            ProcessExitDiagnostics.collect(context, File(baseDir(), "debug/process-exits"))
+        }
         val now = System.currentTimeMillis()
         val files = when (kind) {
             LogExportKind.AZURPILOT -> LogExportCollector.collectAzurPilot(logDir(), now)

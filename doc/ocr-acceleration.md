@@ -7,7 +7,8 @@
 APK 内置原始 ONNX 权重，以及四个识别器的 LiteRT 和 MNN FP32 模型。AP 的 ONNX 会话工厂由
 `android_ocr.py` 在 Android 运行时代理，按文件内容 SHA-256 匹配 APK 白名单，向
 `127.0.0.1:22302` 发送预处理后的 NCHW 张量。宿主负责推理，AP 保留语言字典、CTC
-解码和后处理。接口与特权设备桥分离，普通 App 进程即可执行。
+解码和后处理。接口运行于私有绑定的 `:ocr` 工作进程，与主界面和特权设备桥分离，
+不需要 root 或 Shizuku 权限。
 
 LiteRT CompiledModel 通过厂商编译、dispatch 插件调用 NPU，未注册 NNAPI。
 高通使用 QNN HTP，联发科使用 NeuroPilot。海思使用独立的 MNN → HiAI 后端：
@@ -50,7 +51,28 @@ ONNX CPU，后两者保留 AP 原推理路径。模型缓存最多两个，单�
 宿主首先确认原 LiteRT 模型没有 custom 操作，再通过公开 C 模型 API 检查 JIT 后的
 主图是否生成 custom dispatch 分区。没有分区时拒绝静默 CPU 替代。首个真实请求会
 与原 ONNX CPU 输出对照：输出尺寸相同、最大绝对误差不超过 0.01、每个时间步的字符
-分类一致。失败则关闭 NPU 会话，该模型在本次 App 进程内使用 CPU。
+分类一致。失败则关闭 NPU 会话，该模型在本次 OCR 工作进程内使用 CPU。
+
+加载 MTK adapter 前，先尝试打开系统 `libapuwareutils_v2.mtk.so` 或
+`libapuwareutils.mtk.so`，确认其导出 `queryHwConfigInternal`。8.0.10 adapter 的
+初始化会直接调用该入口，缺失时会跳转空地址。Manifest 把两库声明为可选公开依赖；
+无法打开或入口缺失时报告原因并使用 ONNX CPU。若 v2 库能打开但缺少入口，则直接拒绝，
+因为 adapter 在这种情况下不会改试旧版库。此检查只排除已知初始化故障，不保证驱动兼容。
+
+LiteRT 2.1.0rc1 的 Kotlin `Model.handle` 指向 JNI `ModelWrapper`，不能直接传给
+C 模型 API。诊断桥按该钉版布局读取首成员 `LiteRtModel`，仅接受 `2.1.0rc1`；构建也会
+拒绝未经重新验证的升级。包装对象布局依据
+[上游钉版源码](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h)。
+`test_ocr_jni.py` 在 Linux JVM 编译生产 JNI，执行七项模型句柄检查和三项 MTK
+驱动入口检查。模拟库验证拒绝缺失入口，且探测不会调用私有函数；它不验证 Android 驱动。
+
+首次初始化和校验阶段同步保存到启动器日志的 `debug/ocr/stages.jsonl`，复制 OCR 报告
+也会包含 `last_stage`。导出启动器日志时额外收集 Android 11+ 的进程退出原因；
+Android 12+ 如仍保留原生 tombstone，则附带 `debug/process-exits/trace_*.pb`。
+系统可能已清除堆栈，空缺不能据此排除原生崩溃。原生信号仍不能被 Kotlin 异常捕获，
+因此所有推理库放在 `:ocr` 进程。工作进程退出后，主进程记录当前模型并重新绑定，
+该模型改用 CPU；无法确定模型时暂禁全部 NPU。禁用记录持续到 APK 版本升级，避免
+重启再次触发同一崩溃。AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
 
 海思必须成功创建 HiAI 会话、后端为 `MNN_FORWARD_USER_0`，并返回 V320 就绪状态。
 该后端明确使用 `AiModelDescription_DeviceType_NPU`，请求成功后报告 `hiai_npu`；
@@ -94,7 +116,7 @@ AP 已运行时，同一个按钮还通过 PRoot 启动使用正常环境变量�
 AP 未启动时仍可测试内置模型，页面会提示启动 AP 后重新测试接线。
 
 **复制测试报告** 包含芯片、运行库版本、实际后端、调用计数、耗时、数值对照和 AP
-识别结果，不包含认证口令。诊断调用不增加 AP 业务计数；业务计数只代表此 App 进程
+识别结果，不包含认证口令。诊断调用不增加 AP 业务计数；业务计数只代表此 OCR 工作进程
 收到的宿主请求，未匹配的上游权重和 NCNN 请求不会进入宿主。
 
 ### 构建与验证
@@ -120,6 +142,7 @@ NPU 客户端库、匹配的头文件与许可文本。MNN 在 NDK 构建中编�
 ```bash
 python app/scripts/fetch_ocr_runtime.py
 python app/scripts/test_verify_ocr_assets.py
+python app/scripts/test_ocr_jni.py  # Linux，需要 JDK 和 C++ 编译器
 python rootfs/tests/test_android_ocr.py  # 需要 numpy
 cd app
 ./gradlew compileDebugKotlin -x verifyBundledAzurPilotRuntime
@@ -168,8 +191,8 @@ The APK bundles original ONNX weights and LiteRT and MNN FP32 models for four re
 `android_ocr.py` proxies AP's ONNX session factory only in the Android runtime, matches
 file SHA-256 hashes against the APK allowlist, and sends preprocessed NCHW tensors to
 `127.0.0.1:22302`. The app performs inference; AP retains dictionaries, CTC decoding, and
-postprocessing. The endpoint runs in the ordinary app process, independently of the
-privileged device bridge.
+postprocessing. A privately bound `:ocr` worker hosts the endpoint, separate from the UI
+and privileged device bridge. It requires neither root nor Shizuku permissions.
 
 LiteRT CompiledModel invokes vendor compiler/dispatch plugins without registering NNAPI:
 QNN HTP for Qualcomm and NeuroPilot for MediaTek. A separate MNN → HiAI backend uses the
@@ -219,7 +242,34 @@ public C model API to check for custom dispatch partitions in the JIT-transforme
 No partitions means rejecting silent CPU substitution. The first real request is compared
 against original ONNX CPU output: identical dimensions, absolute error at most 0.01, and
 identical character predictions at every timestep. Failure closes the NPU session and keeps that
-model on CPU for the current app process.
+model on CPU for the current OCR worker process.
+
+Before loading the MTK adapter, the host opens the system `libapuwareutils_v2.mtk.so` or
+`libapuwareutils.mtk.so` and checks for `queryHwConfigInternal`. The 8.0.10 adapter calls
+this entry directly during initialization; a missing entry causes a null-address jump.
+The manifest declares both libraries as optional public dependencies. Unavailable libraries
+or entries produce a reported ONNX CPU fallback. An open v2 library without the entry is
+rejected immediately, because the adapter does not try the legacy library in that case.
+This check excludes the known initialization fault, without proving driver compatibility.
+
+Kotlin `Model.handle` in LiteRT 2.1.0rc1 points to a JNI `ModelWrapper`, which cannot be
+passed directly to C model APIs. The diagnostics bridge reads its first `LiteRtModel` member
+under the pinned layout and accepts only `2.1.0rc1`; builds also reject unvalidated upgrades.
+The layout follows the
+[pinned upstream source](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/kotlin/src/main/jni/litert_model_wrapper.h).
+`test_ocr_jni.py` compiles production JNI on a Linux JVM for seven model-handle checks and
+three MTK driver-entry checks. Mock libraries verify missing-entry rejection and that the
+probe never calls the private function. These checks do not validate Android vendor drivers.
+
+Initialization and first validation stages are flushed to launcher logs at
+`debug/ocr/stages.jsonl`; copied OCR reports include `last_stage`. Launcher exports also
+collect process exit reasons on Android 11+. If Android 12+ still retains a native tombstone,
+the export includes `debug/process-exits/trace_*.pb`. Missing traces do not rule out native
+crashes because the system may have discarded them. Kotlin cannot catch native signals,
+so all inference libraries run in `:ocr`. After worker death, the main process records the
+active model and rebinds with CPU recovery for that model, or all NPU models if unknown.
+Gates persist until an APK version upgrade to prevent repeating the crash after restart.
+AP and in-app tests use the same loopback API and retry a broken connection once.
 
 HiAI must create a ready session using `MNN_FORWARD_USER_0` and report the V320 ready state.
 Its client explicitly requests `AiModelDescription_DeviceType_NPU`. Successful requests report
@@ -268,7 +318,7 @@ stopped, bundled-model tests remain available and the page asks users to start A
 **Copy test report** includes the chip, runtime versions, actual backends, request counts,
 timings, numerical comparisons, and AP recognition results, without authentication tokens.
 Diagnostic calls do not increase AP task counts. Business counts cover host requests in
-this app process; unmatched upstream weights and NCNN calls never enter the host.
+this OCR worker process; unmatched upstream weights and NCNN calls never enter the host.
 
 ### Build and verification
 

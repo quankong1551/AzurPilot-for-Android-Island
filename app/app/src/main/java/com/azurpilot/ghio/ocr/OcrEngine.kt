@@ -20,17 +20,17 @@ import java.nio.file.Files
 import java.security.MessageDigest
 
 /**
- * 在 App 进程串行推理白名单 OCR 模型；驱动错误和不支持的尺寸回退原始 ONNX CPU。
+ * 在 OCR 工作进程串行推理白名单模型；驱动错误和不支持的尺寸回退原始 ONNX CPU。
  *
  * LiteRT 使用厂商插件，海思使用严格的 HiAI 会话，不注册 NNAPI。缓存最多两个模型。
  * 所有公开方法在服务工作线程调用，内部同步保证模型与缓冲区不会并发访问。
  *
- * Serializes allowlisted OCR inference in the app process, falling back to original ONNX CPU
+ * Serializes allowlisted OCR inference in the OCR worker, falling back to original ONNX CPU
  * for driver failures and unsupported sizes. LiteRT uses vendor plugins and Kirin uses strict
  * HiAI sessions, never registering NNAPI. At most two models are cached. Public methods run on workers;
  * internal synchronization protects sessions and buffers.
  */
-class OcrEngine(private val context: Context) : AutoCloseable {
+class OcrEngine(private val context: Context, disabledModels: Map<String, String> = emptyMap()) : AutoCloseable {
     private val manifest by lazy {
         context.assets.open("ocr/manifest.json").bufferedReader().use {
             Json.parseToJsonElement(it.readText()).jsonObject
@@ -48,10 +48,11 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         }
     }
     private val sessions = LinkedHashMap<String, Session>(4, 0.75f, true)
-    private val failures = mutableMapOf<String, String>()
+    private val failures = disabledModels.toMutableMap()
     private val activity = mutableMapOf<String, JsonObject>()
     private val provider = BundledProvider(context)
     private var environment: Environment? = null
+    private val trace = OcrTrace(context)
 
     /**
      * 返回匹配权重的原始元数据；未知哈希拒绝调用。
@@ -70,6 +71,8 @@ class OcrEngine(private val context: Context) : AutoCloseable {
     @Synchronized
     fun status(): JsonObject = buildJsonObject {
         put("api_version", 1)
+        put("worker_process_isolated", true)
+        put("worker_pid", android.os.Process.myPid())
         put("runtime", "litert_and_hiai")
         put("runtime_versions", buildJsonObject {
             put("litert", runtime.getValue("litert"))
@@ -82,6 +85,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             }
         })
         put("nnapi", false)
+        trace.latest?.let { put("last_stage", it) }
         put("soc", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.HARDWARE)
         put("vendor", provider.vendor)
         put("npu_libraries_ready", provider.isLibraryReady() || provider.isHiaiReady())
@@ -99,7 +103,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                     last?.get("last_ms")?.let { put("last_ms", it) }
                     last?.get("shape")?.let { put("shape", it) }
                     last?.get("cpu_reason")?.let { put("cpu_reason", it) }
-                    failures[hash]?.let { put("error", it) }
+                    (failures[hash] ?: failures["*"])?.let { put("error", it) }
                 })
             }
         })
@@ -143,7 +147,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                     if (source != "ap") 1 else 0)
                 if (result.backend == "onnx_cpu") {
                     put("cpu_reason", when {
-                        hash in failures -> "npu_failed"
+                        hash in failures || "*" in failures -> "npu_failed"
                         "litert" !in describe(hash) -> "detector"
                         shape[2] != 48L || shape[3] != 320L -> "dynamic_shape"
                         else -> "npu_unavailable"
@@ -159,6 +163,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
 
     private fun infer(hash: String, shape: LongArray, values: FloatArray): Output {
         val spec = describe(hash)
+        trace.activeModel(hash)
         require(shape.size == 4 && shape[0] in 1..16 && shape[1] == 3L)
         require(shape[2] in 1..2048 && shape[3] in 1..4096)
         require(shape.fold(1L, Long::times) == values.size.toLong())
@@ -185,17 +190,19 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         }
         if (conversion != null && shape[2] == 48L && shape[3] == 320L &&
             (provider.isLibraryReady() || provider.isHiaiReady())
-            && hash !in failures) {
+            && hash !in failures && "*" !in failures) {
             try {
                 return if (provider.isHiaiReady()) {
                     runHiai(session, spec.getValue("mnn").jsonObject, shape, values)
                 } else runLite(session, conversion, shape, values)
             } catch (error: Exception) {
                 failures[hash] = error.message?.take(300) ?: error.javaClass.simpleName
+                trace.record(hash, "npu_failed", failures[hash])
                 session.closeNpu()
                 Timber.w(error, "OCR NPU failed; falling back to ONNX CPU")
             } catch (error: LinkageError) {
                 failures[hash] = error.message?.take(300) ?: "NPU library linkage failed"
+                trace.record(hash, "npu_linkage_failed", failures[hash])
                 session.closeNpu()
                 Timber.w(error, "OCR NPU libraries unavailable")
             }
@@ -276,15 +283,27 @@ class OcrEngine(private val context: Context) : AutoCloseable {
     }
 
     private fun runLite(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray): Output {
+        val hash = session.spec.getValue("sha256").jsonPrimitive.content
         if (session.lite == null) {
+            if (provider.vendor == "mediatek") {
+                trace.record(hash, "mediatek_driver_probe")
+                OcrNative.mediatekDriverError()?.let { error(it.take(300)) }
+            }
+            trace.record(hash, "litert_environment")
             val env = environment ?: Environment.create(provider).also { environment = it }
+            trace.record(hash, "litert_model_load")
             val model = Model.load(materialize(conversion).absolutePath).also { session.model = it }
-            check(OcrNative.countCustomOps(model) == 0) { "OCR conversion contains unexpected custom operators" }
+            val version = runtime.getValue("litert").jsonPrimitive.content
+            trace.record(hash, "litert_graph_before_compile")
+            check(OcrNative.countCustomOps(model, version) == 0) { "OCR conversion contains unexpected custom operators or diagnostics are unavailable" }
+            trace.record(hash, "litert_npu_compile")
             session.lite = CompiledModel.create(
                 model, CompiledModel.Options(Accelerator.NPU), env,
             )
-            session.partitions = OcrNative.countCustomOps(model)
+            trace.record(hash, "litert_graph_after_compile")
+            session.partitions = OcrNative.countCustomOps(model, version)
             check(session.partitions > 0) { "LiteRT did not delegate any OCR partition to the NPU" }
+            trace.record(hash, "litert_buffers")
             session.inputs = session.lite!!.createInputBuffers()
             session.outputs = session.lite!!.createOutputBuffers()
             check(Accelerator.NPU in env.getAvailableAccelerators()) { "LiteRT reports no NPU accelerator" }
@@ -295,6 +314,8 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         require(sampleSize.toLong() * batch <= 64 * 1024 * 1024 / 4) { "OCR output exceeds the API limit" }
         val output = FloatArray(sampleSize * batch)
         val inputSize = 3 * 48 * 320
+        val validating = !session.validated
+        if (validating) trace.record(hash, "litert_first_inference")
         repeat(batch) { index ->
             val source = values.copyOfRange(index * inputSize, (index + 1) * inputSize)
             val input = if (conversion.getValue("input_layout").jsonPrimitive.content == "nhwc") {
@@ -308,6 +329,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         }
         expectedShape[0] = shape[0]
         validateConverted(session, expectedShape, output, shape, values)
+        if (validating) trace.record(hash, "litert_validated")
         session.backend = "litert_npu_with_cpu_fallback"
         return Output(expectedShape, output, session.backend)
     }
@@ -315,6 +337,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
     private fun runHiai(session: Session, conversion: JsonObject, shape: LongArray, values: FloatArray): Output {
         val expectedShape = conversion.getValue("output_shape").jsonArray.map { it.jsonPrimitive.long }.toLongArray()
         if (session.hiai == 0L) {
+            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "hiai_model_load")
             session.hiai = OcrHiaiNative.create(materialize(conversion).absolutePath,
                 context.applicationInfo.nativeLibraryDir, expectedShape.last().toInt())
             check(session.hiai != 0L) { "HiAI did not create an NPU session" }
@@ -340,6 +363,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                                   shape: LongArray, values: FloatArray) {
         // 厂商编译器可能使用较低精度；首个真实请求必须对照原权重，不能只用零张量验收。
         if (!session.validated) {
+            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "onnx_reference_validation")
             val reference = runCpu(session, shape, values)
             require(expectedShape.contentEquals(reference.shape)) { "Converted OCR output shape changed" }
             require(output.indices.all { i -> kotlin.math.abs(output[i] - reference.values[i]) <= 0.01f }) {

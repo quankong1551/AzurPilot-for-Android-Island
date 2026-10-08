@@ -12,6 +12,7 @@
 ┌─────────────────────────────────────────────────┐
 │ App 壳层（Kotlin / Compose，进程 com.azurpilot.ghio）│
 │  Provisioner → ProotHost → AzurPilotGateway      │
+│  OCR 工作进程（:ocr）：127.0.0.1:22302 推理 API    │
 │  特权服务（Shizuku / root）：虚拟屏 + 桥接输入捕获   │
 └───────────────────┬─────────────────────────────┘
                     │ proot（nativeLibraryDir 内九件套）
@@ -30,6 +31,9 @@
   崩溃退避重拉、stdin 保活约定、清理残留锁。
 - **AzurPilotGateway**（`proot/`）：对 Runtime 的 WebSocket 富接口订阅方，
   全局唯一订阅，承载配置、日志、统计的实时推送。
+- **OCR 工作进程**（`ocr/`）：私有绑定服务在 `:ocr` 进程托管推理库，
+  AP 和 App 测试通过带口令的 `127.0.0.1:22302` 张量 API 调用。
+  原生退出后主进程重新绑定并禁用失败模型的 NPU，见 [ocr-acceleration.md](ocr-acceleration.md)。
 - **特权服务**（`privileged/`、`remote/`）：经 Shizuku 或 root 以 `app_process`
   拉起独立进程，承载虚拟屏管理、桥接截屏与注入（`bridge/` 下的 native 代码）；
   游戏运行期间由 `SdkTaskRepatriator` 把厂商/渠道 SDK 弹在主屏的登录、实名、
@@ -70,6 +74,7 @@ Runtime 在 `127.0.0.1:25548` 同时暴露三类接口：
 ┌──────────────────────────────────────────────────┐
 │ App shell (Kotlin/Compose, process com.azurpilot.ghio)│
 │  Provisioner → ProotHost → AzurPilotGateway       │
+│  OCR worker (:ocr): 127.0.0.1:22302 inference API │
 │  Privileged service (Shizuku/root): virtual display│
 │  + bridge capture/input                           │
 └───────────────────┬──────────────────────────────┘
@@ -90,6 +95,10 @@ Runtime 在 `127.0.0.1:25548` 同时暴露三类接口：
   cleans stale locks.
 - **AzurPilotGateway** (`proot/`): the single WebSocket subscriber to the
   runtime's rich API; carries live config, log, and statistics pushes.
+- **OCR worker** (`ocr/`): a private bound service hosts inference libraries in
+  `:ocr`. AP and in-app tests use the authenticated `127.0.0.1:22302` tensor API.
+  After a native exit, the main process rebinds and gates the failed model's NPU.
+  See [ocr-acceleration.md](ocr-acceleration.md).
 - **Privileged service** (`privileged/`, `remote/`): a separate process started
   through Shizuku or root via `app_process`. It owns virtual display
   management and the bridge capture/input native code (`bridge/`). While the

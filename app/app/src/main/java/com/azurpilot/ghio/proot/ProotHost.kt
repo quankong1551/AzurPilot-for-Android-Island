@@ -223,7 +223,9 @@ class ProotHost(
         // 否则设置刚改完立刻重启时拿到的还是旧值
         awaitSettingsLoaded()
         syncHostOverlay()
-        ocrServer.start()
+        runCatching { ocrServer.start() }.onFailure {
+            Timber.w(it, "OCR worker unavailable; AP will use original CPU inference")
+        }
         writeRemoteAccessConfig()
         val proc = runCatching { spawnSession() }.getOrElse {
             fail("exec proot: ${it.message}")

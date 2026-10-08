@@ -79,6 +79,8 @@ class AndroidSession:
             except (OSError, ConnectionError):
                 if attempt:
                     raise
+                # 原生工作进程退出后，留出宿主记录失败模型并重新绑定 CPU 会话的时间。
+                time.sleep(0.5)
             finally:
                 self._close()
 

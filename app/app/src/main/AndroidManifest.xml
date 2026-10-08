@@ -61,6 +61,13 @@
 
         <!-- LiteRT 已声明新款 RPC 和 NeuroPilot 库；旧款 DSP 的可选 RPC 库还需补充声明。 -->
         <uses-native-library android:name="libadsprpc.so" android:required="false" />
+        <!-- NeuroPilot 的初始化会查询 APU 配置；Android 12+ 必须声明公开的工具库。 -->
+        <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" />
+        <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" />
+
+        <!-- 厂商原生代码独立运行，信号退出不会连带关闭 UI、PRoot 和特权桥。 -->
+        <service android:name=".ocr.OcrWorkerService"
+            android:exported="false" android:process=":ocr" />
 
         <!-- HiAI 客户端按系统版本加载服务库；Android 12+ 需要声明公开的非 NDK 库。 -->
         <uses-native-library android:name="libai_client.so" android:required="false" />

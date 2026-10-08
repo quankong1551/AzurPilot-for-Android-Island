@@ -183,6 +183,9 @@ if (providers.gradleProperty("azurpilot.slimApk").orNull != "true") {
 val verifyBundledOcrRuntime = tasks.register("verifyBundledOcrRuntime") {
     val expectedVersion = libs.versions.litert.get()
     doLast {
+        check(expectedVersion == "2.1.0rc1") {
+            "Revalidate the OCR JNI ModelWrapper adapter before upgrading LiteRT"
+        }
         val runtime = rootDir.parentFile.resolve(".tmp/ocr-runtime")
         val manifest = runtime.resolve("assets/ocr/runtime.json")
         check(manifest.isFile) {
