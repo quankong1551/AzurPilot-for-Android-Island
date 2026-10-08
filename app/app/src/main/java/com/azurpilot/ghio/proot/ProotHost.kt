@@ -786,7 +786,34 @@ class ProotHost(
                     .forEach { it.delete() }
             }
         }.onFailure { Timber.w(it, "cleanup git locks failed") }
+        runCatching { cleanupAptCache() }.onFailure { Timber.w(it, "cleanup apt cache failed") }
         truncateSessionLogIfStale()
+    }
+
+    /**
+     * 会话停止时回收系统安装缓存，升级 APK 也能清理旧运行环境的重复包。
+     *
+     * 只删除固定 APT 缓存名与 .deb 文件，不跟随文件软链接，不允许路径越过 rootfs。
+     *
+     * Reclaims system installation caches while the session is stopped, including old runtimes
+     * after APK upgrades. Deletes only fixed APT cache names and .deb files, without following
+     * file symlinks or allowing paths outside the rootfs.
+     */
+    private fun cleanupAptCache() {
+        val root = rootfsDir.canonicalFile.toPath()
+        val cache = File(rootfsDir, "var/cache/apt")
+        val archives = File(cache, "archives")
+        val candidates = listOf(File(cache, "pkgcache.bin"), File(cache, "srcpkgcache.bin")) +
+            archives.listFiles().orEmpty().filter { it.name.endsWith(".deb") } +
+            File(archives, "partial").listFiles().orEmpty().filter { it.name.endsWith(".deb") }
+        var freed = 0L
+        for (file in candidates) {
+            if (!Files.isRegularFile(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) ||
+                !file.canonicalFile.toPath().startsWith(root)) continue
+            val bytes = file.length()
+            if (file.delete()) freed += bytes
+        }
+        if (freed > 0) Timber.i("Reclaimed %d bytes of APT installation cache", freed)
     }
 
     /**

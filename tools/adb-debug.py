@@ -13,7 +13,7 @@ import sys
 
 METHODS = ["help", "debug-last", "debug-export", "ocr-status", "ocr-test", "ocr-test-all",
            "ocr-test-cpu", "ocr-test-mixed", "ocr-hardware-acceleration", "ocr-ap-test",
-           "ocr-ap-config-test", "runtime-status", "runtime-start"]
+           "ocr-ap-config-test", "runtime-status", "runtime-start", "storage-status"]
 MODEL_NAMES = {"tiny": "PP-OCRv6_tiny_rec.onnx", "small": "PP-OCRv6_small_rec.onnx",
                "en": "alocr-en-us-v2.6.nvc.onnx", "zh": "alocr-zh-cn-v3.dtk.onnx"}
 

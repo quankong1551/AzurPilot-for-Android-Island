@@ -31,6 +31,7 @@ NPU 可用，硬件性能验证字段仍需单独检查。
 | `ocr-ap-test` | 原 ONNX SHA-256 | 在已运行 AP 中调用实际识别器并检查 `12345` |
 | `ocr-ap-config-test` | 无 | 读取当前运行或选中实例的保存配置，走正常 AlOcr 入口测试四种语言 |
 | `runtime-status` | 无 | 查询运行时阶段和启动意图 |
+| `storage-status` | 无 | 统计 APK、原生库、运行环境、依赖和缓存；软链接不跟随、硬链接不重复计数 |
 | `runtime-start` | 无 | 启动已安装运行时，最多等待 120 秒；不启动游戏任务 |
 | `debug-last` | 无 | 读取最近命令的进度或最终结果；无需等待测试锁 |
 | `debug-export` | 无 | 导出 OCR 阶段、原生日志和最近结果，返回 ZIP 路径 |
@@ -46,6 +47,7 @@ Bundle 并输出 JSON，支持模型简称 `tiny`、`small`、`en`、`zh`。
 
 ```bash
 python tools/adb-debug.py ocr-status
+python tools/adb-debug.py storage-status --output storage.json
 python tools/adb-debug.py ocr-hardware-acceleration off
 python tools/adb-debug.py ocr-hardware-acceleration on
 python tools/adb-debug.py ocr-test-all --output results.json --pull-logs ocr-debug.zip
@@ -123,6 +125,7 @@ A passing CPU test does not establish NPU availability or hardware profiling.
 | `ocr-ap-test` | Original ONNX SHA-256 | Invokes the real recognizer in running AP and checks `12345` |
 | `ocr-ap-config-test` | None | Tests normal AlOcr for four languages using the running or selected instance's saved settings |
 | `runtime-status` | None | Reports runtime phase and start intent |
+| `storage-status` | None | Measures APK, native libraries, runtime, dependencies and caches; skips symlinks and counts hard links once |
 | `runtime-start` | None | Starts the installed runtime, waiting up to 120 seconds without starting game tasks |
 | `debug-last` | None | Reads progress or the last result without waiting for the test lock |
 | `debug-export` | None | Exports OCR stages, native logs, and recent results, returning a ZIP path |
@@ -138,6 +141,7 @@ Bundles into JSON and accepts model aliases `tiny`, `small`, `en`, and `zh`.
 
 ```bash
 python tools/adb-debug.py ocr-status
+python tools/adb-debug.py storage-status --output storage.json
 python tools/adb-debug.py ocr-test-all --output results.json --pull-logs ocr-debug.zip
 python tools/adb-debug.py runtime-start
 python tools/adb-debug.py ocr-ap-test en --output ap-en.json

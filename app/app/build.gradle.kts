@@ -58,7 +58,7 @@ android {
         noCompress += "xz"
         // 机型目录已使用 gzip 压缩，独立扩展名阻止资产合并器自动解压。
         noCompress += "catalog"
-        noCompress += listOf("onnx", "tflite", "mnn")
+        // OCR 通过流解压到校验后的模型缓存，不需要 openFd；压缩不改变模型权重。
     }
 }
 

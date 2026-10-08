@@ -43,6 +43,9 @@ fi
 command -v uv >/dev/null && command -v npm >/dev/null || {
     echo '构建环境需要 uv 和 Node.js/npm' >&2; exit 1;
 }
+command -v strip >/dev/null && command -v readelf >/dev/null || {
+    echo '构建环境需要 binutils（strip / readelf）' >&2; exit 1;
+}
 
 mkdir -p "$WORK_DIR" "$DIST_DIR"
 BASE_ARCHIVE="$WORK_DIR/ubuntu-base.tar.gz"
@@ -94,6 +97,9 @@ guest apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils libglib2.0-0t64 libgomp1 libgl1 \
     libstdc++6 libatomic1 libsm6 libxext6 libsndfile1 libvulkan1 python3 \
     openssh-client
+# apt 缓存只服务安装；留在镜像里会把已安装的包再打包一份。
+guest apt-get clean
+rm -f "$ROOTFS_DIR/var/cache/apt/pkgcache.bin" "$ROOTFS_DIR/var/cache/apt/srcpkgcache.bin"
 # uv 是静态链接单文件，直接从 runner 复制进 rootfs，无需在 guest 内再安装一遍。
 cp -L "$(command -v uv)" "$ROOTFS_DIR/usr/local/bin/uv"
 guest uv python install 3.14.6
@@ -137,8 +143,13 @@ spec.loader.exec_module(mod)
 PY
 rm -rf "$FRONTEND/node_modules"
 
+# 第三方 wheel 的调试信息不参与推理；保持动态符号不变，并在裁剪后真实导入和计算。
+python3 "$REPO_ROOT/rootfs/build/compact-runtime.py" "$ROOTFS_DIR" \
+    --report "$ROOTFS_DIR/opt/azurpilot/RUNTIME_SIZE_REPORT.json"
+
 # 冒烟验证：重依赖可在 guest 内真实导入，且 psutil 子进程枚举确实走兼容层打桩。
-guest /bin/sh -c 'cd /opt/azurpilot && AZURPILOT_ANDROID=1 .venv/bin/python -c "import cv2,numpy,scipy,onnxruntime,rapidocr,ncnn,psutil; import module.api.app, module.device.device, module.ocr.al_ocr; assert psutil.Process.children.__module__ == \"android_process_compat\"; print(\"IMPORTS_OK\")"'
+guest /bin/sh -c 'cd /opt/azurpilot && AZURPILOT_ANDROID=1 .venv/bin/python -c "import cv2,numpy,scipy,onnxruntime,rapidocr,ncnn,psutil,numba,uvloop,av; import module.api.app, module.device.device, module.ocr.al_ocr; assert numba.njit(lambda x: x + 1)(2) == 3; assert scipy.linalg.norm(numpy.array([3.,4.])) == 5.; loop = uvloop.new_event_loop(); loop.close(); assert psutil.Process.children.__module__ == \"android_process_compat\"; print(\"IMPORTS_OK\")"'
+guest /bin/sh -c 'cd /opt/azurpilot && .venv/bin/python azurpilot-ocr-gate.py'
 mkdir -p "$ROOTFS_DIR/opt/azurpilot/log"
 
 # 生成 BUILD_MANIFEST：记录上游提交、ABI 与关键产物哈希；rootfs_version 由上游提交
@@ -172,6 +183,7 @@ manifest = {
     'uv_lock_sha256': sha(root / 'uv.lock'),
     'frontend_sha256': sha(root / 'frontend/dist/index.html'),
     'python_version': '3.14.6',
+    'runtime_compaction': json.loads((root / 'RUNTIME_SIZE_REPORT.json').read_text()),
     'built_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
 }
 (root / 'BUILD_MANIFEST').write_text(json.dumps(manifest, indent=2) + '\n')

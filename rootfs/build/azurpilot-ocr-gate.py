@@ -3,7 +3,7 @@
 
 由 build-azurpilot.sh 装入 rootfs（/opt/azurpilot/azurpilot-ocr-gate.py），须在
 rootfs 内部用其 venv Python 执行（模型与 onnxruntime 都只存在于 rootfs 内）：
-逐一加载三个模型并喂入零张量跑一遍前向，任一模型缺失、无输出或输出含非有限值
+逐一加载四个模型并喂入零张量跑一遍前向，任一模型缺失、无输出或输出含非有限值
 即抛错、非零退出。
 
 Runs a real CPU inference pass over the ONNX OCR models used by AzurPilot as a
@@ -23,9 +23,10 @@ import onnxruntime as ort
 
 
 ROOT = Path(__file__).resolve().parent
-# 上游捆绑的三套识别模型：PP-OCRv6 通用识别 + en-us / zh-CN 两套碧蓝航线专用模型。
+# 四个识别器覆盖 App 内置的原始 ONNX，防止裁剪运行库后 CPU 回退失效。
 MODELS = (
     'bin/ocr_models/ppocr-v6/PP-OCRv6_tiny_rec.onnx',
+    'bin/ocr_models/ppocr-v6/PP-OCRv6_small_rec.onnx',
     'bin/ocr_models/azur_lane/alocr-en-us-v2.6.nvc.onnx',
     'bin/ocr_models/zh-CN/alocr-zh-cn-v3.dtk.onnx',
 )
@@ -49,6 +50,7 @@ def main():
         options = ort.SessionOptions()
         # 3 = 只报错误：冒烟推理时静默 ONNX Runtime 的 INFO/WARNING 日志。
         options.log_severity_level = 3
+        options.intra_op_num_threads = 2
         session = ort.InferenceSession(str(model), sess_options=options,
                                        providers=['CPUExecutionProvider'])
         source = session.get_inputs()[0]

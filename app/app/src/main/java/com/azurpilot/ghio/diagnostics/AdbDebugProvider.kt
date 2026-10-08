@@ -45,7 +45,7 @@ class AdbDebugProvider : ContentProvider() {
     private val commandLock = Semaphore(1)
     private val methods = listOf("help", "debug-last", "debug-export", "ocr-status", "ocr-test",
         "ocr-test-all", "ocr-test-cpu", "ocr-test-mixed", "ocr-hardware-acceleration",
-        "ocr-ap-test", "ocr-ap-config-test", "runtime-status", "runtime-start")
+        "ocr-ap-test", "ocr-ap-config-test", "runtime-status", "runtime-start", "storage-status")
     private val server: OcrServer get() = GlobalContext.get().get()
     private val host: ProotHost get() = GlobalContext.get().get()
     private val controller: AzurPilotRunController get() = GlobalContext.get().get()
@@ -145,6 +145,7 @@ class AdbDebugProvider : ContentProvider() {
                     }
                 }
                 "runtime-status" -> runtimeStatus()
+                "storage-status" -> AppStorageDiagnostics.measure(requireNotNull(context))
                 "runtime-start" -> {
                     host.ensureStarted()
                     withTimeout(120_000) {

@@ -60,6 +60,26 @@ class OcrEngine(
     private val trace = OcrTrace(context)
     private var mediatekAdapter: String? = null
     private var mediatekTargetPolicy: String? = null
+    private var prunedModelCacheBytes = 0L
+    private val modelDirectory by lazy {
+        val directory = File(context.noBackupFilesDir, "ocr-models").apply {
+            check(isDirectory || mkdirs()) { "Could not create OCR model cache" }
+        }
+        val retained = models.values.flatMap { spec ->
+            listOfNotNull(spec, spec["litert"]?.jsonObject, spec["mnn"]?.jsonObject)
+                .map { it.getValue("sha256").jsonPrimitive.content }
+        }.toSet()
+        // 单一 OCR 工作进程首次加载权重前清理；只移除本缓存的旧哈希，不触碰 AP 模型。
+        directory.listFiles().orEmpty().filter {
+            Regex("[a-f0-9]{64}(\\.tmp)?").matches(it.name) && it.name !in retained &&
+                Files.isRegularFile(it.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        }.forEach { file ->
+            val bytes = file.length()
+            if (file.delete()) prunedModelCacheBytes += bytes
+        }
+        if (prunedModelCacheBytes > 0) trace.record("*", "model_cache_pruned", prunedModelCacheBytes.toString())
+        directory
+    }
 
     /**
      * 返回匹配权重的原始元数据；未知哈希拒绝调用。
@@ -113,6 +133,7 @@ class OcrEngine(
         })
         put("nnapi", false)
         put("hardware_acceleration_enabled", hardwareAccelerationEnabled)
+        put("model_cache_pruned_bytes", prunedModelCacheBytes)
         put("validation", buildJsonObject {
             put("finite_outputs_required", true)
             put("matching_output_shape_required", true)
@@ -603,7 +624,7 @@ class OcrEngine(
 
     private fun materialize(spec: JsonObject): File {
         val hash = spec.getValue("sha256").jsonPrimitive.content
-        val directory = File(context.noBackupFilesDir, "ocr-models").apply { mkdirs() }
+        val directory = modelDirectory
         val target = File(directory, hash)
         if (!target.isFile) {
             val temporary = File(directory, "$hash.tmp")
