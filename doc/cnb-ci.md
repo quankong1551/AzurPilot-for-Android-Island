@@ -26,15 +26,18 @@ App 内现有更新源仍使用 GitHub；CNB 下载入口适合手动安装完�
 
 ### 触发与执行
 
-仓库根目录 `.cnb.yml` 声明三种入口：
+仓库根目录 `.cnb.yml` 声明每日和手动构建入口：
 
-- `main` 推送：现有 `.github/workflows/sync-cnb.yml` 将代码同步到 CNB 后触发。
+- `main` 推送：只同步源码，不触发 CNB 构建，避免频繁提交消耗额度。
 - `web_trigger_android`：CNB 主分支页面的「构建 Android 安装包」按钮，可指定
   AzurPilot dev 的完整提交 SHA，也可强制重建。
-- `crontab: 17,47 * * * *`：每半小时检查上游，只在正式凭据齐全且构建输入变化时构建。
+- `crontab: 17 3 * * *`：北京时间每天 03:17 固定构建一次双架构 Runtime 和 APK。
+  定时入口通过 `cnb:apply` 调用 `api_trigger_android`，传入 `FORCE=true`。
+  `git:release` 不支持直接用于 `crontab` 事件，因此完整构建与发布放在自定义事件中。
 
 解析步骤将上游 dev 固定到具体提交，与上一次成功发布的 `latest.json` 比较。
 比较范围为 `app/`、`rootfs/`、`.cnb.yml` 和 `.cnb/`。
+手动构建默认跳过无变化的输入；每日构建不受此比较限制，固定重新构建。
 应用版本规则与 GitHub CI 一致：无 Android 改动时沿用上次应用版本，
 否则使用完整提交历史计算版本名，并保证版本号高于上一发布版。
 
@@ -42,6 +45,9 @@ App 内现有更新源仍使用 GitHub；CNB 下载入口适合手动安装完�
 ARM64 使用 `cnb:arch:arm64:v8`，x86_64 使用 `cnb:arch:amd64`。
 各自通过 Docker 服务启动特权容器，提供原有 rootfs 脚本需要的 bind mount 和 chroot。
 代码与产物用 `docker cp` 传递，不依赖 Docker 服务宿主上的工作区路径。
+
+构建镜像通过 GitHub Releases 下载对应架构的 uv 二进制，避免本次 CNB 构建中
+`ghcr.io` 令牌端点证书校验失败造成的镜像拉取错误。
 
 中间附件以父流水线构建编号命名，保留 7 天。APK 流水线等待两架构均成功后，
 下载本次附件，校验 SHA-256、ABI、上游提交和宿主提交，再构建三种 APK。
@@ -72,10 +78,10 @@ AZURPILOT_DEVICE_REPORT_CERT_BASE64: '<上报证书 base64>'
 AZURPILOT_DEVICE_REPORT_KEY_BASE64: '<上报私钥 base64>'
 ```
 
-本仓 `.cnb/env.yml` 只有空默认值。四个签名值全部为空时，推送和手动构建生成
+本仓 `.cnb/env.yml` 只有空默认值。四个签名值全部为空时，每日和手动构建生成
 带 `-debug.apk` 后缀的调试包，只作为提交附件保留 14 天。
 调试产物生成 `build-info.json`，不会生成正式 `latest.json` 或创建 Release；
-未配置正式凭据的计划任务也不会重复构建调试包。
+每日构建也遵循同样的正式签名规则，不会把调试包作为正式版本发布。
 签名值不完整、上报证书和私钥缺一、正式签名缺少上报凭据时均提前失败。
 
 上报证书在构建前检查有效期和公私钥匹配；APK 构建后验证 OCR、离线机型表及
@@ -88,7 +94,8 @@ AZURPILOT_DEVICE_REPORT_KEY_BASE64: '<上报私钥 base64>'
 创建 Release、上传附件全部成功后才标记为 Latest，旧版本保留用于回滚。
 `latest.json` 中的下载 URL 指向该版本的 CNB 附件，并保留 arm64 的旧版兼容字段。
 维护者可按需要手动清理历史 Release。
-流水线使用 6 小时互斥锁，后续触发等待当前构建完成。
+完整构建使用 6 小时互斥锁，手动和每日构建按顺序执行。
+每日调度入口不持有该锁，避免同步等待子流水线时形成死锁。
 
 原有 GitHub 构建、上游检查和代码同步工作流继续保留。
 CNB 发布标签不会由当前同步工作流修剪。
@@ -131,16 +138,18 @@ A first installation using the slim APK still downloads its runtime through the 
 
 ### Triggers and execution
 
-The repository's `.cnb.yml` provides three entry points:
+The repository's `.cnb.yml` provides daily and manual builds:
 
-- `main` pushes, including code mirrored by `.github/workflows/sync-cnb.yml`.
+- `main` pushes only synchronize source and do not start CNB builds, conserving quota.
 - `web_trigger_android`, exposed through the Android build button on the CNB main branch.
   It accepts a full AzurPilot dev commit SHA and a force-rebuild switch.
-- `crontab: 17,47 * * * *`, checking upstream every half hour and building only when release
-  credentials are complete and artifact inputs have changed.
+- `crontab: 17 3 * * *`, rebuilding both Runtime architectures and APKs once a day at 03:17
+  Asia/Shanghai. The scheduler calls `api_trigger_android` through `cnb:apply` with `FORCE=true`.
+  Since `git:release` does not support `crontab` directly, the custom event builds and publishes.
 
 Resolution pins upstream dev to a commit and compares it against the last published `latest.json`.
 Input comparisons cover `app/`, `rootfs/`, `.cnb.yml`, and `.cnb/`.
+Manual builds skip unchanged inputs by default; daily builds always rebuild.
 App versions follow GitHub CI: retain the previous app version when Android inputs are unchanged;
 otherwise derive the name from full Git history and advance beyond the previous version code.
 
@@ -149,6 +158,9 @@ Synchronous `cnb:apply` runs both native child pipelines in `.cnb/rootfs.yml`:
 Each uses the Docker service to start a privileged container for the existing rootfs script's
 bind mounts and chroot. Code and outputs move through `docker cp`, avoiding workspace-path
 assumptions about the Docker service host.
+
+Build images download the matching uv binary from GitHub Releases, avoiding the ghcr.io token
+endpoint certificate-verification failure observed in this CNB build.
 
 Intermediate attachments include the parent build ID and expire after seven days.
 After both architectures succeed, the APK pipeline downloads this build's attachments and verifies
@@ -182,9 +194,9 @@ AZURPILOT_DEVICE_REPORT_KEY_BASE64: '<reporting private key base64>'
 ```
 
 The checked-in `.cnb/env.yml` contains empty defaults. When all four signing values are empty,
-push and manual builds produce `-debug.apk` files kept as commit attachments for 14 days.
+daily and manual builds produce `-debug.apk` files kept as commit attachments for 14 days.
 Debug outputs include `build-info.json`, never a release `latest.json` or a Release.
-Scheduled runs skip debug builds without release credentials.
+Daily builds follow the same signing rules and never publish debug APKs as release versions.
 Partial signing inputs, unpaired reporting credentials, or missing reporting credentials for
 signed builds fail before runtime construction.
 
@@ -199,7 +211,8 @@ Each signed release gets a unique `cnb-android-<build-id>` tag.
 It becomes Latest only after release creation and attachment uploads succeed. Earlier releases
 remain available for rollback. Download URLs in `latest.json` point at that version's CNB
 attachments and retain legacy arm64 fields. Maintainers can remove older releases when needed.
-A six-hour pipeline lock makes later triggers wait for the current build.
+A six-hour lock serializes complete builds from daily and manual triggers. The scheduler itself
+does not hold that lock, avoiding a deadlock while synchronously waiting for its child pipeline.
 
 Existing GitHub build, upstream-check, and mirror workflows remain available.
 The current mirror workflow does not prune CNB release tags.

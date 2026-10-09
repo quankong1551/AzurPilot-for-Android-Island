@@ -122,9 +122,6 @@ def resolve() -> None:
                              ("app", "rootfs", ".cnb.yml", ".cnb"))
     should_build = (env.get("FORCE", "").lower() == "true" or inputs_changed
                     or previous.get("azurpilotCommit") != ref)
-    # 尚未配置正式密钥时，计划任务不能每半小时重复构建无法发布的调试包。
-    if env.get("CNB_IS_CRONEVENT") == "true" and not ready:
-        should_build = False
     print(f"Upstream: {ref}; inputs changed: {inputs_changed}; build: {should_build}; "
           f"version: {name} ({code}); signing ready: {ready}")
     outputs = {

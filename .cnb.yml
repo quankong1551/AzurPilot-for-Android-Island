@@ -1,7 +1,7 @@
 # CNB 原生构建与国内下载发布，维护说明见 doc/cnb-ci.md。
 # CNB native builds and domestic downloads; see doc/cnb-ci.md for setup.
 main:
-  push: &android-build
+  web_trigger_android: &android-build
     - name: android
       runner:
         tags: cnb:arch:amd64
@@ -94,5 +94,22 @@ main:
       endStages:
         - name: Clear build credentials
           script: bash .cnb/scripts/cleanup.sh
-  web_trigger_android: *android-build
-  'crontab: 17,47 * * * *': *android-build
+  api_trigger_android: *android-build
+  # 定时入口不持有构建锁；由子流水线串行构建并发布，避免等待同一把锁。
+  # The scheduler leaves locking to the child pipeline that builds and publishes.
+  'crontab: 17 3 * * *':
+    - name: daily-android
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 1
+      docker:
+        image: node:24-bookworm-slim
+      env:
+        FORCE: "true"
+      stages:
+        - name: Build and publish daily artifacts
+          type: cnb:apply
+          options:
+            event: api_trigger_android
+            sync: true
+          timeout: 360m

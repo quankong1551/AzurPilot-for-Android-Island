@@ -3,6 +3,8 @@
 Verifies CNB artifact provenance, signing routes, and app-version compatibility.
 """
 
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import sys
@@ -112,6 +114,24 @@ class ArtifactTest(unittest.TestCase):
                     side_effect=HTTPError("url", status, "failed", {}, None)):
                 with self.assertRaises(HTTPError):
                     artifacts.previous_release("https://cnb.cool/example/repo")
+
+    def test_daily_force_rebuilds_unchanged_inputs_while_manual_build_skips_them(self):
+        """每日构建固定执行，普通手动构建仍可跳过无变化输入。
+
+        Daily builds always run, while ordinary manual builds may skip unchanged inputs.
+        """
+        previous = {"androidHostCommit": "a" * 40, "azurpilotCommit": "b" * 40}
+        env = {"CNB_BUILD_ID": "cnb-daily-123", "CNB_REPO_SLUG": "azurpilot/test",
+               "CNB_WEB_ENDPOINT": "https://cnb.cool", "AZURPILOT_REF": "b" * 40}
+        for force, expected in (("true", "true"), ("false", "false")):
+            with self.subTest(force=force), patch.dict(artifacts.os.environ, {**env, "FORCE": force}, clear=True), \
+                    patch.object(artifacts, "previous_release", return_value=previous), \
+                    patch.object(artifacts, "version_inputs", return_value=(1700000000, "1.2.100", "a" * 40)), \
+                    patch.object(artifacts, "changed", return_value=False):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    artifacts.resolve()
+                self.assertIn(f"##[set-output SHOULD_BUILD={expected}]", output.getvalue())
 
     def test_runtime_only_build_preserves_app_version(self):
         """运行时变化不前进应用版本。 / Runtime-only builds retain the previous app version."""

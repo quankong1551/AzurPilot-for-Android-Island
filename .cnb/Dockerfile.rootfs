@@ -1,10 +1,25 @@
 # rootfs 在原生架构的特权容器内构建，chroot 无需指令模拟。
 # Builds rootfs in a privileged container of the native architecture, without emulation.
-FROM ghcr.io/astral-sh/uv:latest AS uv
+# uv 从 GitHub Releases 直接安装：CNB 构建机无法通过 TLS 校验 ghcr.io 的令牌端点，
+# 拉取 ghcr.io/astral-sh/uv 会因 x509 证书不受信而失败。
+# uv is installed from GitHub Releases: CNB runners cannot verify ghcr.io's token
+# endpoint over TLS, so pulling ghcr.io/astral-sh/uv fails with an untrusted x509 chain.
 FROM node:24-bookworm-slim
-COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git python3 xz-utils binutils util-linux gcc \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$(dpkg --print-architecture)" in \
+         arm64) UV_ARCH=aarch64 ;; \
+         amd64) UV_ARCH=x86_64 ;; \
+         *) echo "Unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+       esac \
+    && curl -fL --retry 3 \
+      "https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}-unknown-linux-gnu.tar.gz" \
+      -o /tmp/uv.tar.gz \
+    && tar -xzf /tmp/uv.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/uv-${UV_ARCH}-unknown-linux-gnu/uv" /usr/local/bin/uv \
+    && install -m 0755 "/tmp/uv-${UV_ARCH}-unknown-linux-gnu/uvx" /usr/local/bin/uvx \
+    && rm -rf /tmp/uv.tar.gz "/tmp/uv-${UV_ARCH}-unknown-linux-gnu" \
+    && uv --version
 WORKDIR /workspace
 RUN git config --global --add safe.directory /workspace
