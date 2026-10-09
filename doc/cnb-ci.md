@@ -46,7 +46,8 @@ ARM64 使用 `cnb:arch:arm64:v8`，x86_64 使用 `cnb:arch:amd64`。
 中间附件以父流水线构建编号命名，保留 7 天。APK 流水线等待两架构均成功后，
 下载本次附件，校验 SHA-256、ABI、上游提交和宿主提交，再构建三种 APK。
 Gradle 使用 JDK 25 守护进程，Java / JVM 编译目标仍为 17。
-镜像安装 Compile SDK 37、Build Tools 36.0.0 和 CMake 3.22.1；NDK 由 AGP 安装。
+镜像使用 Command-line Tools 23.0，安装 Compile SDK 37（官方包名
+`platforms;android-37.0`）、Build Tools 36.0.0 和 CMake 3.22.1；NDK 由 AGP 安装。
 
 ### 配置正式凭据
 
@@ -153,7 +154,8 @@ Intermediate attachments include the parent build ID and expire after seven days
 After both architectures succeed, the APK pipeline downloads this build's attachments and verifies
 checksums, ABI, upstream commit, and host commit before building the three APKs.
 Gradle runs on a JDK 25 daemon while Java / JVM compilation still targets 17.
-The image installs Compile SDK 37, Build Tools 36.0.0, and CMake 3.22.1; AGP installs its NDK.
+The image uses Command-line Tools 23.0 and installs Compile SDK 37 (the official package name is
+`platforms;android-37.0`), Build Tools 36.0.0, and CMake 3.22.1; AGP installs its NDK.
 
 ### Release credentials
 

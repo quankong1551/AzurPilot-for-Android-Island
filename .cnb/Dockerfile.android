@@ -13,11 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p "${ANDROID_HOME}/cmdline-tools" \
     && curl -fL --retry 3 \
-      https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+      https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip \
       -o /tmp/android-tools.zip \
     && unzip -q /tmp/android-tools.zip -d "${ANDROID_HOME}/cmdline-tools" \
     && mv "${ANDROID_HOME}/cmdline-tools/cmdline-tools" "${ANDROID_HOME}/cmdline-tools/latest" \
     && rm /tmp/android-tools.zip \
     && yes | sdkmanager --licenses >/dev/null
+# SDK 37 的官方包名包含次版本，需使用支持该格式的新版命令行工具。
 # NDK 由 AGP 按其默认版本安装，避免另装不一致的版本。
-RUN sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "platform-tools"
+RUN sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "cmake;3.22.1" "platform-tools"
