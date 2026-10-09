@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""裁剪 Python 运行环境的 ELF 调试信息，保持动态链接接口与文件权限。
+"""裁剪 Python wheel 的 ELF 调试信息，保留完整的托管解释器分发目录。
 
-Compacts Python runtime ELF files while preserving dynamic interfaces and file permissions.
+Compacts Python wheel ELF files while preserving the complete managed interpreter distribution.
 """
 
 import argparse
@@ -61,17 +61,20 @@ def elf_identity(path):
 
 
 def compact(root, strip="strip", readelf="readelf"):
-    """只处理 rootfs 内的 Python 分发目录，返回逻辑字节节省量。
+    """只处理 rootfs 内的虚拟环境，返回逻辑字节节省量。
 
-    Processes only Python distribution directories inside the rootfs and returns logical savings.
+    Processes only virtual environments inside the rootfs and returns logical savings.
     """
     root = Path(root).resolve(strict=True)
     if root == Path(root.anchor) or not (root / "opt/azurpilot").is_dir():
         raise ValueError("Expected a staged AzurPilot rootfs, not a filesystem root")
-    roots = [root / "opt/azurpilot/.venv", root / "opt/azurpilot-venv", root / "opt/uv-python"]
-    for directory in roots:
+    roots = [root / "opt/azurpilot/.venv", root / "opt/azurpilot-venv"]
+    python_distribution = root / "opt/uv-python"
+    for directory in [*roots, python_distribution]:
         if (directory.exists() or directory.is_symlink()) and not directory.resolve().is_relative_to(root):
             raise ValueError("Python distribution must stay inside the staged rootfs")
+    # uv 的可重定位 CPython 经 strip 后可能损坏版本信息；动态符号相同也不足以保证可运行。
+    # 保留解释器、libpython 和标准库扩展，只裁剪 wheel，并继续验证分发目录没有越界。
     native = elf_identity(sys.executable)
     if native is None:
         raise ValueError("Compaction requires native ELF Python and binutils")

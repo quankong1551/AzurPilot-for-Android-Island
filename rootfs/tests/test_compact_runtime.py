@@ -24,6 +24,31 @@ SPEC.loader.exec_module(compact_runtime)
 class CompactRuntimeTest(unittest.TestCase):
     """使用真实 ELF 测试导出符号和缓存隔离。 / Tests real ELF exports and cache isolation."""
 
+    def test_managed_interpreter_distribution_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "rootfs"
+            (root / "opt/azurpilot/.venv/bin").mkdir(parents=True)
+            distribution = root / "opt/uv-python/cpython-3.14.6-linux-x86_64-gnu"
+            interpreter = distribution / "bin/python3.14"
+            library = distribution / "lib/libpython3.14.so.1.0"
+            extension = distribution / "lib/python3.14/lib-dynload/_ssl.so"
+            source = base / "source.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for target in (interpreter, library, extension):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["cc", "-g", str(source), "-o", str(target)], check=True)
+            os.symlink(interpreter, root / "opt/azurpilot/.venv/bin/python")
+            originals = {target: target.read_bytes() for target in (interpreter, library, extension)}
+            with mock.patch.object(compact_runtime.subprocess, "run", wraps=subprocess.run) as run:
+                report = compact_runtime.compact(root)
+            self.assertEqual(report["compacted_files"], 0)
+            self.assertEqual(report["saved_bytes"], 0)
+            self.assertFalse(run.called)
+            for target, original in originals.items():
+                self.assertEqual(target.read_bytes(), original)
+            subprocess.run([str(root / "opt/azurpilot/.venv/bin/python")], check=True)
+
     def test_library_runs_and_cache_and_symlinks_are_preserved(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
