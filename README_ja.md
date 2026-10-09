@@ -390,6 +390,8 @@ graph TD
 
 ## クイックスタート
 
+CNB の正式ビルド完了後は、[CNB ダウンロード](https://cnb.cool/azurpilot/AzurPilot-for-Android/-/releases)からも APK を取得できます。初回は端末のアーキテクチャに対応する完全版を選んでください。[ビルド設定](doc/cnb-ci.md)。
+
 <table width="100%">
   <tr>
     <td width="25%" valign="top">

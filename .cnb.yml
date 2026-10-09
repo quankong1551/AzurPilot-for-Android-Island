@@ -1,0 +1,98 @@
+# CNB 原生构建与国内下载发布，维护说明见 doc/cnb-ci.md。
+# CNB native builds and domestic downloads; see doc/cnb-ci.md for setup.
+main:
+  push: &android-build
+    - name: android
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 8
+      docker:
+        build: .cnb/Dockerfile.android
+        volumes:
+          - /root/.gradle:cow
+          - /root/.cache/uv:cow
+          - /tmp/fetch-proot-libs-x86_64:cow
+      imports:
+        - .cnb/env.yml
+        # 在私密仓库配置同一套正式签名和上报凭据后启用，不能在本仓填真实密钥。
+        # - https://cnb.cool/azurpilot/build-secrets/-/blob/main/android.yml
+      lock:
+        key: azurpilot-android-cnb
+        expires: 21600
+        timeout: 21600
+        wait: true
+        cancel-in-progress: false
+      stages:
+        - name: Resolve upstream and release inputs
+          script: bash .cnb/scripts/prepare.sh
+          exports:
+            SHOULD_BUILD: SHOULD_BUILD
+            SIGNING_READY: SIGNING_READY
+            AZURPILOT_REF: AZURPILOT_REF
+            BUILD_KEY: BUILD_KEY
+            APP_VERSION_CODE: APP_VERSION_CODE
+            APP_VERSION_NAME: APP_VERSION_NAME
+            APP_COMMIT: APP_COMMIT
+            RELEASE_TAG: RELEASE_TAG
+        - name: Build both native runtimes
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          type: cnb:apply
+          options:
+            configFrom: .cnb/rootfs.yml
+            event: api_trigger_rootfs
+            sync: true
+          timeout: 180m
+        - name: Download this build's runtimes
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          image: cnbcool/attachments:latest
+          settings:
+            type: DOWNLOAD
+            commit: $CNB_COMMIT
+            attachments:
+              - cnb-rootfs-${BUILD_KEY}-arm64-v8a.tar
+              - cnb-rootfs-${BUILD_KEY}-x86_64.tar
+        - name: Verify and unpack runtimes
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          script: bash .cnb/scripts/unpack-rootfs.sh
+        - name: Build and verify APKs
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          script: bash .cnb/scripts/build-apks.sh
+          timeout: 120m
+        - name: Prepare download manifest and checksums
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          script: python3 .cnb/scripts/artifacts.py release
+        - name: Keep build artifacts on the commit
+          if: '[ "$SHOULD_BUILD" = "true" ]'
+          image: cnbcool/attachments:latest
+          settings:
+            commit: $CNB_COMMIT
+            attachments: dist/release/*
+            ttl: 14
+        - name: Create domestic download release
+          if: '[ "$SHOULD_BUILD" = "true" ] && [ "$SIGNING_READY" = "true" ]'
+          type: git:release
+          options:
+            tag: $RELEASE_TAG
+            title: AzurPilot Android ${APP_VERSION_NAME}
+            descriptionFromFile: .tmp/cnb-release-notes.md
+            latest: false
+        - name: Upload verified release files
+          if: '[ "$SHOULD_BUILD" = "true" ] && [ "$SIGNING_READY" = "true" ]'
+          image: cnbcool/attachments:latest
+          settings:
+            tag: $RELEASE_TAG
+            attachments: dist/release/*
+        - name: Make the completed release the latest
+          if: '[ "$SHOULD_BUILD" = "true" ] && [ "$SIGNING_READY" = "true" ]'
+          type: git:release
+          options:
+            tag: $RELEASE_TAG
+            title: AzurPilot Android ${APP_VERSION_NAME}
+            descriptionFromFile: .tmp/cnb-release-notes.md
+            overlying: true
+            latest: true
+      endStages:
+        - name: Clear build credentials
+          script: bash .cnb/scripts/cleanup.sh
+  web_trigger_android: *android-build
+  'crontab: 17,47 * * * *': *android-build

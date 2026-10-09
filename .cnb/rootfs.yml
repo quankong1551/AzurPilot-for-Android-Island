@@ -1,0 +1,35 @@
+# 子流水线沿用父流水线解析的上游提交和产物标识。
+# Child pipelines use the upstream commit and artifact key resolved by the parent pipeline.
+$:
+  api_trigger_rootfs:
+    - name: rootfs-arm64-v8a
+      runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 8
+      docker:
+        image: node:24-bookworm-slim
+      services:
+        - docker
+      env:
+        AZURPILOT_ABI: arm64-v8a
+      stages: &rootfs-stages
+        - name: Build native runtime with mount permissions
+          script: bash .cnb/scripts/build-rootfs.sh
+          timeout: 150m
+        - name: Upload isolated runtime artifact
+          image: cnbcool/attachments:latest
+          settings:
+            commit: $CNB_COMMIT
+            attachments: cnb-rootfs-${BUILD_KEY}-${AZURPILOT_ABI}.tar
+            ttl: 7
+    - name: rootfs-x86_64
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 8
+      docker:
+        image: node:24-bookworm-slim
+      services:
+        - docker
+      env:
+        AZURPILOT_ABI: x86_64
+      stages: *rootfs-stages

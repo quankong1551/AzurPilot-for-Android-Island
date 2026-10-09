@@ -1,0 +1,10 @@
+# rootfs 在原生架构的特权容器内构建，chroot 无需指令模拟。
+# Builds rootfs in a privileged container of the native architecture, without emulation.
+FROM ghcr.io/astral-sh/uv:latest AS uv
+FROM node:24-bookworm-slim
+COPY --from=uv /uv /usr/local/bin/uv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git python3 xz-utils binutils util-linux gcc \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+RUN git config --global --add safe.directory /workspace

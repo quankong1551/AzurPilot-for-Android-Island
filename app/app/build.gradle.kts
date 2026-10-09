@@ -102,9 +102,9 @@ val syncAndroidHostOverlay = tasks.register<SyncAndroidHostOverlayTask>("syncAnd
  */
 @org.gradle.work.DisableCachingByDefault(because = "Contains private client credentials")
 abstract class SyncDeviceReportCredentialsTask : DefaultTask() {
-    /** 只允许 GitHub Actions 打包共享私钥。 / Only GitHub Actions may bundle the shared private key. */
+    /** 只允许正式 CI 打包共享私钥。 / Only official CI builds may bundle the shared private key. */
     @get:Input
-    abstract val githubActionsBuild: Property<Boolean>
+    abstract val officialCiBuild: Property<Boolean>
     /** 构建时凭据来源。 / Build-time credential source. */
     @get:Internal
     abstract val credentialsDir: DirectoryProperty
@@ -128,7 +128,9 @@ abstract class SyncDeviceReportCredentialsTask : DefaultTask() {
         val cert = source.resolve("client-cert.pem")
         val key = source.resolve("client-key.pem")
         check(cert.isFile == key.isFile) { "Device report certificate and key must be provided together" }
-        check(!cert.isFile || githubActionsBuild.get()) { "Device report credentials may only be bundled by GitHub Actions" }
+        check(!cert.isFile || officialCiBuild.get()) {
+            "Device report credentials may only be bundled by GitHub Actions or CNB"
+        }
         val out = outputDir.get().asFile.resolve("device-report")
         out.deleteRecursively()
         if (cert.isFile) {
@@ -143,7 +145,12 @@ abstract class SyncDeviceReportCredentialsTask : DefaultTask() {
 }
 
 val syncDeviceReportCredentials = tasks.register<SyncDeviceReportCredentialsTask>("syncDeviceReportCredentials") {
-    githubActionsBuild.set(providers.environmentVariable("GITHUB_ACTIONS").map { it == "true" }.orElse(false))
+    officialCiBuild.set(
+        providers.environmentVariable("GITHUB_ACTIONS").orElse("")
+            .zip(providers.environmentVariable("CNB").orElse("")) { github, cnb ->
+                github == "true" || cnb == "true"
+            }
+    )
     credentialsDir.set(rootDir.parentFile.resolve(".tmp/report-credentials"))
     outputDir.set(layout.buildDirectory.dir("generated/deviceReportCredentials"))
 }

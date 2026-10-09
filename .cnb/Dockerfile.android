@@ -1,0 +1,23 @@
+# 提供与 Gradle 守护进程一致的 JDK 25 和 Android SDK。
+# Provides JDK 25 matching the Gradle daemon and the Android SDK.
+FROM ghcr.io/astral-sh/uv:latest AS uv
+FROM eclipse-temurin:25-jdk-noble
+COPY --from=uv /uv /usr/local/bin/uv
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git python3 unzip xz-utils binutils openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p "${ANDROID_HOME}/cmdline-tools" \
+    && curl -fL --retry 3 \
+      https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+      -o /tmp/android-tools.zip \
+    && unzip -q /tmp/android-tools.zip -d "${ANDROID_HOME}/cmdline-tools" \
+    && mv "${ANDROID_HOME}/cmdline-tools/cmdline-tools" "${ANDROID_HOME}/cmdline-tools/latest" \
+    && rm /tmp/android-tools.zip \
+    && yes | sdkmanager --licenses >/dev/null
+# NDK 由 AGP 按其默认版本安装，避免另装不一致的版本。
+RUN sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "platform-tools"
