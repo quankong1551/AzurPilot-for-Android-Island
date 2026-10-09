@@ -43,8 +43,11 @@ App 内现有更新源仍使用 GitHub；CNB 下载入口适合手动安装完�
 
 `cnb:apply` 同步运行 `.cnb/rootfs.yml` 的两个原生子流水线：
 ARM64 使用 `cnb:arch:arm64:v8`，x86_64 使用 `cnb:arch:amd64`。
-各自通过 Docker 服务启动特权容器，提供原有 rootfs 脚本需要的 bind mount 和 chroot。
-代码与产物用 `docker cp` 传递，不依赖 Docker 服务宿主上的工作区路径。
+各自用 `.cnb/Dockerfile.rootfs` 作为构建环境，通过 `ROOTFS_EXECUTOR=proot`
+运行共用 rootfs 脚本。PRoot 使用用户态路径绑定，不需要嵌套 Docker、特权容器
+或内核挂载，避免 CNB 拒绝挂载 `/sys`。GitHub CI 默认仍使用 chroot。
+构建环境从固定提交编译 PRoot 5.4.1，支持现代 glibc 的 `clone3` 子进程调用。
+DNS 和 uv 缓存只在 guest 执行期间绑定，不进入最终 rootfs。
 
 构建镜像通过 GitHub Releases 下载对应架构的 uv 二进制，避免本次 CNB 构建中
 `ghcr.io` 令牌端点证书校验失败造成的镜像拉取错误。
@@ -155,9 +158,12 @@ otherwise derive the name from full Git history and advance beyond the previous 
 
 Synchronous `cnb:apply` runs both native child pipelines in `.cnb/rootfs.yml`:
 `cnb:arch:arm64:v8` for ARM64 and `cnb:arch:amd64` for x86_64.
-Each uses the Docker service to start a privileged container for the existing rootfs script's
-bind mounts and chroot. Code and outputs move through `docker cp`, avoiding workspace-path
-assumptions about the Docker service host.
+Each uses `.cnb/Dockerfile.rootfs` as its build environment and runs the shared rootfs script
+with `ROOTFS_EXECUTOR=proot`. PRoot uses user-space path bindings, avoiding nested Docker,
+privileged containers, and kernel mounts that CNB rejects for `/sys`.
+GitHub CI still defaults to chroot. The environment compiles PRoot 5.4.1 from a pinned commit
+to support modern glibc's `clone3` subprocess calls. DNS and uv caches are bound only during
+guest execution and stay out of the final rootfs.
 
 Build images download the matching uv binary from GitHub Releases, avoiding the ghcr.io token
 endpoint certificate-verification failure observed in this CNB build.

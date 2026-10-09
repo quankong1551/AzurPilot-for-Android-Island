@@ -5,7 +5,8 @@
 #   x86_64           → Ubuntu amd64 base，需原生 x86_64 runner（ubuntu-24.04）
 # proot 不做指令翻译，rootfs 与设备 ABI 必须一一对应；CI 按矩阵各出一份并分别发布。
 # 环境变量（均有默认值）：AZURPILOT_ABI / AZURPILOT_REF / AZURPILOT_REPO /
-#   UBUNTU_BASE / WORK_DIR / DIST_DIR；需要 root（自动经 sudo 重入）、uv 与 npm。
+#   UBUNTU_BASE / WORK_DIR / DIST_DIR / ROOTFS_EXECUTOR（chroot 默认，或 proot）；
+#   需要 uv 与 npm；chroot 需要 root（自动经 sudo 重入），proot 不需要挂载权限。
 #
 # Builds the AzurPilot Android rootfs. Invoked by the build job of the rootfs.yml
 # CI workflow; can also be run manually. The target architecture comes from
@@ -15,8 +16,9 @@
 #   (ubuntu-24.04). PRoot does no instruction translation, so the rootfs ABI must
 #   match the device exactly; CI builds and publishes one artifact per matrix
 #   entry. Environment (all defaulted): AZURPILOT_ABI / AZURPILOT_REF /
-#   AZURPILOT_REPO / UBUNTU_BASE / WORK_DIR / DIST_DIR; requires root (re-execs
-#   itself through sudo), uv and npm.
+#   AZURPILOT_REPO / UBUNTU_BASE / WORK_DIR / DIST_DIR / ROOTFS_EXECUTOR (chroot
+#   by default, or proot). Requires uv and npm; chroot requires root (re-execs
+#   through sudo), while proot requires no mount privileges.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -27,6 +29,11 @@ SOURCE_REPO="${AZURPILOT_REPO:-https://github.com/wess09/AzurPilot.git}"
 # 上游源码固定到具体提交，保证产物可复现；CI 会用 AZURPILOT_REF 覆盖为最新解析结果。
 SOURCE_REF="${AZURPILOT_REF:-1841cb1941751a81ab70668b4d2383c369c4506e}"
 TARGET_ABI="${AZURPILOT_ABI:-arm64-v8a}"
+ROOTFS_EXECUTOR="${ROOTFS_EXECUTOR:-chroot}"
+case "$ROOTFS_EXECUTOR" in
+    chroot|proot) ;;
+    *) echo "Unsupported rootfs executor: $ROOTFS_EXECUTOR" >&2; exit 1 ;;
+esac
 
 case "$TARGET_ABI" in
     arm64-v8a) UBUNTU_ARCH=arm64;  HOST_ARCH=aarch64 ;;
@@ -35,17 +42,20 @@ case "$TARGET_ABI" in
 esac
 BASE_URL="${UBUNTU_BASE:-https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-$UBUNTU_ARCH.tar.gz}"
 
-if [[ $(id -u) -ne 0 ]]; then
+if [[ $ROOTFS_EXECUTOR == chroot && $(id -u) -ne 0 ]]; then
     # setup-node/setup-uv 在 runner 的工具目录注入 PATH；sudo 默认 secure_path 会丢掉它们。
     exec sudo -E env "PATH=$PATH" "AZURPILOT_ABI=$TARGET_ABI" bash "$0" "$@"
 fi
 [[ $(uname -m) == "$HOST_ARCH" ]] || { echo "构建 $TARGET_ABI rootfs 需要原生 $HOST_ARCH runner，当前 $(uname -m)" >&2; exit 1; }
-command -v uv >/dev/null && command -v npm >/dev/null || {
+if ! command -v uv >/dev/null || ! command -v npm >/dev/null; then
     echo '构建环境需要 uv 和 Node.js/npm' >&2; exit 1;
-}
-command -v strip >/dev/null && command -v readelf >/dev/null || {
+fi
+if ! command -v strip >/dev/null || ! command -v readelf >/dev/null; then
     echo '构建环境需要 binutils（strip / readelf）' >&2; exit 1;
-}
+fi
+if [[ $ROOTFS_EXECUTOR == proot ]] && ! command -v proot >/dev/null; then
+    echo 'PRoot executor requires proot in PATH' >&2; exit 1;
+fi
 
 mkdir -p "$WORK_DIR" "$DIST_DIR"
 BASE_ARCHIVE="$WORK_DIR/ubuntu-base.tar.gz"
@@ -54,42 +64,17 @@ if [[ ! -s $BASE_ARCHIVE ]]; then
 fi
 rm -rf -- "${ROOTFS_DIR:?}/"
 mkdir -p "$ROOTFS_DIR"
-tar -xzf "$BASE_ARCHIVE" -C "$ROOTFS_DIR"
-
-MOUNTS=()
-bind_mount() {
-    if [[ -d $1 ]]; then mkdir -p "$2"; else mkdir -p "$(dirname "$2")"; touch "$2"; fi
-    mount --bind "$1" "$2"
-    MOUNTS+=("$2")
-}
-unmount_all() {
-    local i
-    for ((i=${#MOUNTS[@]}-1;i>=0;i--)); do umount -lf "${MOUNTS[i]}" || true; done
-    MOUNTS=()
-}
-trap unmount_all EXIT
-
-# DNS 只服务构建期 chroot：bind 挂载宿主侧文件，卸载后 rootfs 里只留下空文件，
-# 不把固定 DNS 打进发布的镜像。
-rm -f "$ROOTFS_DIR/etc/resolv.conf"
-printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$WORK_DIR/resolv.conf"
-touch "$ROOTFS_DIR/etc/resolv.conf"
-bind_mount "$WORK_DIR/resolv.conf" "$ROOTFS_DIR/etc/resolv.conf"
-for d in dev dev/pts proc sys; do bind_mount "/$d" "$ROOTFS_DIR/$d"; done
-
-# uv 的下载缓存外移到宿主：内容寻址，CI 可跨提交复用，省掉每次重下平台 wheel。
-# 只能外移 uv-cache（打包前本来就要删）；UV_PYTHON_INSTALL_DIR 要随 rootfs 出厂，动不得。
-mkdir -p "$WORK_DIR/uv-cache"
-bind_mount "$WORK_DIR/uv-cache" "$ROOTFS_DIR/opt/uv-cache"
-
-guest() {
-    # env -i 提供最小环境：宿主变量一律不泄入 chroot，uv 的路径策略在此集中声明。
-    chroot "$ROOTFS_DIR" /usr/bin/env -i HOME=/root LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-        DEBIAN_FRONTEND=noninteractive GIT_TERMINAL_PROMPT=0 \
-        UV_PYTHON_INSTALL_DIR=/opt/uv-python UV_CACHE_DIR=/opt/uv-cache \
-        UV_PYTHON_PREFERENCE=only-managed UV_NO_PROGRESS=1 \
-        PATH=/usr/local/bin:/usr/bin:/bin "$@"
-}
+if [[ $ROOTFS_EXECUTOR == proot ]]; then
+    # /dev 由 PRoot 绑定提供，跳过设备节点可让普通用户解压 Ubuntu base。
+    tar -xzf "$BASE_ARCHIVE" -C "$ROOTFS_DIR" --exclude='./dev/*' --exclude='dev/*'
+else
+    tar -xzf "$BASE_ARCHIVE" -C "$ROOTFS_DIR"
+fi
+# shellcheck source=rootfs/build/guest-env.sh
+source "$REPO_ROOT/rootfs/build/guest-env.sh"
+trap cleanup_guest EXIT
+setup_guest
+echo "Rootfs guest executor: $ROOTFS_EXECUTOR ($TARGET_ABI)"
 
 guest apt-get update
 # 远程访问/模拟器隧道走上游 module/base/ssh.py，直接 Popen 系统 ssh（无捆绑二进制）
@@ -207,7 +192,7 @@ tar -cJf "$DIST_DIR/frontend-${SOURCE_COMMIT}.tar.xz" -C "$ROOTFS_DIR/opt/azurpi
 mv "$ROOTFS_DIR/opt/azurpilot/.venv" "$ROOTFS_DIR/opt/azurpilot-venv"
 ln -s ../azurpilot-venv "$ROOTFS_DIR/opt/azurpilot/.venv"
 
-unmount_all
+cleanup_guest
 for d in dev dev/pts proc sys etc/resolv.conf opt/uv-cache; do
     if mountpoint -q "$ROOTFS_DIR/$d"; then echo "挂载未清理: $d" >&2; exit 1; fi
 done
