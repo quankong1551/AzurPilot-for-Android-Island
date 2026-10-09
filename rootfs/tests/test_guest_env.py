@@ -40,6 +40,9 @@ class GuestEnvironmentTest(unittest.TestCase):
             target.chmod(0o755)
         source = self.base / "probe.c"
         source.write_text(r'''
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +51,12 @@ class GuestEnvironmentTest(unittest.TestCase):
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "fail")) return 37;
     if (argc > 1 && !strcmp(argv[1], "child")) return getuid() == 0 ? 0 : 20;
+    if (argc > 1 && !strcmp(argv[1], "permissions")) {
+        if (faccessat(AT_FDCWD, "/guest-marker", R_OK, AT_EACCESS)) return 30;
+        if (!faccessat(AT_FDCWD, "/missing-marker", R_OK, AT_EACCESS) || errno != ENOENT) return 31;
+        puts("PERMISSIONS_OK");
+        return 0;
+    }
     if (getuid() != 0 || geteuid() != 0) return 21;
     if (getenv("SECRET_FROM_RUNNER") || strcmp(getenv("HOME"), "/root")) return 22;
     if (strcmp(getenv("UV_CACHE_DIR"), "/opt/uv-cache")) return 23;
@@ -73,11 +82,11 @@ int main(int argc, char **argv) {
 ''')
         subprocess.run(["gcc", "-static", str(source), "-o", str(self.root / "probe")], check=True)
 
-    def run_guest(self, commands, executor="proot"):
+    def run_guest(self, commands, executor="proot", launcher=()):
         """在独立 shell 中运行绑定设置及清理。 / Runs setup and cleanup in a separate shell."""
         environment = dict(os.environ, ROOTFS_DIR=str(self.root), WORK_DIR=str(self.base),
                            ROOTFS_EXECUTOR=executor, SECRET_FROM_RUNNER="must-not-leak")
-        return subprocess.run(["bash", "-euc", 'source "$1"; trap cleanup_guest EXIT; ' + commands,
+        return subprocess.run([*launcher, "bash", "-euc", 'source "$1"; trap cleanup_guest EXIT; ' + commands,
                                "guest-test", str(HELPER)], env=environment, text=True,
                               capture_output=True, timeout=30)
 
@@ -97,6 +106,37 @@ int main(int argc, char **argv) {
     def test_guest_failure_status_is_preserved(self):
         result = self.run_guest("setup_guest; guest /probe fail")
         self.assertEqual(result.returncode, 37, result.stderr)
+
+    def test_permissions_work_when_container_blocks_faccessat2(self):
+        source = self.base / "container-filter.c"
+        source.write_text(r'''
+#include <errno.h>
+#include <stddef.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    struct sock_filter filter[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_faccessat2, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+    };
+    struct sock_fprog program = {4, filter};
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program)) return 32;
+    execvp(argv[1], argv + 1);
+    return 33;
+}
+''')
+        launcher = self.base / "container-filter"
+        subprocess.run(["gcc", "-static", str(source), "-o", str(launcher)], check=True)
+        result = self.run_guest("setup_guest; guest /probe permissions", launcher=(str(launcher),))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("PERMISSIONS_OK", result.stdout)
+        self.assertIn("using ptrace", result.stdout)
 
     def test_invalid_executor_is_rejected(self):
         result = self.run_guest("setup_guest", executor="invalid")

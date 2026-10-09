@@ -8,6 +8,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -145,6 +146,63 @@ class CompactRuntimeTest(unittest.TestCase):
             self.assertEqual(target.read_bytes(), original)
             self.assertFalse(list(package.glob(".strip-*")))
             self.assertEqual(ctypes.CDLL(str(target)).ocr_fixture(6), 42)
+
+
+    def test_misaligned_strip_output_keeps_loadable_original(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "rootfs"
+            package = root / "opt/azurpilot/.venv/lib"
+            package.mkdir(parents=True)
+            source = base / "source.c"
+            source.write_text("int ocr_fixture(int value) { return value * 7; }\n")
+            target = package / "fixture.so"
+            subprocess.run(["cc", "-shared", "-fPIC", "-g", str(source), "-o", str(target)], check=True)
+            original = target.read_bytes()
+            real_run = subprocess.run
+
+            def corrupt_offset(command, **kwargs):
+                result = real_run(command, **kwargs)
+                if "--strip-unneeded" not in command:
+                    return result
+                candidate = Path(command[-1])
+                content = bytearray(candidate.read_bytes())
+                endian = "<" if content[5] == 1 else ">"
+                if content[4] == 2:
+                    offset = struct.unpack_from(endian + "Q", content, 32)[0]
+                    entry_size, count = struct.unpack_from(endian + "HH", content, 54)
+                    file_offset, integer = 8, "Q"
+                else:
+                    offset = struct.unpack_from(endian + "I", content, 28)[0]
+                    entry_size, count = struct.unpack_from(endian + "HH", content, 42)
+                    file_offset, integer = 4, "I"
+                for index in range(count):
+                    position = offset + index * entry_size
+                    if struct.unpack_from(endian + "I", content, position)[0] == 1:
+                        current = struct.unpack_from(endian + integer, content, position + file_offset)[0]
+                        struct.pack_into(endian + integer, content, position + file_offset, current + 1)
+                        break
+                candidate.write_bytes(content)
+                return result
+
+            with mock.patch.object(compact_runtime.subprocess, "run", side_effect=corrupt_offset):
+                report = compact_runtime.compact(root)
+            self.assertEqual(report["skipped_segment_changes"], 1)
+            self.assertEqual(report["compacted_files"], 0)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertFalse(list(package.glob(".strip-*")))
+            self.assertEqual(ctypes.CDLL(str(target)).ocr_fixture(6), 42)
+
+    def test_empty_load_segments_must_keep_page_alignment(self):
+        segments = ((0x170000, 0x160000, 0x2000, 0x2000, 6, 0x10000),
+                    (0x180000, 0x170000, 0, 0, 6, 0x10000))
+        compatible = compact_runtime.compatible_load_segments
+        self.assertTrue(compatible(segments, segments))
+        self.assertTrue(compatible(segments, segments[:1]))
+        damaged = (segments[0], (0x180000, 0x1627bc, 0, 0, 6, 0x10000))
+        self.assertFalse(compatible(segments, damaged))
+        weakened = ((0x170000, 0x160000, 0x2000, 0x2000, 6, 0x1000),)
+        self.assertFalse(compatible(segments, weakened))
 
 
 if __name__ == "__main__":

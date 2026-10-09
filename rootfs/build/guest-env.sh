@@ -56,6 +56,11 @@ setup_guest() {
     if [[ $ROOTFS_EXECUTOR == proot ]]; then
         # 只绑定构建依赖的路径；-R/-S 还会暴露宿主 HOME、tmp 等目录。
         GUEST_RUNNER=(proot --kill-on-exit -0 -r "$ROOTFS_DIR" -w / "${GUEST_BINDINGS[@]}")
+        # 旧容器策略的 EPERM 会压过 seccomp 跟踪事件；改用 ptrace 让兼容补丁能处理返回值。
+        if ! python3 -c 'import os; raise SystemExit(not os.access("/", os.R_OK, effective_ids=True))'; then
+            GUEST_RUNNER=(env PROOT_NO_SECCOMP=1 "${GUEST_RUNNER[@]}")
+            echo 'PRoot: using ptrace for container permission-check compatibility'
+        fi
     else
         GUEST_RUNNER=(chroot "$ROOTFS_DIR")
     fi

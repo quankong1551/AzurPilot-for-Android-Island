@@ -23,15 +23,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -m 0755 "/tmp/uv-${UV_ARCH}-unknown-linux-gnu/uvx" /usr/local/bin/uvx \
     && rm -rf /tmp/uv.tar.gz "/tmp/uv-${UV_ARCH}-unknown-linux-gnu" \
     && uv --version
-# 固定到支持 clone3 的版本，兼容 Ubuntu 24.04 的 glibc 及 Python 3.14 的子进程。
+COPY .cnb/patches/proot-faccessat2.patch /tmp/proot-faccessat2.patch
+# 固定支持 clone3 的版本，并让旧容器策略下的 glibc 使用权限检查回退。
 RUN git init -q /tmp/proot \
     && git -C /tmp/proot remote add origin https://github.com/proot-me/proot.git \
     && git -C /tmp/proot fetch --depth 1 origin d4b49e2243dee34e41c13dfeca6a3d07e9cf0f00 \
     && git -C /tmp/proot checkout -q --detach FETCH_HEAD \
     && git -C /tmp/proot submodule update --init --depth 1 \
+    && git -C /tmp/proot apply /tmp/proot-faccessat2.patch \
     && make -C /tmp/proot/src -j"$(nproc)" \
     && install -m 0755 /tmp/proot/src/proot /usr/local/bin/proot \
-    && rm -rf /tmp/proot \
+    && rm -rf /tmp/proot /tmp/proot-faccessat2.patch \
     && proot --version
 WORKDIR /workspace
 RUN git config --global --add safe.directory /workspace

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -60,6 +61,61 @@ def elf_identity(path):
     return header[4], header[5], machine
 
 
+def load_segments(path):
+    """读取包括空段在内的 ELF 加载段，保留其地址、偏移和对齐约束。
+
+    Reads ELF load segments, including empty ones, with their addresses, offsets, and alignment.
+    """
+    with Path(path).open("rb") as stream:
+        header = stream.read(64)
+        endian = "<" if header[5] == 1 else ">"
+        if header[4] == 2:
+            offset = struct.unpack_from(endian + "Q", header, 32)[0]
+            entry_size, count = struct.unpack_from(endian + "HH", header, 54)
+            layout = struct.Struct(endian + "IIQQQQQQ")
+        else:
+            offset = struct.unpack_from(endian + "I", header, 28)[0]
+            entry_size, count = struct.unpack_from(endian + "HH", header, 42)
+            layout = struct.Struct(endian + "IIIIIIII")
+        if entry_size < layout.size:
+            raise ValueError("Invalid ELF program-header size")
+        result = []
+        for index in range(count):
+            stream.seek(offset + index * entry_size)
+            values = layout.unpack(stream.read(layout.size))
+            if values[0] != 1:
+                continue
+            if header[4] == 2:
+                _, flags, file_offset, address, _, file_size, memory_size, alignment = values
+            else:
+                _, file_offset, address, _, file_size, memory_size, flags, alignment = values
+            result.append((address, file_offset, file_size, memory_size, flags, alignment))
+        return tuple(result)
+
+
+def compatible_load_segments(before, after):
+    """拒绝破坏页对齐或移动内存段的裁剪结果，允许删除无内容的加载段。
+
+    Rejects broken page alignment or moved memory segments, allowing removal of empty segments.
+    """
+    original = {(address, flags): alignment for address, _, _, _, flags, alignment in before}
+    expected = {(address, memory_size, flags) for address, _, _, memory_size, flags, _ in before
+                if memory_size}
+    actual = {(address, memory_size, flags) for address, _, _, memory_size, flags, _ in after
+              if memory_size}
+    if actual != expected:
+        return False
+    for address, offset, _, _, flags, alignment in after:
+        previous = original.get((address, flags))
+        if previous is None or alignment < previous:
+            return False
+        required = max(4096, previous, alignment)
+        # glibc 对空 PT_LOAD 也检查偏移；strip 2.40 会把 patchelf 生成的空段挤到非对齐地址。
+        if required & (required - 1) or (address - offset) % required:
+            return False
+    return True
+
+
 def compact(root, strip="strip", readelf="readelf"):
     """只处理 rootfs 内的虚拟环境，返回逻辑字节节省量。
 
@@ -80,7 +136,8 @@ def compact(root, strip="strip", readelf="readelf"):
         raise ValueError("Compaction requires native ELF Python and binutils")
     result = {"elf_files": 0, "compacted_files": 0, "saved_bytes": 0,
               "skipped_foreign_elf_files": 0, "skipped_symbol_changes": 0,
-              "symbol_change_files": [], "largest_savings": []}
+              "symbol_change_files": [], "skipped_segment_changes": 0,
+              "segment_change_files": [], "largest_savings": []}
     savings = []
     for directory in roots:
         if not directory.exists() or directory.is_symlink():
@@ -106,6 +163,7 @@ def compact(root, strip="strip", readelf="readelf"):
                     result["skipped_foreign_elf_files"] += 1
                     continue
                 before = dynamic_symbols(path, readelf)
+                segments_before = load_segments(path)
                 descriptor, temporary_name = tempfile.mkstemp(prefix=".strip-", dir=parent)
                 os.close(descriptor)
                 temporary = Path(temporary_name)
@@ -113,6 +171,11 @@ def compact(root, strip="strip", readelf="readelf"):
                     # uv 的 wheel 可能硬链接到宿主缓存；先复制，避免裁剪污染缓存和其他镜像。
                     shutil.copy2(path, temporary)
                     subprocess.run([strip, "--strip-unneeded", "--", str(temporary)], check=True)
+                    if not compatible_load_segments(segments_before, load_segments(temporary)):
+                        result["skipped_segment_changes"] += 1
+                        if len(result["segment_change_files"]) < 20:
+                            result["segment_change_files"].append(str(path.relative_to(root)))
+                        continue
                     if before != dynamic_symbols(temporary, readelf):
                         # 某些 patchelf wheel 的 LOCAL SECTION 标注会被 GNU strip 改坏；保留原库。
                         result["skipped_symbol_changes"] += 1

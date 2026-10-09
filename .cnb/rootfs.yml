@@ -7,7 +7,10 @@ $:
         tags: cnb:arch:arm64:v8
         cpus: 8
       docker:
-        build: .cnb/Dockerfile.rootfs
+        build: &rootfs-build
+          dockerfile: .cnb/Dockerfile.rootfs
+          by:
+            - .cnb/patches/proot-faccessat2.patch
       env:
         AZURPILOT_ABI: arm64-v8a
       stages: &rootfs-stages
@@ -25,7 +28,7 @@ $:
         tags: cnb:arch:amd64
         cpus: 8
       docker:
-        build: .cnb/Dockerfile.rootfs
+        build: *rootfs-build
       env:
         AZURPILOT_ABI: x86_64
       stages: *rootfs-stages

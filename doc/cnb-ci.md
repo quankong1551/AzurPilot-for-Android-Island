@@ -49,6 +49,12 @@ ARM64 使用 `cnb:arch:arm64:v8`，x86_64 使用 `cnb:arch:amd64`。
 构建环境从固定提交编译 PRoot 5.4.1，支持现代 glibc 的 `clone3` 子进程调用。
 DNS 和 uv 缓存只在 guest 执行期间绑定，不进入最终 rootfs。
 
+部分 x86_64 构建容器拒绝 `faccessat2`，会让 APT 把可读公钥误判为缺失。
+构建镜像为 PRoot 加入兼容补丁，将这次调用的 `EPERM` 转成 `ENOSYS`，
+让 glibc 回退到旧权限检查；检测到限制时使用 ptrace 跟踪，软件源验签仍然执行。
+wheel 精简同时检查动态符号和 ELF 加载段，包括空段的页对齐；GNU strip 2.40
+破坏加载段时保留原文件，并在 `RUNTIME_SIZE_REPORT.json` 记录跳过原因。
+
 构建镜像通过 GitHub Releases 下载对应架构的 uv 二进制，避免本次 CNB 构建中
 `ghcr.io` 令牌端点证书校验失败造成的镜像拉取错误。
 
@@ -164,6 +170,13 @@ privileged containers, and kernel mounts that CNB rejects for `/sys`.
 GitHub CI still defaults to chroot. The environment compiles PRoot 5.4.1 from a pinned commit
 to support modern glibc's `clone3` subprocess calls. DNS and uv caches are bound only during
 guest execution and stay out of the final rootfs.
+
+Some x86_64 build containers reject `faccessat2`, causing APT to treat readable signing keys
+as missing. The build image patches PRoot to translate that call's `EPERM` into `ENOSYS`,
+letting glibc fall back to older permission checks. Restricted containers use ptrace tracing;
+repository signature verification remains enabled. Wheel compaction checks dynamic symbols
+and ELF load segments, including page alignment of empty segments. If GNU strip 2.40 damages
+a segment, the original file is kept and the skip is recorded in `RUNTIME_SIZE_REPORT.json`.
 
 Build images download the matching uv binary from GitHub Releases, avoiding the ghcr.io token
 endpoint certificate-verification failure observed in this CNB build.

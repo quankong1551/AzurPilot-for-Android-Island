@@ -76,7 +76,7 @@ trap cleanup_guest EXIT
 setup_guest
 echo "Rootfs guest executor: $ROOTFS_EXECUTOR ($TARGET_ABI)"
 
-guest apt-get update
+guest apt-get -o APT::Update::Error-Mode=any update
 # 远程访问/模拟器隧道走上游 module/base/ssh.py，直接 Popen 系统 ssh（无捆绑二进制）
 guest apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils libglib2.0-0t64 libgomp1 libgl1 \
@@ -128,7 +128,7 @@ spec.loader.exec_module(mod)
 PY
 rm -rf "$FRONTEND/node_modules"
 
-# 第三方 wheel 的调试信息不参与推理；保持动态符号不变，并在裁剪后真实导入和计算。
+# 第三方 wheel 的调试信息不参与推理；保持符号及加载段页对齐，并在裁剪后真实导入和计算。
 python3 "$REPO_ROOT/rootfs/build/compact-runtime.py" "$ROOTFS_DIR" \
     --report "$ROOTFS_DIR/opt/azurpilot/RUNTIME_SIZE_REPORT.json"
 
