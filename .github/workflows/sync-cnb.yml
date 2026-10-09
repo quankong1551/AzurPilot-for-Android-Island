@@ -39,6 +39,6 @@ jobs:
           # 添加配置了凭证的 CNB 远程镜像源
           git remote add cnb "https://cnb:${CNB_TOKEN}@cnb.cool/azurpilot/AzurPilot-for-Android.git"
 
-          # 推送所有分支与标签到 CNB（镜像同步并修剪已删除分支）
-          git push --prune --force cnb '+refs/remotes/origin/*:refs/heads/*'
-          git push --tags --force cnb
+          # 以 GitHub 为准强制覆盖 CNB 分支和标签，并修剪 GitHub 已删除的分支。
+          git push -f --prune cnb 'refs/remotes/origin/*:refs/heads/*'
+          git push -f --tags cnb
